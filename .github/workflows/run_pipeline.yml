@@ -1,0 +1,81 @@
+name: Internship Pipeline
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+  
+  # Scheduled runs (adjust times as needed)
+  schedule:
+    # Run 1: 10:00 AM IST (4:30 UTC)
+    - cron: '30 4 * * *'
+    # Run 2: 6:00 PM IST (12:30 UTC)  
+    - cron: '30 12 * * *'
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install apify-client python-dotenv google-auth google-auth-oauthlib google-api-python-client requests
+      
+      - name: Create .env file
+        run: |
+          cat << EOF > .env
+          APIFY_API_TOKEN=${{ secrets.APIFY_API_TOKEN }}
+          FIRECRAWL_API_KEY=${{ secrets.FIRECRAWL_API_KEY }}
+          BROWSERLESS_API_KEY=${{ secrets.BROWSERLESS_API_KEY }}
+          ZYTE_API_KEY=${{ secrets.ZYTE_API_KEY }}
+          GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+          EOF
+      
+      - name: Create credentials.json
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+      
+      - name: Create token.json
+        run: |
+          echo '${{ secrets.GOOGLE_TOKEN_JSON }}' > token.json
+      
+      - name: Create .tmp directory
+        run: mkdir -p .tmp
+      
+      - name: Run Pipeline
+        run: python execution/run_pipeline.py
+        env:
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+          BROWSERLESS_API_KEY: ${{ secrets.BROWSERLESS_API_KEY }}
+          ZYTE_API_KEY: ${{ secrets.ZYTE_API_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-logs-${{ github.run_number }}
+          path: .tmp/
+          retention-days: 7
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Pipeline Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f ".tmp/final_ranked_internships.json" ]; then
+            COUNT=$(python -c "import json; print(len(json.load(open('.tmp/final_ranked_internships.json'))))")
+            echo "**Total Internships:** $COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Sheet:** https://docs.google.com/spreadsheets/d/${{ secrets.GOOGLE_SHEET_ID }}" >> $GITHUB_STEP_SUMMARY
