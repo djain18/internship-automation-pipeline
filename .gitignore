@@ -1,0 +1,30 @@
+# Temporary files
+.tmp/
+error_*.txt
+error_*.log
+modal_output.txt
+*.bak
+extraction_prompt.txt
+model_selection_prompt.txt
+help.txt
+models.txt
+
+# Environment variables
+.env
+
+# Google OAuth credentials
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
