@@ -14,6 +14,7 @@ Outputs:
 import os
 import json
 import re
+import concurrent.futures
 from datetime import datetime, timedelta
 from apify_client import ApifyClient
 from dotenv import load_dotenv
@@ -41,6 +42,13 @@ ROLE_TYPES = ["intern", "internship", "job", "fresher", "trainee", "associate", 
 ACTION_WORDS = ["apply", "dm", "send resume", "share cv", "drop your resume", "send your cv", "reach out", "contact"]
 URGENCY_WORDS = ["immediate", "urgent", "asap", "starting soon", "immediate joining", "walk-in"]
 CONTACT_PATTERNS = [r"[\w\.-]+@[\w\.-]+", r"forms\.gle", r"bit\.ly", r"linkedin\.com/in/", r"comment below"]
+
+
+def _safe_int(val) -> int:
+    if isinstance(val, list): return len(val)
+    if isinstance(val, dict): return val.get("count", 0) or 0
+    try: return int(val) if val else 0
+    except (ValueError, TypeError): return 0
 
 
 def ensure_tmp_dir():
@@ -110,6 +118,38 @@ def parse_posted_time(posted_str: str, timestamp: int | None = None) -> int | No
         return 0
     
     return None
+
+
+def _normalize_company(name: str) -> str:
+    """Normalize company name for deduplication â€” strips suffixes and spaces."""
+    import re as _re
+    n = name.lower().strip()
+    # Remove common corporate suffixes
+    n = _re.sub(r'\b(inc\.?|pvt\.?|ltd\.?|llp|llc|corp\.?|limited|private|technologies|tech|solutions|services|group|global|india)\b', '', n)
+    # Collapse whitespace and non-alphanumeric chars
+    n = _re.sub(r'[^a-z0-9]', '', n)
+    return n
+
+
+def _std_role_key(role: str) -> str:
+    """Map a role string to a broad category key for cross-query deduplication."""
+    r = role.lower()
+    for cat, kws in [
+        ("software",  ["software", "sde", "developer", "frontend", "backend", "full stack", "web", "ios", "android"]),
+        ("data",      ["data", "machine learning", "ml", "ai", "analytics", "scientist"]),
+        ("product",   ["product", "apm"]),
+        ("marketing", ["marketing", "seo", "social media", "content"]),
+        ("design",    ["design", "ui", "ux", "graphic", "video", "animation"]),
+        ("finance",   ["finance", "audit", "accounting", "ca "]),
+        ("sales",     ["sales", "business development", "bd"]),
+        ("hr",        ["hr", "human resources", "talent", "recruitment"]),
+        ("strategy",  ["founder", "generalist", "chief of staff", "operations", "strategy"]),
+        ("legal",     ["law", "legal", "compliance"]),
+        ("research",  ["research"]),
+    ]:
+        if any(k in r for k in kws):
+            return cat
+    return r[:20]
 
 
 def detect_hiring_signals(text: str) -> list:
@@ -289,7 +329,7 @@ def extract_apply_link(text: str) -> str:
 def filter_posts(posts: list) -> list:
     """
     HYBRID EXTRACTION: Apify metadata + regex.
-    NO filtering — all posts pass through.
+    NO filtering â€” all posts pass through.
     Extracts: company (from author), role, location, email, apply_link via regex.
     """
     clean_posts = []
@@ -304,14 +344,13 @@ def filter_posts(posts: list) -> list:
         # If no explicit company field, try to extract from author headline
         # Headlines often look like: "HR Manager at Google" or "Founder | XYZ Corp"
         if not author_company and author_headline:
-            headline_lower = author_headline.lower()
             # Try "at Company" pattern
-            at_match = re.search(r'\bat\s+([A-Z][\w\s&\.]+?)(?:\s*[|·•\-–]|$)', author_headline)
+            at_match = re.search(r'\bat\s+([A-Z][\w\s&\.]+?)(?:\s*[|Â·â€¢\-â€“]|$)', author_headline)
             if at_match:
                 author_company = at_match.group(1).strip()
             else:
                 # Try "Role | Company" or "Role - Company" pattern
-                sep_match = re.search(r'[|·•\-–]\s*([A-Z][\w\s&\.]+?)(?:\s*[|·•\-–]|$)', author_headline)
+                sep_match = re.search(r'[|Â·â€¢\-â€“]\s*([A-Z][\w\s&\.]+?)(?:\s*[|Â·â€¢\-â€“]|$)', author_headline)
                 if sep_match:
                     candidate = sep_match.group(1).strip()
                     # Make sure it's not a role description
@@ -329,16 +368,9 @@ def filter_posts(posts: list) -> list:
         reposts = post.get("reposts") or post.get("repostCount") or 0
         url = post.get("url") or post.get("postUrl") or post.get("link") or ""
         
-        # Safe int conversion
-        def safe_int(val):
-            if isinstance(val, list): return len(val)
-            if isinstance(val, dict): return val.get("count", 0) or 0
-            try: return int(val) if val else 0
-            except (ValueError, TypeError): return 0
-        
-        likes = safe_int(likes)
-        comments = safe_int(comments)
-        reposts = safe_int(reposts)
+        likes = _safe_int(likes)
+        comments = _safe_int(comments)
+        reposts = _safe_int(reposts)
         
         # --- REGEX EXTRACTION ---
         role = extract_role(post_text)
@@ -363,9 +395,9 @@ def filter_posts(posts: list) -> list:
         iso_date = post.get("postedAtISO") or post.get("publishedAt") or posted_time
         hours_old = parse_posted_time(iso_date, timestamp)
         freshness_bonus = 1 if (hours_old is not None and hours_old <= PREFERRED_HOURS) else 0
-        is_stale = True if (hours_old is not None and hours_old > 12 and engagement_score == 0) else False
+        is_stale = hours_old is not None and hours_old > 12 and engagement_score == 0
         
-        # Build clean record — ALL posts pass through
+        # Build clean record â€” ALL posts pass through
         clean_posts.append({
             "author_name": author_name,
             "author_headline": author_headline,
@@ -408,7 +440,7 @@ def run_apify_actor(actor_id: str, search_params: dict) -> list:
     # CHECK FOR ACTOR FAILURE
     status = run.get("status")
     if status != "SUCCEEDED":
-        print(f"   ⚠️ Actor {actor_id} run {run.get('id')} ended with status: {status}")
+        print(f"   âš ï¸ Actor {actor_id} run {run.get('id')} ended with status: {status}")
         # Even if failed, some items might have been saved to the dataset
         # But for reliability, we should treat it as a failure if we got 0 items
     
@@ -422,270 +454,405 @@ def run_apify_actor(actor_id: str, search_params: dict) -> list:
     return items
 
 
+def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
+    """Apply pre-LLM filters: dedup, spam, story, hiring-intent, time."""
+    _PRE_COMPANY_BLACKLIST = ["gao group", "gaotek", "gao tek"]
+    _PRE_SCAM_PATTERNS = [
+        "registration fee", "reg fee", "training fee", "training charges",
+        "security deposit", "caution money", "certification fee",
+        "pay to join", "investment required", "typing job",
+        "data entry job", "form filling job", "copy paste job",
+        "earn daily", "easy money", "100 genuine", "guaranteed income",
+        "whatsapp to register", "simple typing", "home based typing",
+    ]
+    story_keywords = [
+        "my journey", "wrapped up my time", "excited to announce", "officially a",
+        "vibecoding", "employee market hai", "from learning to earning",
+        "i am looking for", "i'm looking for", "seeking a", "seeking an", "open to work",
+    ]
+    hiring_keywords = [
+        "hiring", "looking for", "apply", "opportunity", "openings",
+        "interns required", "join our team", "we are expanding", "internship alert",
+    ]
+
+    passed = []
+    for p in raw_posts:
+        url = p.get("url") or p.get("post_url") or p.get("postUrl") or p.get("link")
+        raw_text = (p.get("text") or p.get("postText") or p.get("content") or "")
+        norm_text = re.sub(r'[^\w\s]', '', raw_text[:300]).lower()
+        norm_text = re.sub(r'\s+', ' ', norm_text).strip()[:150]
+        text_hash = hash(norm_text) if norm_text else None
+
+        # Generic spam blocks
+        if norm_text and "hiring for multiple positions" in norm_text:
+            continue
+        if norm_text and "apply now for internship" in norm_text and "hiring" in norm_text:
+            continue
+
+        # Company blacklist
+        author_raw = (p.get("authorName") or p.get("author", {}).get("name", "") or "").lower()
+        if any(bl in author_raw for bl in _PRE_COMPANY_BLACKLIST) or any(bl in norm_text[:80] for bl in _PRE_COMPANY_BLACKLIST):
+            continue
+
+        # Pre-LLM scam filter
+        if any(kw in norm_text for kw in _PRE_SCAM_PATTERNS):
+            continue
+
+        # Personal story filter
+        if any(kw in norm_text for kw in story_keywords):
+            continue
+
+        # Hiring intent gate
+        has_hiring_intent = any(kw in norm_text for kw in hiring_keywords)
+        if not has_hiring_intent and "intern" not in norm_text:
+            continue
+
+        # Time filter â€” reject if clearly > 4 days old
+        posted_time = str(p.get("postedTime") or p.get("publishedAt") or p.get("time") or "").lower().strip()
+        if "w" in posted_time or "mo" in posted_time or "yr" in posted_time or "year" in posted_time or "month" in posted_time or "week" in posted_time:
+            continue
+        days_match = re.search(r"(\d+)\s*d", posted_time)
+        if days_match and int(days_match.group(1)) > 4:
+            continue
+
+        # URL/text dedup (thread-safe read â€” caller must not mutate seen_urls concurrently)
+        if text_hash and text_hash in seen_urls:
+            continue
+        if url and url in seen_urls:
+            continue
+
+        passed.append((p, url, text_hash))
+
+    return passed
+
+
+def _scrape_one_query(args):
+    """Scrape a single query â€” designed to run in a thread."""
+    query, run_input = args
+    try:
+        posts = run_apify_actor(PRIMARY_ACTOR, run_input)
+        return query, posts
+    except Exception as e:
+        print(f"   âŒ Primary scraper failed for query '{query[:60]}': {e}")
+        try:
+            posts = run_apify_actor(FALLBACK_ACTOR, run_input)
+            return query, posts
+        except Exception as e2:
+            print(f"   âŒ Fallback also failed: {e2}")
+            return query, []
+
+
 def main():
     """
-    Main execution flow (Iterative Mode):
-    1. Pick keyword
-    2. Scrape
-    3. LLM Verify
-    4. Check if target reached (30)
-    5. Repeat
+    Main execution flow (Parallel Mode):
+    1. Launch all Apify scrape queries IN PARALLEL (5 workers).
+    2. Collect + dedup all raw posts as they arrive.
+    3. Run one big concurrent LLM pass on all pre-filtered posts.
+    4. Apply post-LLM filters and save output.
     """
     ensure_tmp_dir()
-    
-    TARGET_VERIFIED = 130  # Aim for 130 posts
+
+    TARGET_VERIFIED = 120  # Aim for 120 to absorb duplicates and reach 105 net-new in sheet
+    IS_TOPUP = False
     verified_posts = []
     seen_urls = set()
-    
-    # Top 20 high-value internship keywords
-    # Optimized Boolean Queries (Grouped for speed, respecting LinkedIn limits)
+    seen_authors = set()       # Prevent recruiter spam from same user
+    seen_company_roles = set() # Cross-query dedup: prevent same company+role from two queries
+
+    # Pre-load existing sheet dedup keys so we skip already-published internships
+    existing_keys_file = os.path.join(TMP_DIR, "existing_sheet_keys.json")
+    if os.path.exists(existing_keys_file):
+        try:
+            with open(existing_keys_file, "r", encoding="utf-8") as f:
+                existing_keys = json.load(f)
+            for key in existing_keys:
+                if key.startswith("http"):
+                    seen_urls.add(key)
+                else:
+                    seen_company_roles.add(key)
+            print(f"âœ… Pre-loaded {len(existing_keys)} existing sheet keys (URLs + company:role) to avoid duplicates")
+        except Exception as e:
+            print(f"âš ï¸ Could not load existing sheet keys: {e}")
+
+    # Topup mode: fill only the deficit from a prior partial run
+    topup_file = os.path.join(TMP_DIR, "scrape_topup.json")
+    if os.path.exists(topup_file):
+        try:
+            with open(topup_file, "r") as f:
+                topup_cfg = json.load(f)
+            TARGET_VERIFIED = topup_cfg.get("target", 30)
+            IS_TOPUP = True
+            print(f"ðŸ”„ TOPUP MODE: targeting {TARGET_VERIFIED} additional posts to fill deficit")
+            # Load previously scraped posts so we don't re-find the same ones
+            if os.path.exists(CLEAN_OUTPUT):
+                with open(CLEAN_OUTPUT, "r", encoding="utf-8") as f:
+                    prev_posts = json.load(f)
+                for p in prev_posts:
+                    if p.get("url"):
+                        seen_urls.add(p["url"])
+                    cr = f"{_normalize_company(p.get('company',''))}:{_std_role_key(p.get('title','') or p.get('role',''))}"
+                    seen_company_roles.add(cr)
+                print(f"   Loaded {len(prev_posts)} previous posts into seen sets")
+        except Exception as e:
+            print(f"âš ï¸ Could not load topup config: {e}")
+
+    # â”€â”€ Search queries (10 field-specific) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    search_queries_count = 10
+    MAX_PER_QUERY = (TARGET_VERIFIED // search_queries_count) + 1  # ~13 per query
+
     search_queries = [
-        # Group 1: High Intent (India-specific)
-        "(hiring intern india) OR (internship opportunity) OR (paid internship india) OR (we are hiring intern)",
-        
-        # Group 2: Tech & Engineering
-        "(sde intern) OR (software intern) OR (full stack intern) OR (data science intern) OR (ml intern)",
-        
-        # Group 3: Business & Product
-        "(product intern) OR (marketing intern) OR (business development intern) OR (founder's office intern)",
-        
-        # Group 4: Design, Content & Finance (India-specific)
-        "(ui ux intern) OR (content intern) OR (finance intern) OR (hr intern india)",
-        
-        # Group 5: Analytics & Growth
-        "(data analyst intern) OR (growth intern) OR (sales intern) OR (internship alert)",
-        
-        # Group 6: Startup & Misc
-        "(startup internship) OR (looking for interns) OR (hiring interns remote) OR (apply now internship)"
+        "(software intern) OR (sde intern) OR (full stack intern) OR (backend intern) OR (frontend intern) OR (web developer intern)",
+        "(data science intern) OR (ml intern) OR (machine learning intern) OR (ai intern) OR (data engineer intern) OR (data analyst intern)",
+        "(product management intern) OR (apm intern) OR (product analyst intern) OR (associate product manager intern)",
+        "(founder's office intern) OR (generalist intern) OR (chief of staff intern) OR (strategy intern) OR (operations intern)",
+        "(business development intern) OR (sales intern) OR (bd intern) OR (inside sales intern) OR (growth intern)",
+        "(digital marketing intern) OR (marketing intern) OR (seo intern) OR (performance marketing intern) OR (social media intern)",
+        "(video editing intern) OR (content writing intern) OR (copywriting intern) OR (graphic design intern) OR (vfx intern)",
+        "(ui ux intern) OR (product design intern) OR (visual design intern)",
+        "(finance intern) OR (investment banking intern) OR (vc intern) OR (audit intern) OR (consulting intern)",
+        "(hr intern india) OR (talent acquisition intern) OR (human resources intern) OR (law intern) OR (compliance intern)",
     ]
-    
+    import random
+    random.shuffle(search_queries)
+
     print("="*60)
-    print(f"LINKEDIN POSTS SCRAPER - ITERATIVE MODE")
-    print(f"Target: {TARGET_VERIFIED} Verified Leads")
+    print(f"LINKEDIN POSTS SCRAPER - PARALLEL MODE")
+    print(f"Target: {TARGET_VERIFIED} verified | Max per query: {MAX_PER_QUERY}")
     print("="*60)
-    
-    # Check LLM availability
-    # Configure LLM dynamically
+
+    # â”€â”€ Configure LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     try:
         import llm_post_analyzer
     except ModuleNotFoundError:
         import execution.llm_post_analyzer as llm_post_analyzer
     llm_post_analyzer.configure_llm()
-    print(f"✅ LLM Verification Enabled ({llm_post_analyzer.PROVIDER.title()})")
-    
-    # Use module function
+    print(f"âœ… LLM: {llm_post_analyzer.PROVIDER.title()} ({llm_post_analyzer.MODEL})")
     filter_posts_with_llm = llm_post_analyzer.filter_posts_with_llm
-    
-    use_llm = True if llm_post_analyzer.PROVIDER != "none" else False
-    
-    for i, query in enumerate(search_queries):
-        if len(verified_posts) >= TARGET_VERIFIED:
-            print(f"\n🎉 Target reached! ({len(verified_posts)} verified posts)")
-            break
-            
-        print(f"\n[{i+1}/{len(search_queries)}] Scraping: '{query}'...")
-        print(f"   Current Verified Count: {len(verified_posts)}/{TARGET_VERIFIED}")
-        
-        # Scrape
-        search_url = f"https://www.linkedin.com/search/results/content/?datePosted=%22past-24h%22&keywords={query.replace(' ', '%20')}&origin=FACETED_SEARCH"
-        run_input = {"urls": [search_url], "limitPerSource": 50} # Fetch 50 per keyword
-        
-        raw_posts = []
-        try:
-            raw_posts = run_apify_actor(PRIMARY_ACTOR, run_input)
-        except Exception as e:
-            print(f"   ❌ Primary Scraper Failed: {e}")
-            print(f"   🔄 Retrying with Fallback Scraper: {FALLBACK_ACTOR}...")
+    use_llm = llm_post_analyzer.PROVIDER != "none"
+
+    # â”€â”€ PHASE 1: Parallel Apify scraping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # All 10 queries run concurrently (5 workers) instead of sequentially.
+    # Apify calls are pure I/O waits (1-3 min each) â€” threads eliminate that wait.
+    query_inputs = []
+    for query in search_queries:
+        search_url = (
+            f"https://www.linkedin.com/search/results/content/"
+            f"?datePosted=%22past-24h%22&keywords={query.replace(' ', '%20')}"
+            f"&origin=FACETED_SEARCH"
+        )
+        query_inputs.append((query, {"urls": [search_url], "limitPerSource": 40}))
+
+    print(f"\n[PHASE 1] Launching {len(query_inputs)} Apify scrapes in parallel (5 workers)...")
+    all_raw_by_query = {}  # query â†’ list of raw posts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_map = {executor.submit(_scrape_one_query, qi): qi[0] for qi in query_inputs}
+        for future in concurrent.futures.as_completed(future_map):
+            query_str = future_map[future]
             try:
-                # Adjust input for fallback actor if needed (usually similar for scraping actors)
-                raw_posts = run_apify_actor(FALLBACK_ACTOR, run_input)
-            except Exception as e2:
-                print(f"   ❌ Fallback Scraper also failed: {e2}")
-                continue
-            
+                _, posts = future.result()
+                all_raw_by_query[query_str] = posts
+                print(f"   âœ… '{query_str[:60]}' â†’ {len(posts)} raw posts")
+            except Exception as e:
+                print(f"   âŒ Query failed: {e}")
+                all_raw_by_query[query_str] = []
+
+    total_raw = sum(len(v) for v in all_raw_by_query.values())
+    print(f"\n[PHASE 1 DONE] {total_raw} raw posts collected across all queries.")
+
+    # â”€â”€ PHASE 2: Dedup + pre-filter (single-threaded, fast) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    print(f"\n[PHASE 2] Deduplicating and pre-filtering...")
+    all_to_llm = []
+    for query_str, raw_posts in all_raw_by_query.items():
         if not raw_posts:
-            print("   ⚠️ No posts found for this keyword")
             continue
-            
-        # Dedup immediately — by URL AND by normalized text content
-        new_unique = []
-        for p in raw_posts:
-            url = p.get("url") or p.get("post_url") or p.get("postUrl") or p.get("link")
-            raw_text = (p.get("text") or p.get("postText") or p.get("content") or "")
-            
-            # Normalize text for dedup: strip emojis/special chars, lowercase, collapse whitespace
-            norm_text = re.sub(r'[^\w\s]', '', raw_text[:300]).lower()
-            norm_text = re.sub(r'\s+', ' ', norm_text).strip()[:150]
-            text_hash = hash(norm_text) if norm_text else None
-            
-            # Block known spam patterns (generic role lists with no company)
-            if norm_text and "hiring for multiple positions" in norm_text:
-                continue
-            if norm_text and "apply now for internship" in norm_text and "hiring" in norm_text:
-                continue
-                
-            # Block posts about "my journey", "vibecoding", "I got a job" (personal stories)
-            story_keywords = ["my journey", "wrapped up my time", "excited to announce", "officially a", "vibecoding", "employee market hai", "from learning to earning", "i am looking for", "i'm looking for", "seeking a", "seeking an", "open to work"]
-            is_story = any(kw in norm_text for kw in story_keywords)
-            if is_story:
-                continue
-                
-            # Must have some hiring intent if it's not explicitly blocked
-            hiring_keywords = ["hiring", "looking for", "apply", "opportunity", "openings", "interns required", "join our team", "we are expanding", "internship alert"]
-            has_hiring_intent = any(kw in norm_text for kw in hiring_keywords)
-            if not has_hiring_intent and not "intern" in norm_text:
-                continue
-            
-            # Skip if we've seen this normalized text before
-            if text_hash and text_hash in seen_urls:
-                continue
-            
+        passed = _pre_filter_posts(raw_posts, seen_urls)
+        # Commit seen hashes for this query's batch
+        query_passed = []
+        for p, url, text_hash in passed:
             if url and url not in seen_urls:
                 seen_urls.add(url)
                 if text_hash:
                     seen_urls.add(text_hash)
-                new_unique.append(p)
-            elif not url and text_hash:
+                query_passed.append(p)
+            elif not url and text_hash and text_hash not in seen_urls:
                 seen_urls.add(text_hash)
-                new_unique.append(p)
-        
-        print(f"   Found {len(new_unique)} unique new posts")
-        if not new_unique:
-            continue
-            
-        # Add strict explicit time filtering before LLM check
-        time_filtered = []
-        for p in new_unique:
-            posted_time = str(p.get("postedTime") or p.get("publishedAt") or p.get("time") or "").lower().strip()
-            
-            # If the timestamp contains week, month, or year, it's strictly > 4 days old
-            if "w" in posted_time or "mo" in posted_time or "yr" in posted_time or "year" in posted_time or "month" in posted_time or "week" in posted_time:
+                query_passed.append(p)
+        # Per-query cap to preserve field diversity
+        if len(query_passed) > MAX_PER_QUERY * 3:
+            query_passed = query_passed[:MAX_PER_QUERY * 3]
+        print(f"   '{query_str[:50]}' â†’ {len(query_passed)} posts after pre-filter")
+        all_to_llm.extend(query_passed)
+
+    print(f"\n[PHASE 2 DONE] {len(all_to_llm)} posts queued for LLM.")
+
+    # â”€â”€ PHASE 3: One big concurrent LLM pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    print(f"\n[PHASE 3] Running LLM analysis on {len(all_to_llm)} posts (10 workers)...")
+    llm_results = filter_posts_with_llm(all_to_llm) if use_llm else all_to_llm
+
+    # â”€â”€ PHASE 4: Post-LLM filters + build clean records â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    print(f"\n[PHASE 4] Applying post-LLM filters to {len(llm_results)} results...")
+    _INDIA_CITIES = [
+        "india", "bangalore", "bengaluru", "mumbai", "delhi", "new delhi",
+        "gurgaon", "gurugram", "noida", "hyderabad", "chennai", "pune",
+        "kolkata", "ahmedabad", "jaipur", "lucknow", "chandigarh", "indore",
+        "kochi", "coimbatore", "nagpur", "bhopal", "visakhapatnam",
+        "thiruvananthapuram", "surat", "vadodara", "mysore", "mangalore",
+        "pan india", "wfh", "work from home",
+    ]
+    _OUTSIDE_INDICATORS = [
+        "usa", "uk", "london", "new york", "san francisco", "los angeles",
+        "dubai", "uae", "australia", "canada", "germany", "singapore",
+        "hong kong", "europe", "united states", "united kingdom", "korea",
+        "japan", "china", "malaysia", "netherlands", "france", "italy",
+        "toronto", "sydney", "berlin", "amsterdam", "paris", "seoul",
+        "riyadh", "kuwait", "qatar", "bahrain", "oman",
+    ]
+    _india_text_kw = [
+        "india", "bangalore", "bengaluru", "mumbai", "delhi",
+        "hyderabad", "pune", "noida", "gurgaon", "chennai",
+        "kolkata", "ahmedabad", "jaipur", "pan india",
+        "indian students", "for india", "in india", "indian candidates",
+    ]
+
+    if use_llm:
+        for post in llm_results:
+            analysis = post.get("llm_analysis", {})
+            if isinstance(analysis, list):
+                analysis = analysis[0] if analysis else {}
+
+            llm_company = analysis.get("company") or ""
+            llm_roles = analysis.get("roles", [])
+            llm_location = analysis.get("location") or ""
+            llm_email = analysis.get("contact_email") or ""
+            llm_apply_link = analysis.get("apply_link") or ""
+            llm_work_type = analysis.get("work_type") or ""
+            llm_formatted_desc = analysis.get("formatted_description") or ""
+
+            author_name = post.get("authorName") or post.get("author", {}).get("name", "") or "Recruiter"
+            author_headline = post.get("authorHeadline") or post.get("author", {}).get("headline", "") or ""
+
+            if author_name != "Recruiter" and author_name in seen_authors:
                 continue
-                
-            # If the timestamp contains days and is > 4, it's too old
-            days_match = re.search(r"(\d+)\s*d", posted_time)
-            if days_match and int(days_match.group(1)) > 4:
+            seen_authors.add(author_name)
+
+            final_company = llm_company if llm_company not in [None, "", "null", "Unknown"] else ""
+            if not final_company:
+                final_company = post.get("authorCompany") or post.get("author", {}).get("company", "") or ""
+            if not final_company:
+                at_match = re.search(r'\bat\s+([A-Z][\w\s&\.]+?)(?:\s*[|·•\-–]|$)', author_headline)
+                if at_match:
+                    final_company = at_match.group(1).strip()
+            if not final_company:
+                final_company = author_name
+
+            final_role = llm_roles[0] if llm_roles and llm_roles[0] not in [None, ""] else "Internship"
+            final_location = llm_location if llm_location not in [None, "", "null", "Unknown"] else ""
+
+            post_text = post.get("text") or post.get("postText") or post.get("content") or ""
+            url = post.get("url") or post.get("postUrl") or post.get("link") or ""
+            loc_lower = final_location.lower()
+            text_lower = post_text.lower()
+
+            is_outside = any(kw in loc_lower for kw in _OUTSIDE_INDICATORS)
+            if is_outside and "india" not in loc_lower:
+                print(f"    ❌ Skipped (international): {final_location}")
                 continue
-                
-            time_filtered.append(p)
-            
-        print(f"   Excluded {len(new_unique) - len(time_filtered)} posts older than 4 days before LLM check")
-        new_unique = time_filtered
-        
-        if not new_unique:
-            continue
-            
-        # HYBRID: LLM for extraction (company, role, location) + Regex for email/apply link
-        batch_verified = []
-        if use_llm:
-            print("   🤖 Running LLM Extraction (no filtering)...")
-            llm_results = filter_posts_with_llm(new_unique)
-            
-            for post in llm_results:
-                analysis = post.get("llm_analysis", {})
-                if isinstance(analysis, list):
-                    analysis = analysis[0] if analysis else {}
-                
-                # LLM extraction: ALL fields
-                llm_company = analysis.get("company") or ""
-                llm_roles = analysis.get("roles", [])
-                llm_location = analysis.get("location") or ""
-                llm_email = analysis.get("contact_email") or ""
-                llm_apply_link = analysis.get("apply_link") or ""
-                llm_work_type = analysis.get("work_type") or ""
-                
-                # Apify author data as fallback for company
-                author_name = post.get("authorName") or post.get("author", {}).get("name", "") or ""
-                author_headline = post.get("authorHeadline") or post.get("author", {}).get("headline", "") or ""
-                
-                # Company: LLM > Apify author.company > headline parse > author name
-                final_company = llm_company if llm_company not in [None, "", "null", "Unknown"] else ""
-                if not final_company:
-                    final_company = post.get("authorCompany") or post.get("author", {}).get("company", "") or ""
-                if not final_company:
-                    at_match = re.search(r'\bat\s+([A-Z][\w\s&\.]+?)(?:\s*[|·•\-–]|$)', author_headline)
-                    if at_match:
-                        final_company = at_match.group(1).strip()
-                if not final_company:
-                    final_company = author_name
-                
-                # Role: LLM extracted
-                final_role = llm_roles[0] if llm_roles and llm_roles[0] not in [None, ""] else "Internship"
-                
-                # Location: LLM extracted
-                final_location = llm_location if llm_location not in [None, "", "null", "Unknown"] else ""
-                
-                post_text = post.get("text") or post.get("postText") or post.get("content") or ""
-                url = post.get("url") or post.get("postUrl") or post.get("link") or ""
-                
-                # --- INDIA-ONLY LOCATION FILTER ---
-                # Whitelist approach: only keep India / Remote / Indian cities
-                india_keywords = [
-                    "india", "remote", "work from home", "wfh",
-                    "bangalore", "bengaluru", "mumbai", "delhi", "new delhi",
-                    "gurgaon", "gurugram", "noida", "hyderabad", "chennai",
-                    "pune", "kolkata", "ahmedabad", "jaipur", "lucknow",
-                    "chandigarh", "indore", "kochi", "coimbatore", "nagpur",
-                    "bhopal", "visakhapatnam", "thiruvananthapuram", "surat",
-                    "vadodara", "mysore", "mangalore", "pan india",
-                ]
-                loc_lower = final_location.lower()
-                text_lower = post_text.lower()
-                is_india = any(kw in loc_lower or kw in text_lower for kw in india_keywords)
-                if not is_india:
-                    print(f"    ❌ Skipped (not India): {final_location or 'Unknown location'}")
+
+            is_india_loc = any(kw in loc_lower for kw in _INDIA_CITIES)
+            is_remote_only = "remote" in loc_lower and not is_india_loc
+
+            if is_remote_only:
+                if not any(kw in text_lower for kw in _india_text_kw):
+                    print(f"    ❌ Skipped (Remote, no India context): {final_company}")
                     continue
-                
-                clean_post = {
-                    "author_name": author_name,
-                    "author_headline": author_headline,
-                    "post_text": post_text[:500],
-                    "posted_time": post.get("postedTime") or post.get("postedAtISO") or "",
-                    "likes": post.get("likes") or 0,
-                    "comments": post.get("comments") or 0,
-                    "url": url,
-                    
-                    # Exact 1-to-1 Schema
-                    "title": final_role,
-                    "type": analysis.get("type") or "",
-                    "timing": analysis.get("timing") or "",
-                    "description": post_text[:5000],  # Give more text
-                    "stipend": analysis.get("stipend") or "",
-                    "duration": analysis.get("duration") or "",
-                    "experience": analysis.get("experience") or "",
-                    "location": final_location,
-                    "deadline": analysis.get("deadline") or "",
-                    "tags": analysis.get("tags") or [],
-                    "hiringOrganization": final_company,
-                    "contact_email": llm_email,
-                    "apply_link": llm_apply_link,
-                    
-                    # Legacy internal fields
-                    "role": final_role,       # Needed by aggregate
-                    "company": final_company, # Needed by aggregate
-                    "work_type": llm_work_type, # Needed by aggregate
-                    "hiring_signals": ["llm_extracted"],
-                    "engagement_score": 1,
-                    "freshness_bonus": 1,
-                    "is_stale": False,
-                }
-                batch_verified.append(clean_post)
-        else:
-            # Pure regex fallback (no LLM available)
-            batch_verified = filter_posts(new_unique)
-            
-        print(f"   ✅ Verified {len(batch_verified)} leads from this batch")
-        verified_posts.extend(batch_verified)
-        
-    # Final Fallback check
+            elif not is_india_loc and "remote" not in loc_lower:
+                if not any(kw in text_lower for kw in _india_text_kw):
+                    print(f"    ❌ Skipped (no India context): {final_location or 'unknown'}")
+                    continue
+
+            # Resolve an ABSOLUTE posted date so the website can show real
+            # freshness (not the time the row was added to the sheet).
+            _posted_iso = post.get("postedAtISO") or post.get("publishedAt") or ""
+            _posted_ts = post.get("postedAtTimestamp") or post.get("timestamp")
+            _hours_old = parse_posted_time(_posted_iso or str(post.get("postedTime") or ""), _posted_ts)
+            posted_date = (
+                (datetime.now() - timedelta(hours=_hours_old)).strftime("%Y-%m-%d")
+                if _hours_old is not None else ""
+            )
+
+            clean_post = {
+                "author_name": author_name,
+                "author_headline": author_headline,
+                "post_text": post_text[:500],
+                "posted_time": post.get("postedTime") or post.get("postedAtISO") or "",
+                "posted_date": posted_date,
+                "likes": post.get("likes") or 0,
+                "comments": post.get("comments") or 0,
+                "url": url,
+                "title": final_role,
+                "type": analysis.get("type") or "",
+                "timing": analysis.get("timing") or "",
+                "description": llm_formatted_desc if len(llm_formatted_desc) > 20 else post_text[:5000],
+                "stipend": analysis.get("stipend") or "",
+                "duration": analysis.get("duration") or "",
+                "experience": analysis.get("experience") or "",
+                "location": final_location,
+                "deadline": analysis.get("deadline") or "",
+                "tags": analysis.get("tags") or [],
+                "hiringOrganization": final_company,
+                "contact_email": llm_email,
+                "apply_link": llm_apply_link,
+                "role": final_role,
+                "company": final_company,
+                "work_type": llm_work_type,
+                "hiring_signals": ["llm_extracted"],
+                "engagement_score": 1,
+                "freshness_bonus": 1,
+                "is_stale": False,
+            }
+
+            _cr_key = f"{_normalize_company(final_company)}:{_std_role_key(final_role)}"
+            if _cr_key in seen_company_roles:
+                continue
+            seen_company_roles.add(_cr_key)
+
+            verified_posts.append(clean_post)
+    else:
+        verified_posts.extend(filter_posts(all_to_llm))
+
     if len(verified_posts) < 10:
         print("\n⚠️ Warning: Very few verified posts found. Relaxing filters might be needed.")
 
-    # Save output
+    # Save output — in topup mode, merge with existing posts
+    if IS_TOPUP and os.path.exists(CLEAN_OUTPUT):
+        try:
+            with open(CLEAN_OUTPUT, "r", encoding="utf-8") as f:
+                prev_posts = json.load(f)
+            verified_posts = prev_posts + verified_posts
+            print(f"\nTopup merged: {len(prev_posts)} existing + {len(verified_posts) - len(prev_posts)} new = {len(verified_posts)} total")
+        except Exception as e:
+            print(f"⚠️ Could not merge with existing posts: {e}")
+
     with open(CLEAN_OUTPUT, "w", encoding="utf-8") as f:
         json.dump(verified_posts, f, indent=2, ensure_ascii=False)
-    print(f"\nsaved clean output: {CLEAN_OUTPUT} ({len(verified_posts)} posts)")
-    
+    print(f"\n✅ Saved {len(verified_posts)} posts → {CLEAN_OUTPUT}")
+
+    # Record real run metrics so publish_to_sheets can surface honest stats
+    # (scanned vs. verified) on the website's /api/stats endpoint.
+    verified_count = len(verified_posts)
+    metrics = {
+        "scanned": total_raw,
+        "verified": verified_count,
+        "rejected": max(0, total_raw - verified_count),
+    }
+    try:
+        with open(os.path.join(TMP_DIR, "scrape_metrics.json"), "w") as f:
+            json.dump(metrics, f)
+        print(f"📊 Run metrics: scanned={total_raw} verified={verified_count} "
+              f"rejected={metrics['rejected']}")
+    except Exception as e:
+        print(f"⚠️ Could not write scrape metrics: {e}")
+
     return verified_posts
 
 
@@ -693,9 +860,11 @@ def main():
 if __name__ == "__main__":
     results = main()
     print(f"\nTotal filtered posts: {len(results)}")
-    
-    # Show top 3 for verification
+
     if results:
         print("\nTop 3 posts:")
         for i, post in enumerate(results[:3], 1):
-            print(f"  {i}. {post['author_name']} - Signals: {post['hiring_signals']}")
+            print(f"  {i}. {post.get('hiringOrganization','?')} — {post.get('title','?')}")
+
+    import os
+    os._exit(0)

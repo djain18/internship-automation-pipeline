@@ -52,17 +52,16 @@ CLEAN_FILE = os.path.join(TMP_DIR, "founders_ai_clean.json")
 
 # Keywords
 SEARCH_QUERIES = [
-    # Top tier intent (India focused)
-    '(founder\'s office intern OR chief of staff intern) AND (india OR remote OR chennai)',
-    '(ai automation intern OR ai engineer intern) AND (india OR remote OR chennai)',
-    '(machine learning intern OR ml intern) AND (india OR remote OR chennai)',
-    # Broader intent
-    '("founder\'s office" OR "chief of staff") AND ("intern" OR "internship") AND (india OR remote OR chennai)',
-    '("ai" OR "artificial intelligence" OR "automation" OR "machine learning") AND ("intern" OR "internship") AND (india OR remote OR chennai)',
-    # Hiring explicitly
-    '(hiring intern india) AND ("founder\'s office" OR "ai" OR "machine learning" OR "automation")',
-    '(hiring intern remote) AND ("founder\'s office" OR "ai" OR "machine learning" OR "automation")',
-    '(hiring intern chennai) AND ("founder\'s office" OR "ai" OR "machine learning" OR "automation")'
+    # Chennai Onsite Focus - High Intent
+    '("founder\'s office" OR "chief of staff") AND (hiring OR recruitment OR opportunity OR "apply") AND (chennai)',
+    '("ai automation" OR "ai engineer" OR "machine learning") AND (hiring OR recruitment OR opportunity OR "apply") AND (chennai)',
+    'hiring "founder\'s office intern" chennai',
+    'hiring "ai automation intern" chennai',
+    # Remote/India Focus - High Intent
+    '("founder\'s office" OR "chief of staff") AND (hiring OR recruitment OR opportunity OR "apply") AND (india OR remote)',
+    '("ai automation" OR "ai engineer" OR "machine learning") AND (hiring OR recruitment OR opportunity OR "apply") AND (india OR remote)',
+    'hiring "founder\'s office intern" remote',
+    'hiring "ai automation intern" remote',
 ]
 
 def run_apify_search(query: str, limit: int = 50) -> list:
@@ -73,7 +72,7 @@ def run_apify_search(query: str, limit: int = 50) -> list:
         return []
         
     client = ApifyClient(api_token)
-    search_url = f"https://www.linkedin.com/search/results/content/?datePosted=%22past-24h%22&keywords={query.replace(' ', '%20')}&origin=FACETED_SEARCH"
+    search_url = f"https://www.linkedin.com/search/results/content/?datePosted=%22past-week%22&keywords={query.replace(' ', '%20')}&origin=FACETED_SEARCH"
     
     print(f"\nScraping LinkedIn Posts for query: {query}")
     try:
@@ -86,11 +85,11 @@ def run_apify_search(query: str, limit: int = 50) -> list:
         return []
 
 def filter_location(location: str, post_text: str) -> bool:
-    """Strictly filter for India, Remote, or Chennai ONLY"""
+    """Filter for Chennai, India, or Remote ONLY"""
     loc_lower = (location or "").lower()
     text_lower = (post_text or "").lower()
     
-    # Exclude common foreign locations even if 'remote' is present
+    # Exclude common foreign locations
     foreign_keywords = [
         "usa", "uk", "united states", "united kingdom", "canada", "australia",
         "germany", "france", "europe", "dubai", "uae", "singapore", "malaysia",
@@ -101,15 +100,15 @@ def filter_location(location: str, post_text: str) -> bool:
         if re.search(r'\b' + fw + r'\b', loc_lower):
             return False
             
-    # Check if explicitly India or Chennai
-    if "india" in loc_lower or "india" in text_lower or "chennai" in loc_lower or "chennai" in text_lower:
+    # Check if explicitly Chennai or India
+    if "chennai" in loc_lower or "chennai" in text_lower or "india" in loc_lower or "india" in text_lower:
         return True
-    
+        
     # Check if explicitly Remote/WFH
     if ("remote" in loc_lower or "work from home" in loc_lower or "wfh" in loc_lower or
         "remote" in text_lower or "work from home" in text_lower or "wfh" in text_lower):
         return True
-        
+    
     return False
 
 def scrape_and_process():
@@ -172,8 +171,8 @@ def scrape_and_process():
                 "apply_link": analysis.get("apply_link", ""),
                 "contact_email": analysis.get("contact_email", ""),
                 
-                # Default generic score fields for sheets publisher
-                "engagement_score": 1,
+                # Prioritization Score: Founder's Office or AI Automation gets a boost
+                "engagement_score": 5 if any(x in (role + company).lower() for x in ["founder", "office", "ai", "automation", "chief"]) else 1,
                 "is_stale": False,
                 "freshness_bonus": 1
             }
@@ -189,15 +188,13 @@ def scrape_and_process():
     print(f"\nFinal Verified Count: {len(verified_posts)}")
     return verified_posts
 
-def publish_to_new_sheet(items):
-    """Creates a new sheet and pushes data"""
+def publish_to_existing_sheet(items):
+    """Appends data to the existing Founders custom sheet with specific 'Human' headers."""
     if not items:
         print("No items to publish.")
         return
         
     print("\nConnecting to Google Sheets via OAuth...")
-    
-    # We need to change the working directory or provide absolute paths to credentials
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     pub_utils.CREDENTIALS_FILE = os.path.join(root_dir, "credentials.json")
     pub_utils.TOKEN_FILE = os.path.join(root_dir, "token.json")
@@ -208,39 +205,77 @@ def publish_to_new_sheet(items):
         print(f"Error connecting to Google Sheets: {e}")
         return
     
-    # 1. Create a new Sheet
-    sheet_title = f"Founder's Office & AI Automation Internships ({datetime.now().strftime('%Y-%m-%d')})"
-    spreadsheet = {
-        'properties': {
-            'title': sheet_title
-        }
-    }
+    sheet_id = "1SI28rbwXo2N063_94ftp3biqNrmjVio0Xp3SXEix3WE"
+    sheet_name = "Sheet1"
     
-    print(f"Creating new sheet: {sheet_title}...")
-    try:
-        spreadsheet = service.spreadsheets().create(body=spreadsheet, fields='spreadsheetId').execute()
-        sheet_id = spreadsheet.get('spreadsheetId')
-    except Exception as e:
-        print(f"Error creating sheet: {e}")
-        return
+    # 1. Custom Headers requested by User
+    CUSTOM_HEADERS = [
+        "Title", "Type", "Timing", "Description", "Stipend", "Duration", 
+        "Experience", "Location", "Deadline", "Tags", "HiringOrganization", 
+        "HiringManager", "Post URL", "Apply Link", "Contact Email", "Date Added"
+    ]
     
-    print(f"Sheet created! ID: {sheet_id}")
+    # 2. Ensure Headers exist
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A1:P1",
+        valueInputOption="RAW",
+        body={"values": [CUSTOM_HEADERS]}
+    ).execute()
     
-    # 2. Add columns
-    pub_utils.ensure_headers(service, sheet_id)
+    # 3. Clear existing data below headers (A2:P5000)
+    service.spreadsheets().values().clear(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A2:P5000"
+    ).execute()
     
-    # 3. Add rows
-    pub_utils.append_new_entries(service, sheet_id, items, set())
-    pub_utils.update_ranks(service, sheet_id)
-    
+    # 4. Map items to custom rows
+    new_rows = []
+    for item in items:
+        tags_raw = item.get("tags", "")
+        tags_str = ", ".join(str(t) for t in tags_raw) if isinstance(tags_raw, list) else str(tags_raw)
+        
+        new_rows.append([
+            item.get("role", ""),              # Title
+            "Internship",                      # Type
+            item.get("timing", "Full-time"),    # Timing
+            item.get("description", ""),        # Description (Whole post)
+            item.get("stipend", "Unpaid"),      # Stipend
+            item.get("duration", "3-6 months"), # Duration
+            item.get("experience", "Fresher"),  # Experience
+            item.get("location", ""),           # Location
+            item.get("deadline", "N/A"),        # Deadline
+            tags_str,                           # Tags
+            item.get("company", ""),            # HiringOrganization
+            item.get("author_name", "N/A"),     # HiringManager
+            item.get("url", ""),                # Post URL
+            item.get("apply_link", ""),         # Apply Link
+            item.get("contact_email", ""),       # Contact Email
+            datetime.now().strftime("%Y-%m-%d") # Date Added
+        ])
+        
+    # 5. Append new rows
+    if new_rows:
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=f"{sheet_name}!A2",
+            valueInputOption="RAW",
+            body={"values": new_rows}
+        ).execute()
+        print(f"✅ Appended {len(new_rows)} fresh internships with custom mapping.")
+
     print(f"\n" + "="*50)
-    print(f"✅ SUCCESS! {len(items)} items published to Google Sheets.")
+    print(f"✅ SUCCESS! Specialized sheet is now structured for Humans.")
     print(f"🔗 URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
     print("="*50)
 
 if __name__ == "__main__":
-    print("🚀 Starting Custom Run: Founders & AI Internships")
-    items = scrape_and_process()
-    publish_to_new_sheet(items)
-    print("\nPushing to FTB Hustle API...")
-    pub_utils.ingest_to_api(items)
+    print("🚀 Starting Professional Human-Centric Run")
+    if os.path.exists(CLEAN_FILE):
+        with open(CLEAN_FILE, 'r', encoding='utf-8') as f:
+            items = json.load(f)
+        print(f"Loaded {len(items)} verified items from cache.")
+        publish_to_existing_sheet(items)
+    else:
+        items = scrape_and_process()
+        publish_to_existing_sheet(items)
