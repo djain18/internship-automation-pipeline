@@ -219,11 +219,17 @@ async def _fetch_meta() -> dict | None:
         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
         text = resp.text
-    # gviz returns an HTML error page (not CSV) when the tab is missing.
+    # gviz returns an HTML error page (not CSV) when the tab is missing...
     if text.lstrip().startswith("<"):
         return None
     rows = list(csv.reader(io.StringIO(text)))
     if len(rows) < 2 or not rows[1]:
+        return None
+    # ...but for an unknown sheet name it may also silently fall back to the
+    # FIRST sheet (the listings). Only trust output whose header is the Meta
+    # header, otherwise we'd parse a job title as "run metrics".
+    header = [c.strip().lower() for c in rows[0]]
+    if header[:1] != ["run_at"]:
         return None
     r = rows[1]
 
