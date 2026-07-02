@@ -20,12 +20,11 @@ import os
 import json
 import re
 from difflib import SequenceMatcher
-from datetime import datetime
 
 # Constants
 TMP_DIR = ".tmp"
 OUTPUT_FILE = os.path.join(TMP_DIR, "final_ranked_internships.json")
-TARGET_TOTAL = 130
+TARGET_TOTAL = 3
 
 # Per-source quotas (User Request: NO LinkedIn Jobs, Focus on Posts)
 SOURCE_QUOTAS = {
@@ -133,32 +132,61 @@ def normalize_title(title: str) -> str:
     normalized = re.sub(r'\s+', ' ', normalized)
     return normalized
 
+def standardize_role_for_dedup(role: str) -> str:
+    r = role.lower()
+    if any(x in r for x in ['software', 'sde', 'developer', 'frontend', 'backend', 'full stack', 'app', 'web', 'ios', 'android']): return 'software'
+    if any(x in r for x in ['data', 'machine learning', 'ml', 'ai', 'analytics', 'scientist']): return 'data'
+    if any(x in r for x in ['product', 'pm']): return 'product'
+    if any(x in r for x in ['marketing', 'seo', 'social media', 'content']): return 'marketing'
+    if any(x in r for x in ['design', 'ui', 'ux', 'graphic', 'video', 'animation']): return 'design'
+    if any(x in r for x in ['finance', 'audit', 'accounting', 'ca ']): return 'finance'
+    if any(x in r for x in ['sales', 'business development', 'bd', 'bdr']): return 'sales'
+    if any(x in r for x in ['hr', 'human resources', 'talent', 'recruitment']): return 'hr'
+    return ''.join(filter(str.isalpha, r))
 
-def is_duplicate(item1, item2):
-    """Check if duplicate by URL or fuzzy company+title match."""
-    # Strict URL check
-    if item1.get('url') and item2.get('url') and item1['url'] == item2['url']:
-        role1 = item1.get('role', '').strip().lower()
-        role2 = item2.get('role', '').strip().lower()
-        if role1 == role2:
-            return True
-        return False
-        
-    # Fuzzy match
-    c1, c2 = normalize_company(item1.get('company', '')), normalize_company(item2.get('company', ''))
-    
-    # Don't fuzzy match if company is unknown
-    if c1 == 'unknown' or c2 == 'unknown' or not c1 or not c2:
-        return False
-        
-    if c1 != c2:
-        return False
-        
-    t1, t2 = normalize_title(item1.get('title', '')), normalize_title(item2.get('title', ''))
-    if t1 == 'internship' or t2 == 'internship' or not t1 or not t2:
-        return False
-        
-    return SequenceMatcher(None, t1, t2).ratio() > 0.85
+
+def _url_role_key(item: dict):
+    url = item.get('url', '').strip()
+    if not url:
+        return None
+    role = standardize_role_for_dedup(item.get('title', '') or item.get('role', ''))
+    return f"{url}|{role}"
+
+
+def _company_role_key(item: dict):
+    company = normalize_company(item.get('company', ''))
+    role = standardize_role_for_dedup(item.get('title', '') or item.get('role', ''))
+    if not company or company == 'unknown' or not role or role == 'internship':
+        return None
+    return f"{company}|{role}"
+
+
+def _already_seen(item: dict, seen_url_role: set, seen_cr: set, seen_fuzzy: list) -> bool:
+    uk = _url_role_key(item)
+    if uk and uk in seen_url_role:
+        return True
+    ck = _company_role_key(item)
+    if ck and ck in seen_cr:
+        return True
+    if not uk and not ck:
+        t1 = normalize_title(item.get('title', ''))
+        if t1 and t1 != 'internship':
+            for s in seen_fuzzy:
+                t2 = normalize_title(s.get('title', ''))
+                if t2 and SequenceMatcher(None, t1, t2).ratio() > 0.85:
+                    return True
+    return False
+
+
+def _mark_seen(item: dict, seen_url_role: set, seen_cr: set, seen_fuzzy: list):
+    uk = _url_role_key(item)
+    if uk:
+        seen_url_role.add(uk)
+    ck = _company_role_key(item)
+    if ck:
+        seen_cr.add(ck)
+    if not uk and not ck:
+        seen_fuzzy.append(item)
 
 
 def main():
@@ -212,44 +240,32 @@ def main():
         
         print(f"{source_name}: {len(scored_items)} items")
 
-    # 2. Global Deduplication Pool
-    # We need to pick items carefully to avoid duplicates across sources
     final_selection = []
-    seen_items = []  # Keep track for dedup
-    
-    # 3. Quota Selection (Round 1: Top 10 from each)
+    seen_url_role: set = set()
+    seen_cr: set = set()
+    seen_fuzzy: list = []
+
+    # 3. Quota Selection (Round 1: Top quota from each source)
     remaining_pool = []
-    
+
     for source_name, items in all_source_items.items():
-        # Try to take top 10 unique items
         count = 0
+        target = SOURCE_QUOTAS.get(source_name, 10)
         for item in items:
-            # Check dup
-            is_dup = False
-            for seen in seen_items:
-                if is_duplicate(item, seen):
-                    is_dup = True
-                    break
-            
-            if is_dup:
+            if _already_seen(item, seen_url_role, seen_cr, seen_fuzzy):
                 continue
-                
-            # Get quota for this specific source (default to 10 if not found)
-            target = SOURCE_QUOTAS.get(source_name, 10)
-            
             if count < target:
                 final_selection.append(item)
-                seen_items.append(item)
+                _mark_seen(item, seen_url_role, seen_cr, seen_fuzzy)
                 count += 1
             else:
                 remaining_pool.append(item)
-    
+
     print(f"\nAfter Quota Selection: {len(final_selection)} items")
-    
+
     # 4. Fill Remainder (Round 2: Best of the rest)
-    # Sort remaining pool by score
     remaining_pool.sort(key=lambda x: x["score"], reverse=True)
-    
+
     needed = TARGET_TOTAL - len(final_selection)
     if needed > 0:
         print(f"Need {needed} more items to reach {TARGET_TOTAL}...")
@@ -257,17 +273,9 @@ def main():
         for item in remaining_pool:
             if added_count >= needed:
                 break
-            
-            # Check dup (against already selected)
-            is_dup = False
-            for seen in seen_items:
-                if is_duplicate(item, seen):
-                    is_dup = True
-                    break
-            
-            if not is_dup:
+            if not _already_seen(item, seen_url_role, seen_cr, seen_fuzzy):
                 final_selection.append(item)
-                seen_items.append(item)
+                _mark_seen(item, seen_url_role, seen_cr, seen_fuzzy)
                 added_count += 1
         print(f"Added {added_count} fill-up items")
     
