@@ -4,7 +4,7 @@ modal_app.py
 Modal serverless deployment for the Internship Pipeline.
 
 Features:
-- Scheduled cron job (daily 9PM IST = 3:30PM UTC)
+- Scheduled cron job (daily 11PM IST = 5:30PM UTC)
 - Webhook trigger for manual runs
 - Secrets management via Modal
 - Pay-per-second billing
@@ -34,12 +34,15 @@ image = (
         "google-api-python-client",
         "requests",
         "fastapi[standard]",
-        "google-generativeai",
+        "google-genai",          # Replaces deprecated google-generativeai
         "groq",
         "openai",
         "python-dateutil",
     )
     .add_local_dir("execution", remote_path="/app/execution")
+    .add_local_file("run_pipeline.py", remote_path="/app/run_pipeline.py")
+    .add_local_file("extraction_prompt.txt", remote_path="/app/extraction_prompt.txt")
+    .add_local_file("token.json", remote_path="/app/token.json") 
 )
 
 
@@ -52,9 +55,16 @@ def _setup_env():
         with open("credentials.json", "w") as f:
             f.write(os.getenv("GOOGLE_CREDENTIALS_JSON"))
     
-    if os.getenv("GOOGLE_TOKEN_JSON"):
+    if os.getenv("GOOGLE_TOKEN_JSON") and not os.path.exists("token.json"):
         with open("token.json", "w") as f:
             f.write(os.getenv("GOOGLE_TOKEN_JSON"))
+            
+    # DIAGNOSTIC: Confirm Apify token is present and match user's expectation
+    apify_token = os.getenv("APIFY_API_TOKEN")
+    if apify_token:
+        print(f"✅ APIFY_API_TOKEN detected: {apify_token[:8]}...{apify_token[-4:]}")
+    else:
+        print("❌ APIFY_API_TOKEN NOT DETECTED")
 
 
 def _run_script(script_path, timeout=600):
@@ -85,40 +95,26 @@ def _run_script(script_path, timeout=600):
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("internship-secrets")],
-    timeout=2400,  # 40 minutes max (130 posts takes ~20 mins)
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ],
+    timeout=3600,  # 60 minutes
+    memory=2048,   # 2GB RAM to prevent OOM during multi-threading
 )
 def run_pipeline():
     """
-    Run the full internship pipeline:
-    1. Scrape LinkedIn Posts (target: 130)
-    2. Aggregate & Score
-    3. Publish to Google Sheets
-    4. Push to FTB Hustle API
+    Run the full internship pipeline using the master orchestrator script.
     """
     _setup_env()
     
     print("=" * 60)
-    print("INTERNSHIP PIPELINE - MODAL EXECUTION")
-    print("Target: 130 India-only Internships")
+    print("INTERNSHIP PIPELINE - MODAL CLOUD TRIGGER")
     print("=" * 60)
     
-    results = {}
+    # Aligning the internal Modal timeout safely up against the 3600s hard ceiling.
+    run_status = _run_script("run_pipeline.py", timeout=3500)
     
-    # Step 1: Scrape LinkedIn Posts
-    results["scrape"] = _run_script("execution/scrape_linkedin_posts.py", timeout=1200)
-    
-    # Step 2: Aggregate & Score
-    results["aggregate"] = _run_script("execution/aggregate_and_score.py", timeout=180)
-    
-    # Step 3: Publish to Google Sheets + API
-    if os.getenv("GOOGLE_SHEET_ID"):
-        results["publish"] = _run_script("execution/publish_to_sheets.py", timeout=180)
-    else:
-        print("\n>> Step 3: Skipped (GOOGLE_SHEET_ID missing)")
-        results["publish"] = "skipped"
-    
-    # Final count
+    # Final count reporting
     final_count = 0
     if os.path.exists(".tmp/final_ranked_internships.json"):
         try:
@@ -128,35 +124,57 @@ def run_pipeline():
             pass
     
     print(f"\n{'=' * 60}")
-    print(f"COMPLETE — {final_count} internships extracted")
-    print(f"Push results: {results}")
+    print(f"MODAL COMPLETE — {final_count} internships extracted via Unified Script")
+    print(f"Orchestrator Result: {run_status}")
     print('=' * 60)
     
     return {
-        "status": "completed",
+        "status": "completed" if run_status == "success" else run_status,
         "internships_count": final_count,
-        "results": results,
         "sheet_url": f"https://docs.google.com/spreadsheets/d/{os.getenv('GOOGLE_SHEET_ID')}"
     }
 
 
-# ── Single daily run at 9:00 PM IST (3:30 PM UTC) ──────────────
+# ── Single daily run at 11:00 PM IST (5:30 PM UTC) ──────────────
 @app.function(
-    schedule=modal.Cron("30 15 * * *"),  # 9:00 PM IST = 15:30 UTC
+    schedule=modal.Cron("30 17 * * *"),  # 23:00 IST = 17:30 UTC
     image=image,
-    secrets=[modal.Secret.from_name("internship-secrets")],
-    timeout=2400,
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ],
+    timeout=3600,
+    memory=2048,
 )
 def nightly_run():
-    """Nightly scheduled run — 9:00 PM IST every day."""
+    """Nightly scheduled run — 11:00 PM IST every day."""
     return run_pipeline.local()
+
+
+# ── Daily digest email at 8:00 AM IST (2:30 AM UTC) ─────────────
+@app.function(
+    schedule=modal.Cron("30 2 * * *"),  # 08:00 IST = 02:30 UTC
+    image=image,
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ],
+    timeout=900,
+)
+def daily_digest():
+    """Send each subscriber their personalized internship digest."""
+    _setup_env()
+    result = _run_script("execution/send_daily_digest.py", timeout=600)
+    print(f"Digest run result: {result}")
+    return {"status": "completed" if result == "success" else result}
 
 
 # ── Webhook for manual triggers ─────────────────────────────
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("internship-secrets")],
-    timeout=2400,
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ],
+    timeout=3600,
+    memory=2048,
 )
 @modal.fastapi_endpoint(method="GET")
 def run_now():
@@ -170,17 +188,32 @@ def run_now():
 @modal.fastapi_endpoint(method="GET")
 def health():
     """Health check endpoint"""
-    return {"status": "healthy", "app": "internship-pipeline", "schedule": "daily 9PM IST"}
+    return {"status": "healthy", "app": "internship-pipeline", "schedule": "daily 11PM IST"}
 
 
-@app.function()
+@app.function(
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ]
+)
 def test_log():
-    """Diagnostic function to verify cloud logging."""
+    """Diagnostic function to verify cloud logging and secrets."""
+    import os
     print("HELLO FROM MODAL CLOUD")
-    import time
-    for i in range(5):
-        print(f"Log count: {i}", flush=True)
-        time.sleep(1)
+    sheet_id = os.getenv("GOOGLE_SHEET_ID")
+    print(f"GOOGLE_SHEET_ID: {sheet_id}")
+    creds = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    print(f"GOOGLE_CREDENTIALS_JSON loaded: {bool(creds)}")
+    token = os.getenv("GOOGLE_TOKEN_JSON")
+    print(f"GOOGLE_TOKEN_JSON loaded: {bool(token)}")
+    if creds:
+        print(f"Creds startswith {{: {creds.startswith('{')}")
+    apify_token = os.getenv("APIFY_API_TOKEN")
+    print(f"APIFY_API_TOKEN loaded: {bool(apify_token)}")
+    if apify_token:
+        print(f"✅ Modal is using token: {apify_token[:8]}...{apify_token[-4:]}")
+    else:
+        print("❌ APIFY_API_TOKEN IS MISSING IN CLOUD!")
     print("DONE TEST LOG")
 
 

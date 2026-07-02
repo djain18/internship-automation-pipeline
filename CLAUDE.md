@@ -1,57 +1,67 @@
-# SYSTEM_ROLE: THE ORCHESTRATOR
+# CLAUDE.md
 
-You are the **Lead Orchestrator** of an automated engineering loop. Your goal is not just to answer, but to *solve* via deterministic execution.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## I. CORE ARCHITECTURE
-You operate a strict separation of concerns to ensure reliability.
+## What this repo is
 
-### 1. The Directive Layer (Intent)
-* **Location:** `directives/*.md`
-* **What it is:** The "Why" and "What". These are standard operating procedures (SOPs) written in natural language.
-* **Your Job:** Read these to understand the definition of done, input requirements, and edge cases.
+Two systems that meet at **one Google Sheet**:
 
-### 2. The Orchestration Layer (YOU)
-* **What you are:** The intelligent router and decision engine.
-* **Your Job:** * **Plan:** Break user requests into atomic steps based on the Directive.
-    * **Route:** Identify if a tool exists in `execution/` to handle the step.
-    * **Synthesize:** Read tool outputs from `.tmp/` and decide the next action.
-    * **Refine:** If a tool fails, you do not give up. You debug, patch, and retry.
+1. **Automation pipeline** (Python) — every night scrapes LinkedIn hiring posts, scores them with an LLM, and writes clean internship rows to a Google Sheet.
+2. **Rise website** — a public site where students browse and apply to those internships. `api/` (FastAPI) reads the sheet; `rise-web/` (React) is the front end.
 
-### 3. The Execution Layer (Action)
-* **Location:** `execution/*.py`
-* **What it is:** The "How". Pure, deterministic Python code.
-* **Your Job:** NEVER simulate work. ALWAYS execute code. 
-    * *Bad:* "I have analyzed the CSV file and found..." (Hallucination risk)
-    * *Good:* "I ran `analysis_script.py` and the logs indicate..." (Deterministic)
+```
+[Pipeline]  run_pipeline.py → Apify scrape → LLM extract/score → publish_to_sheets.py ─┐
+                                                                                        ├─► GOOGLE SHEET ("RISE Internships")
+[Website]   rise-web (Vercel) ──VITE_API_BASE──► api/ (Railway) ──GOOGLE_API_KEY──read──┘
+```
 
----
+The Sheet is the **only** coupling between the two. They share `GOOGLE_SHEET_ID`; the pipeline writes via OAuth (`credentials.json`/`token.json`), the API reads via a public API key (sheet must be "anyone with link can view").
 
-## II. OPERATIONAL PROTOCOLS
+## Orchestrator philosophy (how to operate here)
 
-### Protocol A: Tool First, Code Second
-Before writing new code, inspect the `execution/` directory.
-1.  **Search:** Does a script exist that matches 80% of the need?
-2.  **Adapt:** If yes, run it. If it needs arguments, provide them.
-3.  **Create:** Only write a new script if absolutely necessary. Save it to `execution/` immediately.
+- **Execute, never simulate.** Solve by running the deterministic Python in `execution/`, not by hand-reasoning outputs.
+- **Tool-first:** before writing new code, check `execution/` for an existing script (reuse if ~80% match).
+- **Self-anneal on failure:** read the stack trace → patch → re-run → if a permanent constraint is found, update the relevant `directives/*.md`.
+- **File hygiene:** inputs from `directives/`; intermediates to `.tmp/`; secrets via `os.environ`; outputs to the Sheet.
+- A task is done only when verification passes (the script runs clean and the Sheet/site reflect it).
 
-### Protocol B: The "Self-Annealing" Loop
-You are responsible for system stability. When a script fails:
-1.  **Analyze Stack Trace:** Don't just apologize. Read the error.
-2.  **Patch:** Rewrite the script to fix the bug (syntax, API limit, logic error).
-3.  **Verify:** Run the script again immediately.
-4.  **Document:** Update the `directive` if you discovered a permanent constraint (e.g., "API X now requires a user-agent header").
+## Commands
 
-### Protocol C: File Hygiene
-* **Inputs:** Read from `directives/` or user prompts.
-* **Processing:** Use `.tmp/` for all intermediate files (JSON, CSV, scrape data).
-* **Outputs:** Final deliverables go where the user requested.
-* **Secrets:** Never output API keys. Read them from `os.environ` (assume `.env` is loaded).
+### Automation pipeline (repo root)
+```bash
+pip install -r requirements.txt
+python run_pipeline.py                 # full local run: scrape → score → publish to Sheet
+python sync_secrets.py                 # push .env → Modal secret "internship-secrets"
+modal deploy modal_app.py              # deploy + activate nightly cron (11PM IST = 30 17 UTC)
+```
+`run_pipeline.py` orchestrates `export_sheet_keys.py` → `scrape_linkedin_posts.py` → `publish_to_sheets.py`, retrying in "topup" mode until `TARGET_NEW` (105) net-new internships are added (max 3 passes). There is **no automated test suite** — verify by running and inspecting the Sheet.
 
----
+### Website API (`api/`)
+```bash
+cd api && pip install -r requirements.txt
+uvicorn main:app --reload --port 8000  # local; needs GOOGLE_SHEET_ID + GOOGLE_API_KEY in env
+```
+Routes: `GET /api/listings`, `GET /api/stats`, `POST /api/subscribe`, `GET /health`. Deploys to **Railway** (`api/Procfile`). Falls back to `api/seed_listings.json` when the Sheet is unreachable.
 
-## III. BEHAVIORAL ALIGNMENT
-* **Conciseness:** Do not explain *that* you are going to use a tool. Just use the tool.
-* **Transparency:** When updating a Directive, explicitly state what you changed and why.
-* **Persistence:** A task is not complete until the verification step passes.
+### Front end (`rise-web/`)
+```bash
+cd rise-web && npm install
+npm run dev                            # set VITE_API_BASE to the API URL (blank = seed data)
+npm run build                          # production build → dist/ (deploys to Vercel)
+```
 
-**CURRENT STATE:** Awaiting User Input.
+## Architecture notes that span files
+
+- **Pipeline scoring/filtering** lives in `execution/llm_post_analyzer.py`: an LLM extracts structured fields and sets `should_include`; posts then pass scam/blacklist/India-eligibility/hiring-signal filters. LLM provider cascades **OpenRouter → Gemini → OpenAI → Groq → regex** based on which API key is set (`configure_llm`).
+- **The Sheet schema is 18 columns A–R** (`HEADERS` in `execution/publish_to_sheets.py`; mirrored by `COL` in `api/sheets.py`). Changing columns means editing **both**. `api/sheets.py:_row_to_listing` derives `id`, `cluster`, `score`, and `hoursAgo` on read — those are computed, not stored.
+- **Decoupled from ftbhustle:** the pipeline used to also POST every internship to an external `internal.ftbhustle.com` API. That `ingest_to_api()` call was removed — the Sheet is now the single source of truth. Do not reintroduce external pushes.
+- **`rise-web/` is the active site.** `ftb-web/` (the "Dispatch" editorial design, custom CSS + GSAP) is **legacy/superseded**; `codenest/` is an unrelated video-hero experiment. Don't edit those when working on the site.
+- **`rise-web` design system:** Tailwind with HSL CSS tokens in `src/index.css`, Instrument Serif (display) + Inter (body), indigo accent, frosted-glass panels, Framer Motion for entrance + scroll animations. New sections must match these tokens (never raw colors). Data flows through `src/lib/api.js` (live) with `src/lib/seed.js` fallback; apply actions go through `src/lib/format.js:openApply` (applyLink → postUrl → mailto).
+
+## Environment variables
+
+- **Pipeline** (`.env`, also synced to Modal): `APIFY_API_TOKEN`, one LLM key (`OPENROUTER_API_KEY`/`GEMINI_API_KEY`/`OPENAI_API_KEY`/`GROQ_API_KEY`), `GOOGLE_SHEET_ID`, `GOOGLE_CREDENTIALS_JSON`, `GOOGLE_TOKEN_JSON`.
+- **API** (Railway): `GOOGLE_SHEET_ID` (same as pipeline), `GOOGLE_API_KEY`, `RESEND_API_KEY`, `RESEND_AUDIENCE_ID`, `FROM_EMAIL`, `FRONTEND_ORIGIN` (CORS = the Vercel URL).
+- **Front end** (Vercel): `VITE_API_BASE` = the Railway API URL.
+
+Note: `.env` is read-protected in this environment — changes to `GOOGLE_SHEET_ID` etc. must be made by the user (and re-synced to Modal).

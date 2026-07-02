@@ -28,3 +28,30 @@ ENV/
 # IDE
 .vscode/
 .idea/
+
+# Node / frontend build
+node_modules/
+dist/
+.vercel/
+*.local
+
+# Secrets & local notes
+secret_help.txt
+*.env.local
+
+# Local agent / tooling
+.claude/
+.mcp.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal / non-code files
+*.docx
+"ChatGPT Image*.png"
+*.tmp_dev.log
+
+# Not part of the Rise project (generic tooling notes / unrelated experiment)
+skills/
+codenest/
