@@ -1,0 +1,38 @@
+[
+  {"text": "We're hiring a Backend Developer Intern at Zerodha! 6-month paid internship, Bangalore. Apply at careers@zerodha.com", "location": "Bangalore", "company": "Zerodha", "label": "real"},
+  {"text": "Hiring Data Science interns for our Mumbai office. Stipend 25k/month. Share your CV at hr@fintech.in", "location": "Mumbai", "company": "FintechCo", "label": "real"},
+  {"text": "Looking for a Product Management Intern (APM) to join our team in Bengaluru. DM or apply: https://jobs.lever.co/acme/pm-intern", "location": "Bengaluru", "company": "Acme", "label": "real"},
+  {"text": "Marketing internship opening at our Gurgaon startup. Freshers welcome. Email resume to talent@growthlabs.in", "location": "Gurgaon", "company": "GrowthLabs", "label": "real"},
+  {"text": "We are expanding! Frontend Intern needed, React + Tailwind. Remote within India. Apply: https://forms.gle/xyz123", "location": "Remote", "company": "PixelWorks", "label": "real"},
+  {"text": "Hiring UI/UX Design Intern in Pune. Portfolio required. Send work to design@studio.co.in", "location": "Pune", "company": "Studio", "label": "real"},
+  {"text": "Finance Intern opportunity at a Chennai NBFC. 3 months, certificate + stipend. Apply via https://careers.nbfc.in", "location": "Chennai", "company": "NBFC Ltd", "label": "real"},
+  {"text": "Our Hyderabad team is recruiting an HR Intern. Talent acquisition focus. Contact people@hrtech.in", "location": "Hyderabad", "company": "HRTech", "label": "real"},
+  {"text": "Content Writing Intern wanted for a Noida edtech. Openings for 2 candidates. jobs@edtech.in", "location": "Noida", "company": "EdtechCo", "label": "real"},
+  {"text": "Sales Intern (inside sales) — Delhi. Immediate joining. Apply now at https://acme.in/careers", "location": "New Delhi", "company": "Acme", "label": "real"},
+  {"text": "Machine Learning Intern for a research-driven startup, pan India remote. Apply: ml-jobs@labs.in", "location": "Pan India", "company": "Labs", "label": "real"},
+  {"text": "We're hiring! Founder's office intern / generalist. Bangalore. Work directly with the CEO. hr@startup.in", "location": "Bangalore", "company": "Startup", "label": "real"},
+
+  {"text": "Work from home typing job! Earn daily up to 2000. 100% genuine. Pay a small registration fee to start.", "location": "Remote", "company": "HomeWork", "label": "scam"},
+  {"text": "Data entry job, no investment needed earn daily from home. WhatsApp to register now!", "location": "Remote", "company": "EasyEarn", "label": "scam"},
+  {"text": "Guaranteed placement internship! Just pay a training fee of 999 and get a certificate + job.", "location": "Delhi", "company": "CertCorp", "label": "scam"},
+  {"text": "Simple copy paste work, earn per day. Security deposit refundable. Message to join.", "location": "Mumbai", "company": "QuickCash", "label": "scam"},
+  {"text": "Form filling job for students. Easy money. Registration charges apply. 100% genuine opportunity.", "location": "Remote", "company": "FormFill", "label": "scam"},
+  {"text": "Home based typing, earn daily! Caution money required. Limited seats. WhatsApp registration open.", "location": "Remote", "company": "TypePro", "label": "scam"},
+
+  {"text": "Excited to announce I'm officially a Software Engineer Intern at Google! Grateful to my mentors.", "location": "Bangalore", "company": "", "label": "story"},
+  {"text": "Wrapped up my time as a marketing intern. Thrilled to share it was the best summer of learning!", "location": "Mumbai", "company": "", "label": "story"},
+  {"text": "I am looking for a data science internship. Open to work, immediate joiner. Please refer me!", "location": "Delhi", "company": "", "label": "story"},
+  {"text": "Happy to share that I completed my internship certificate program. From learning to earning!", "location": "Pune", "company": "", "label": "story"},
+  {"text": "Proud to share my journey from a fresher to a full-time role. Seeking a new opportunity now.", "location": "Chennai", "company": "", "label": "story"},
+
+  {"text": "Hiring a Software Engineer Intern for our London HQ. UK work authorization required. apply@uktech.co.uk", "location": "London, UK", "company": "UKTech", "label": "foreign"},
+  {"text": "Summer internship in New York, USA. On-site only. Must be eligible to work in the United States.", "location": "New York, USA", "company": "WallSt", "label": "foreign"},
+  {"text": "We're hiring interns in Dubai, UAE. Relocation provided. Apply at careers@dubaifirm.ae", "location": "Dubai, UAE", "company": "DubaiFirm", "label": "foreign"},
+  {"text": "Remote internship, global team, work from anywhere in the world. No specific country focus.", "location": "Remote", "company": "GlobalCo", "label": "foreign"},
+  {"text": "Product intern for our Singapore office. SG citizens/PR preferred. jobs@sgstartup.sg", "location": "Singapore", "company": "SGStartup", "label": "foreign"},
+
+  {"text": "Just had an amazing team lunch today. Feeling grateful for the culture here at our company!", "location": "", "company": "SomeCo", "label": "noise"},
+  {"text": "Check out our new blog post on the future of AI in enterprise software. Link in comments.", "location": "", "company": "TechBlog", "label": "noise"},
+  {"text": "Congratulations to our team on shipping the new product feature this quarter. Great work everyone.", "location": "Bangalore", "company": "ProductCo", "label": "noise"},
+  {"text": "What are your favorite productivity tools? Drop them in the comments, curious to hear.", "location": "", "company": "", "label": "noise"}
+]

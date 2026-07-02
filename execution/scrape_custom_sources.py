@@ -21,13 +21,17 @@ Output:
 """
 
 import os
+import sys
 import json
 import requests
-import re
 from bs4 import BeautifulSoup
 from apify_client import ApifyClient
 from dotenv import load_dotenv
-from llm_post_analyzer import filter_posts_with_llm
+
+try:
+    from llm_post_analyzer import filter_posts_with_llm
+except ImportError:
+    from execution.llm_post_analyzer import filter_posts_with_llm
 
 load_dotenv()
 
@@ -141,25 +145,16 @@ def main():
         
     # 2. Websites
     for site in WEBSITES:
-        web_posts = scrape_website_simple(site)
-        all_raw_posts.append(web_posts) # Append list? No, extend.
-        
-    # Fix list flattening if needed
-    flat_posts = []
-    for item in all_raw_posts:
-        if isinstance(item, list):
-            flat_posts.extend(item)
-        else:
-            flat_posts.append(item)
-            
-    print(f"\n📊 Total Items to Analyze: {len(flat_posts)}")
-    if not flat_posts:
+        all_raw_posts.extend(scrape_website_simple(site))
+
+    print(f"\n📊 Total Items to Analyze: {len(all_raw_posts)}")
+    if not all_raw_posts:
         print("No items found.")
         return
 
     # 3. LLM Verification (OpenAI)
     print("🤖 Verifying with OpenAI (gpt-4o-mini)...")
-    verified = filter_posts_with_llm(flat_posts)
+    verified = filter_posts_with_llm(all_raw_posts)
     
     # 4. Save
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -171,7 +166,7 @@ def main():
     if verified:
         import subprocess
         print("🚀 Publishing to Google Sheet...")
-        subprocess.run(["python", "execution/publish_mnc_run.py", OUTPUT_FILE])
+        subprocess.run([sys.executable, "execution/publish_mnc_run.py", OUTPUT_FILE])
 
 if __name__ == "__main__":
     main()

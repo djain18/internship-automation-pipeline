@@ -112,7 +112,7 @@ def append_new_entries(service, sheet_id, items, existing_urls, sheet_name="Shee
         result = service.spreadsheets().values().get(spreadsheetId=sheet_id, range=f"{sheet_name}!A:A").execute()
         values = result.get("values", [])
         start_rank = len(values) # 1-indexed (header is 1)
-    except:
+    except Exception:
         start_rank = 1
 
     for i, item in enumerate(items):
@@ -148,15 +148,19 @@ def append_new_entries(service, sheet_id, items, existing_urls, sheet_name="Shee
         print("No new entries to add")
         return 0
     
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range=f"{sheet_name}!A:M",
-        valueInputOption="RAW",
-        insertDataOption="INSERT_ROWS",
-        body={"values": new_rows}
-    ).execute()
-    print(f"Appended {len(new_rows)} new entries")
-    return len(new_rows)
+    try:
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=f"{sheet_name}!A:M",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": new_rows}
+        ).execute()
+        print(f"Appended {len(new_rows)} new entries")
+        return len(new_rows)
+    except HttpError as e:
+        print(f"Failed to append entries: {e}")
+        return 0
 
 def main():
     print("Publishing MNC Run Results...")

@@ -1,0 +1,21 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# Legacy one-off experiments and generated dirs are not part of the maintained
+# surface; lint the core pipeline, API, tests, and eval instead.
+extend-exclude = [
+    ".claude",
+    "archive",
+    "node_modules",
+    "ftb-web",
+    "codenest",
+    ".tmp",
+]
+
+[tool.ruff.lint]
+# E9 = syntax errors, F = pyflakes (unused imports, undefined names — real bugs).
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
