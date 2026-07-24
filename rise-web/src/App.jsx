@@ -10,19 +10,26 @@ import Internships from "./pages/Internships";
 import { fetchListings, fetchStats } from "./lib/api";
 
 // On route change: scroll to top, or to the hashed section if a #hash is present.
-function ScrollManager() {
+function ScrollManager({ ready }) {
   const { pathname, hash } = useLocation();
   useEffect(() => {
     if (hash) {
-      // Wait a tick for the target section to render, then scroll to it.
       const id = hash.replace("#", "");
-      requestAnimationFrame(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+      const attempt = () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Sections above the target (e.g. the async listings teaser) can still be
+      // in their short "loading" state on the first attempt, changing height once
+      // data arrives — retry briefly so the scroll lands correctly either way.
+      requestAnimationFrame(attempt);
+      const t1 = setTimeout(attempt, 300);
+      const t2 = setTimeout(attempt, 900);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     } else {
       window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
     }
-  }, [pathname, hash]);
+  }, [pathname, hash, ready]);
   return null;
 }
 
@@ -58,7 +65,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <ScrollProgress />
-      <ScrollManager />
+      <ScrollManager ready={!loading} />
       <Navbar />
       <main>
         <Routes>
