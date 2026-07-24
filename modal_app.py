@@ -234,10 +234,10 @@ def api_web():
     schedule=modal.Period(minutes=30),
 )
 def api_uptime_check():
-    import requests
+    import httpx
     url = "https://dakshinjain187--internship-pipeline-api-web.modal.run/api/listings"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = httpx.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         count = len(data) if isinstance(data, list) else 0
