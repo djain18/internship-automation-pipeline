@@ -227,6 +227,28 @@ def api_web():
     return fastapi_app
 
 
+# ── Cheap uptime check — the whole reason this project exists is that
+# the last outage went unnoticed because seed-data masked it. ──────────
+@app.function(
+    image=api_image,
+    schedule=modal.Period(minutes=30),
+)
+def api_uptime_check():
+    import requests
+    url = "https://dakshinjain187--internship-pipeline-api-web.modal.run/api/listings"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        count = len(data) if isinstance(data, list) else 0
+        if count == 0:
+            print(f"⚠️  UPTIME CHECK: {url} returned 0 listings")
+        else:
+            print(f"✅ UPTIME CHECK: {url} returned {count} listings")
+    except Exception as e:
+        print(f"❌ UPTIME CHECK FAILED: {url} — {e}")
+
+
 @app.function(
     secrets=[
         modal.Secret.from_name("internship-secrets"),
