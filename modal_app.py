@@ -243,10 +243,14 @@ def api_uptime_check():
         count = len(data) if isinstance(data, list) else 0
         if count == 0:
             print(f"⚠️  UPTIME CHECK: {url} returned 0 listings")
+            raise RuntimeError(f"Uptime check got 0 listings from {url}")
         else:
             print(f"✅ UPTIME CHECK: {url} returned {count} listings")
+    except RuntimeError:
+        raise
     except Exception as e:
         print(f"❌ UPTIME CHECK FAILED: {url} — {e}")
+        raise
 
 
 @app.function(
