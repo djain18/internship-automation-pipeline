@@ -1,5 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/AuthContext";
 
 const links = [
   { label: "Internships", to: "/internships" },
@@ -9,6 +10,7 @@ const links = [
 
 export default function Navbar() {
   const navigate = useNavigate();
+  const { user, loading, signInWithGoogle, signOutUser } = useAuth();
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
@@ -33,12 +35,31 @@ export default function Navbar() {
           ))}
         </div>
 
-        <Button
-          onClick={() => navigate("/#alerts")}
-          className="rounded-full px-5 text-sm font-medium"
-        >
-          Get daily alerts
-        </Button>
+        {loading ? null : user ? (
+          <div className="flex items-center gap-3">
+            {user.photoURL && (
+              <img
+                src={user.photoURL}
+                alt={user.displayName || user.email}
+                className="h-8 w-8 rounded-full"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <button
+              onClick={signOutUser}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <Button
+            onClick={() => navigate("/#alerts")}
+            className="rounded-full px-5 text-sm font-medium"
+          >
+            Get daily alerts
+          </Button>
+        )}
       </nav>
     </header>
   );
