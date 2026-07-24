@@ -5,7 +5,7 @@ Sends the personalized daily internship digest that the welcome email promises.
 
 Flow:
   1. Pull the current live listings from the deployed API (single source of truth).
-  2. Pull subscribers from the Resend audience.
+  2. Pull subscribers from Firestore's users/ collection (via firebase-admin).
   3. For each subscriber, pick the freshest listings that match their saved
      roles/cities (or the overall freshest if they have no preferences).
   4. Send a clean, Rise-branded HTML digest via Resend.
@@ -14,9 +14,10 @@ Safe by default: with no RESEND_API_KEY it runs as a DRY RUN and just prints
 what it would have sent, so it's harmless to invoke locally.
 
 Env:
-  RESEND_API_KEY, RESEND_AUDIENCE_ID   — delivery + subscriber list
-  API_BASE                              — listings source (deployed FastAPI)
-  SITE_URL, FROM_EMAIL                  — links + sender
+  RESEND_API_KEY               — delivery (still used for sending)
+  FIREBASE_SERVICE_ACCOUNT_JSON — Firestore subscriber source
+  API_BASE                      — listings source (deployed FastAPI)
+  SITE_URL, FROM_EMAIL          — links + sender
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("digest")
 
 RESEND_API_KEY  = os.getenv("RESEND_API_KEY", "")
-RESEND_AUDIENCE = os.getenv("RESEND_AUDIENCE_ID", "")
 API_BASE   = os.getenv("API_BASE", "https://dakshinjain187--internship-pipeline-api-web.modal.run").rstrip("/")
 SITE_URL   = os.getenv("SITE_URL", "https://rise-web-kappa.vercel.app")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "onboarding@resend.dev")
