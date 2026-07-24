@@ -237,7 +237,7 @@ def api_uptime_check():
     import httpx
     url = "https://dakshinjain187--internship-pipeline-api-web.modal.run/api/listings"
     try:
-        resp = httpx.get(url, timeout=10)
+        resp = httpx.get(url, timeout=10, follow_redirects=True)
         resp.raise_for_status()
         data = resp.json()
         count = len(data) if isinstance(data, list) else 0
