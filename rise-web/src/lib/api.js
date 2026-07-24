@@ -44,17 +44,3 @@ export async function fetchStats(signal) {
     return SEED_STATS;
   }
 }
-
-export async function subscribe(payload) {
-  if (!BASE) {
-    // No backend configured — pretend success in local/demo mode.
-    return { status: "ok", demo: true };
-  }
-  const res = await fetch(`${BASE}/api/subscribe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}

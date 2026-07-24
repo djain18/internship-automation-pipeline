@@ -20,5 +20,4 @@ def test_main_app_has_expected_routes():
     paths = {route.path for route in main.app.routes}
     assert "/api/listings" in paths
     assert "/api/stats" in paths
-    assert "/api/subscribe" in paths
     assert "/health" in paths
