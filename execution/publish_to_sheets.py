@@ -16,12 +16,20 @@ Prerequisites:
 
 import logging
 import os
+import sys
 import json
 import hashlib
 import time
 import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
+# UTF-8 stdout so emoji log lines survive a redirected Windows console (cp1252).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 

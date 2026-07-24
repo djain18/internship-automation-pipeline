@@ -15,7 +15,18 @@ import json
 import os
 import subprocess
 import shutil
+import sys
 import time
+
+# Force UTF-8 stdout/stderr so emoji log lines don't crash local Windows runs
+# (cp1252 console). Linux/Modal already default to UTF-8; this is a no-op there.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 def run_script(script_path, desc, timeout=3400):
     """Run a python script and wait for it to complete."""
@@ -46,8 +57,13 @@ def run_script(script_path, desc, timeout=3400):
         print(f"❌ Error running {desc}: {e}")
         return False
 
-TARGET_NEW = 105   # Minimum net-new internships to publish per run
-MAX_RETRIES = 2    # Max topup attempts after the first pass
+# Quality-first policy (2026-07): there is NO hard quota. TARGET_NEW is a SOFT
+# target — we stop early once reached, and we NEVER pad with low-quality posts to
+# hit it. Topup passes exist only to gather genuine posts we may have missed; a
+# pass that yields few net-new means the genuine supply is exhausted, so we stop.
+TARGET_NEW = 35    # soft target; publishing fewer genuine ones is acceptable
+MAX_RETRIES = 1    # at most one topup pass; quality over volume
+MIN_MARGINAL_YIELD = 8  # stop topup if a pass adds fewer than this (supply dry)
 
 
 def _read_publish_result():
@@ -121,20 +137,28 @@ def main():
 
         appended = run_scrape_and_publish()
         total_appended += appended
-        print(f"\n>>> Attempt {attempt} result: {appended} new entries published (total so far: {total_appended}/{TARGET_NEW})")
+        print(f"\n>>> Attempt {attempt} result: {appended} new genuine entries published (total so far: {total_appended}, soft target {TARGET_NEW})")
 
         if total_appended >= TARGET_NEW:
-            print(f"✅ Target of {TARGET_NEW} reached!")
+            print(f"✅ Soft target of {TARGET_NEW} reached — stopping (quality-first).")
+            break
+
+        # Quality-first early stop: if this pass barely added anything, the pool
+        # of genuine Bengaluru/remote internships is exhausted. Padding further
+        # only reintroduces spam, so stop here and publish what we have.
+        if attempt > 1 and appended < MIN_MARGINAL_YIELD:
+            print(f"🟢 Only {appended} net-new this pass (< {MIN_MARGINAL_YIELD}). "
+                  f"Genuine supply looks exhausted — stopping with {total_appended} quality internships.")
             break
 
         if attempt <= MAX_RETRIES:
             deficit = TARGET_NEW - total_appended
-            print(f"\n⚠️  Only {total_appended}/{TARGET_NEW} published. Deficit: {deficit}. Running topup...")
+            print(f"\n↻ {total_appended} published so far. Running one topup pass for up to {deficit} more genuine posts...")
             # Refresh sheet keys (now includes the rows just appended)
             run_script("execution/export_sheet_keys.py", "Refresh Sheet Dedup Keys for Topup")
             _write_topup_config(deficit)
         else:
-            print(f"⚠️  Max retries reached. Final count: {total_appended} new entries published.")
+            print(f"🟢 Done. Final count: {total_appended} genuine internships published (no padding).")
 
     _clear_topup_config()
 
