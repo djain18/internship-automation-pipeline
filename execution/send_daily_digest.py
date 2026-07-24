@@ -32,7 +32,7 @@ log = logging.getLogger("digest")
 
 RESEND_API_KEY  = os.getenv("RESEND_API_KEY", "")
 RESEND_AUDIENCE = os.getenv("RESEND_AUDIENCE_ID", "")
-API_BASE   = os.getenv("API_BASE", "https://fireinthebellyftb--internship-pipeline-api-web.modal.run").rstrip("/")
+API_BASE   = os.getenv("API_BASE", "https://dakshinjain187--internship-pipeline-api-web.modal.run").rstrip("/")
 SITE_URL   = os.getenv("SITE_URL", "https://rise-web-kappa.vercel.app")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "onboarding@resend.dev")
 FROM_NAME  = "Rise"
