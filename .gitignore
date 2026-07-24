@@ -42,6 +42,7 @@ secret_help.txt
 # Local agent / tooling
 .claude/
 .mcp.json
+.worktrees/
 
 # OS
 .DS_Store
