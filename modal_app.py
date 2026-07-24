@@ -172,6 +172,7 @@ def nightly_run():
     image=image,
     secrets=[
         modal.Secret.from_name("internship-secrets"),
+        modal.Secret.from_name("firebase-admin-key"),
     ],
     timeout=900,
 )
