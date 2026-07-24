@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import html
 import logging
+import tempfile
 
 import requests
 
@@ -53,28 +54,45 @@ def fetch_listings() -> list[dict]:
 
 
 def fetch_contacts() -> list[dict]:
-    if not RESEND_API_KEY or not RESEND_AUDIENCE:
-        return []
+    """Read all subscriber preference docs from Firestore's users/ collection."""
     try:
-        resp = requests.get(
-            f"{BASE}/audiences/{RESEND_AUDIENCE}/contacts",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        contacts = resp.json().get("data", [])
-        # Drop unsubscribed contacts.
-        return [c for c in contacts if not c.get("unsubscribed")]
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+    except ImportError:
+        log.error("firebase-admin not installed — cannot fetch subscribers.")
+        return []
+
+    if not firebase_admin._apps:
+        cred_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+        if not cred_json:
+            log.warning("FIREBASE_SERVICE_ACCOUNT_JSON not set — skipping (dry run).")
+            return []
+        # tempfile.gettempdir(), not a hardcoded "/tmp" — this runs both in
+        # Modal (Linux) and locally (Windows, during manual verification).
+        cred_path = os.path.join(tempfile.gettempdir(), "firebase-admin-key.json")
+        with open(cred_path, "w", encoding="utf-8") as f:
+            f.write(cred_json)
+        cred = credentials.Certificate(cred_path)
+        firebase_admin.initialize_app(cred)
+
+    db = firestore.client()
+    try:
+        docs = db.collection("users").stream()
+        return [doc.to_dict() for doc in docs]
     except Exception as e:
-        log.error("Could not fetch contacts: %s", e)
+        log.error("Could not fetch Firestore subscribers: %s", e)
         return []
 
 
 def _prefs(contact: dict) -> tuple[list[str], list[str]]:
-    """Best-effort read of saved role/city preferences from a contact."""
-    data = contact.get("data") or {}
-    roles = [r.strip().lower() for r in str(data.get("roles", "")).split(",") if r.strip()]
-    cities = [c.strip().lower() for c in str(data.get("cities", "")).split(",") if c.strip()]
+    """Best-effort read of a subscriber's saved role/city preferences.
+    Firestore stores roles/cities as real lists (unlike Resend's
+    comma-joined custom fields) — tolerate a malformed doc rather than
+    crash, since one bad record must not kill the whole digest run."""
+    raw_roles = contact.get("roles")
+    raw_cities = contact.get("cities")
+    roles = [r.strip().lower() for r in raw_roles if isinstance(r, str) and r.strip()] if isinstance(raw_roles, list) else []
+    cities = [c.strip().lower() for c in raw_cities if isinstance(c, str) and c.strip()] if isinstance(raw_cities, list) else []
     return roles, cities
 
 
@@ -182,15 +200,19 @@ def main() -> dict:
 
     sent = 0
     for c in contacts:
-        email = c.get("email")
-        if not email:
+        try:
+            email = c.get("email")
+            if not email:
+                continue
+            picks = match_for(c, listings)
+            if not picks:
+                continue
+            name = (c.get("first_name") or "").strip()
+            if send(email, build_html(name, picks), len(picks)):
+                sent += 1
+        except Exception as e:
+            log.error("Skipping subscriber %s due to error: %s", c.get("email", "<unknown>"), e)
             continue
-        picks = match_for(c, listings)
-        if not picks:
-            continue
-        name = (c.get("first_name") or "").strip()
-        if send(email, build_html(name, picks), len(picks)):
-            sent += 1
 
     log.info("Digest complete: sent %d/%d subscribers", sent, len(contacts))
     return {"sent": sent, "subscribers": len(contacts), "listings": len(listings)}

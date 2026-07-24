@@ -38,6 +38,7 @@ image = (
         "groq",
         "openai",
         "python-dateutil",
+        "firebase-admin",
     )
     .add_local_dir("execution", remote_path="/app/execution")
     .add_local_file("run_pipeline.py", remote_path="/app/run_pipeline.py")
