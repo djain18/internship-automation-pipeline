@@ -14,6 +14,11 @@ import concurrent.futures
 from datetime import datetime
 from dotenv import load_dotenv
 
+try:
+    from execution import quality_filter
+except ImportError:
+    import quality_filter
+
 logger = logging.getLogger(__name__)
 
 # Load environment variables
@@ -203,17 +208,20 @@ TEXT: {post_text[:3000]}
 EXTRACT the following fields from the post. Be accurate — only extract what is explicitly stated.
 
 --- CLASSIFICATION RULES ---
-- IS_HIRING_POST: Set should_include to true ONLY if the post is a specific recruitment notice for an ACTUAL opening.
+You are an ADVERSARIAL SCREENER. Assume the post is spam until it proves otherwise.
+We only want GENUINE internships that are (a) Bengaluru-based onsite/hybrid OR (b) remote and open to candidates in India.
+
+- IS_HIRING_POST: Set should_include to true ONLY if the post is a specific recruitment notice for ONE actual internship opening at a REAL identifiable employer.
 - REJECT (should_include = false) if ANY of the following are true:
-    - A full-time or permanent job opening without an internship component.
-    - A generic "Recruiter seeking candidates" post without a specific single role or specific company link.
-    - A post saying "DM me" or "Comment 'Interested'" without any email or apply URL.
-    - A career coach giving advice or a "I'm hiring for 50 companies" promo.
-    - A personal achievement/story or internship completion certificate.
-    - A candidate looking for a job ("I am looking for", "seeking opportunities", "open to work").
-    - PAY-TO-WORK SCAM: Post asks candidates to pay ANY fee — registration fee, training fee, security deposit, caution money, certification fee. REJECT IMMEDIATELY.
-    - SCAM PATTERNS: "typing job", "data entry job", "form filling", "copy paste work", "earn ₹X daily", "guaranteed income", "100% genuine opportunity", "simple work from home", "no investment needed earn daily".
-    - INTERNATIONAL ROLE: The internship is based outside India (USA, UK, Europe, UAE, Australia, Canada, Singapore, Korea, etc.) with NO India office option. "Remote" global roles are fine ONLY if the post explicitly mentions India eligibility or is from an Indian company.
+    - AGGREGATOR / REPOSTER: The author is a job-alert / off-campus / "fresher jobs" / placement page or an influencer reposting openings, OR the post lists MANY roles at once ("multiple positions", "20+ openings", "hiring for 50 companies"), OR it is a paid-mentorship / "resume fix | referral | 1:1 mentorship" promo, OR it asks to "tag your friends / share / link in comments / join our WhatsApp/Telegram group". These are the #1 spam class — reject them.
+    - APPLY-BY-CHAT: The ONLY way to apply is WhatsApp, Telegram, "DM me", or "comment Interested". Reject (a real email or application URL is required).
+    - A full-time or permanent job opening with no internship component.
+    - A career coach giving advice, a personal achievement/story, an internship completion certificate, or a candidate looking for a job ("open to work", "seeking opportunities").
+    - PAY-TO-WORK SCAM: asks candidates to pay ANY fee (registration, training, security deposit, caution money, certification). Reject immediately.
+    - SCAM PATTERNS: "typing job", "data entry job", "form filling", "copy paste work", "earn ₹X daily", "guaranteed income/placement", "100% genuine opportunity", "no investment needed earn daily".
+    - LOCATION MISMATCH: An ONSITE or HYBRID role in any Indian city OTHER than Bengaluru/Bangalore (Mumbai, Delhi, Hyderabad, Pune, Chennai, etc.). Onsite is allowed ONLY in Bengaluru. Remote roles are allowed from anywhere AS LONG AS candidates in India are eligible.
+    - FOREIGN-ONLY: Based outside India with no India eligibility (e.g. "Remote, US only"). Remote is fine only if India-eligible or from an Indian company.
+    - UNPAID TECH: An UNPAID (or certificate-only, no stipend) software / developer / data / ML / engineering role. Unpaid roles in non-tech fields (research, design, content, NGO) are allowed but must be marked is_paid="no".
 ---------------------------
 
 1. COMPANY: The company or organization that is hiring.
@@ -278,6 +286,26 @@ EXTRACT the following fields from the post. Be accurate — only extract what is
     - No emojis at all — strip them.
     - Do NOT include hashtags, "DM me", or vague CTAs.
 
+14. IS_AGGREGATOR_REPOST: true if the author is a job-aggregator/reposter/influencer or the post is a bulk multi-role list / paid-mentorship promo (see rules above); else false.
+
+15. APPLY_METHOD: How a candidate applies. Output exactly one of:
+    "ats" (real careers page / Greenhouse / Lever / Ashby / Workday / company job URL),
+    "form" (Google/Office form), "company_email" (email on the company's own domain),
+    "personal_email" (gmail/yahoo/outlook/etc), "whatsapp" (WhatsApp/Telegram),
+    "dm_comment" ("DM me" / "comment Interested"), or "none".
+
+16. IS_PAID: Output "yes" if a monetary stipend/salary is offered, "no" if explicitly unpaid / certificate-only / no stipend, or "unknown" if not stated.
+
+17. FIELD_TYPE: Output "tech" if the role is software/developer/data/ML/AI/QA/devops/engineering, else "non_tech".
+
+18. COMPANY_LEGITIMACY: Your judgment of whether this is a real, verifiable employer. Output one of:
+    "established" (a well-known company or one with an obvious real presence),
+    "plausible_startup" (small/unknown but looks like a real registered company with a specific product/role),
+    "doubtful" (vague, generic, no real company identity, or looks like a spam farm).
+
+19. GENUINENESS_SCORE: Integer 0-100. How confident are you this is a real internship a student should trust? Be strict: aggregators, chat-only apply, unpaid tech, and doubtful companies should score under 40.
+
+20. SPAM_REASONS: Array of short strings naming any red flags you found (empty array if none).
 
 Output JSON:
 {{
@@ -294,6 +322,13 @@ Output JSON:
     "contact_email": "string or empty",
     "apply_link": "string or empty",
     "formatted_description": "string",
+    "is_aggregator_repost": boolean,
+    "apply_method": "ats | form | company_email | personal_email | whatsapp | dm_comment | none",
+    "is_paid": "yes | no | unknown",
+    "field_type": "tech | non_tech",
+    "company_legitimacy": "established | plausible_startup | doubtful",
+    "genuineness_score": integer,
+    "spam_reasons": ["string"],
     "should_include": boolean,
     "exclude_reason": "string (briefly why if should_include is false)"
 }}
@@ -381,22 +416,12 @@ def batch_analyze_posts(posts: list) -> list:
             print(f"    ❌ [{i+1}/{len(posts)}] Rejected: {reason}")
             return []
 
-        # 2. SECONDARY SCAM FILTER — catches what LLM misses
-        _SCAM_PATTERNS = [
-            "registration fee", "reg fee", "registration charges",
-            "training fee", "training charges", "training cost",
-            "security deposit", "caution money", "certification fee",
-            "pay to join", "pay to work", "investment required",
-            "typing job", "data entry job", "form filling job", "copy paste job",
-            "earn daily", "earn per day", "easy money", "work from home earn",
-            "100% genuine", "guaranteed income", "guaranteed placement",
-            "whatsapp to register", "whatsapp registration",
-            "simple typing", "home based typing",
-        ]
-        _text_scam = text.lower()
-        _scam_hit = next((kw for kw in _SCAM_PATTERNS if kw in _text_scam), None)
-        if _scam_hit:
-            print(f"    ❌ [{i+1}/{len(posts)}] Rejected: Scam pattern ('{_scam_hit}')")
+        # 2. DETERMINISTIC QUALITY GATE — single source of truth (quality_filter).
+        #    Handles: scam, aggregator/reposter, WhatsApp/DM apply, unpaid-tech,
+        #    Bengaluru-onsite / India-remote location, and LLM legitimacy signals.
+        decision = quality_filter.evaluate_post(analysis, post)
+        if not decision.get("accept"):
+            print(f"    ❌ [{i+1}/{len(posts)}] Rejected: {decision.get('reason', 'failed quality gate')}")
             return []
 
         company = (analysis.get("company", "") or "Unknown").strip()
@@ -409,15 +434,6 @@ def batch_analyze_posts(posts: list) -> list:
                 company = clean_name.title()
             except: pass
 
-        # 3. COMPANY BLACKLIST — known international spam companies that flood LinkedIn
-        _COMPANY_BLACKLIST = [
-            "gao group", "gaotek", "gao tek", "gaо tek",  # Canadian company, irrelevant to India
-        ]
-        _company_norm = company.lower().strip()
-        if any(bl in _company_norm for bl in _COMPANY_BLACKLIST):
-            print(f"    ❌ [{i+1}/{len(posts)}] Rejected: Blacklisted company ({company})")
-            return []
-
         location = analysis.get("location", "") or ""
         type_str = analysis.get("type", "") or ""
         timing = analysis.get("timing", "") or ""
@@ -429,84 +445,18 @@ def batch_analyze_posts(posts: list) -> list:
         contact_email = analysis.get("contact_email", "") or ""
         apply_link = analysis.get("apply_link", "") or ""
 
-        # Minimum signal to be considered a real job post
         roles = analysis.get("roles") or [analysis.get("role", "Internship")]
         if isinstance(roles, str): roles = [roles]
         roles = [r for r in roles if r and r.strip()]
         if not roles: roles = ["Internship"]
 
-        hiring_signal = 0
-        has_specific_role = any(r.lower() not in ["internship", "intern", "hiring", "role", "unknown"] for r in roles)
-        if company and company.lower() != "unknown": hiring_signal += 2
-        if has_specific_role: hiring_signal += 2
-
-        # MUST HAVE EITHER EMAIL OR APPLY LINK TO BE READY
-        if contact_email or apply_link:
-            hiring_signal += 2
-        else:
-            hiring_signal -= 2 # Penalty for "DM me" style posts
-
-        # Keywords booster
-        text_lower = text.lower()
-        if any(w in text_lower for w in ["hiring", "openings", "recruiting", "vacancy", "join our team", "apply here"]):
-            hiring_signal += 1
-
-        if hiring_signal < 3:
-            print(f"    ❌ [{i+1}/{len(posts)}] Rejected: Low hiring signal (Score: {hiring_signal})")
-            return []
-
-        # 4. INDIA LOCATION CHECK (fixed: "Remote" alone does NOT mean India)
-        _INDIA_CITIES = [
-            "india", "bangalore", "bengaluru", "mumbai", "delhi", "new delhi",
-            "gurgaon", "gurugram", "noida", "hyderabad", "chennai", "pune",
-            "kolkata", "ahmedabad", "jaipur", "lucknow", "chandigarh", "indore",
-            "kochi", "coimbatore", "nagpur", "bhopal", "visakhapatnam",
-            "thiruvananthapuram", "surat", "vadodara", "mysore", "mangalore",
-            "pan india", "wfh",
-        ]
-        _OUTSIDE_INDICATORS = [
-            "usa", "uk", "london", "new york", "san francisco", "los angeles",
-            "dubai", "uae", "australia", "canada", "germany", "singapore",
-            "hong kong", "europe", "united states", "united kingdom", "korea",
-            "japan", "china", "malaysia", "netherlands", "france", "italy",
-            "toronto", "sydney", "berlin", "amsterdam", "paris", "seoul",
-            "riyadh", "kuwait", "qatar", "bahrain", "oman",
-        ]
-
-        loc_lower = location.lower()
-        text_lower = text.lower()
-
-        # Hard reject: location explicitly says outside India (and not a dual-office with India)
-        is_outside = any(kw in loc_lower for kw in _OUTSIDE_INDICATORS)
-        if is_outside and "india" not in loc_lower:
-            print(f"    ❌ [{i+1}/{len(posts)}] Rejected: International role ({location})")
-            return []
-
-        # Check if location mentions a specific Indian city
-        is_india_loc = any(kw in loc_lower for kw in _INDIA_CITIES)
-
-        # "Remote" location alone: must verify India context in post text
-        is_remote_only = "remote" in loc_lower and not is_india_loc
-        if is_remote_only:
-            _india_text_kw = [
-                "india", "bangalore", "bengaluru", "mumbai", "delhi",
-                "hyderabad", "pune", "noida", "gurgaon", "chennai",
-                "kolkata", "ahmedabad", "jaipur", "pan india",
-                "indian students", "for india", "in india", "indian candidates",
-            ]
-            if not any(kw in text_lower for kw in _india_text_kw):
-                print(f"    ❌ [{i+1}/{len(posts)}] Rejected: Remote with no India context")
-                return []
-        elif not is_india_loc and "remote" not in loc_lower:
-            # Unknown/empty location — check post text as last resort
-            _india_text_kw = [
-                "india", "bangalore", "bengaluru", "mumbai", "delhi",
-                "hyderabad", "pune", "noida", "gurgaon", "chennai",
-                "kolkata", "ahmedabad", "jaipur", "pan india",
-            ]
-            if not any(kw in text_lower for kw in _india_text_kw):
-                print(f"    ❌ [{i+1}/{len(posts)}] Rejected: No India context ({location or 'unknown'})")
-                return []
+        # Surface an "Unpaid" tag for accepted-but-unpaid (non-tech) roles so
+        # students see it up front (policy: unpaid non-tech is kept, flagged).
+        if decision.get("unpaid_flag"):
+            if not isinstance(tags, list):
+                tags = []
+            if not any(str(t).strip().lower() == "unpaid" for t in tags):
+                tags = ["Unpaid"] + list(tags)
 
         formatted_description = analysis.get("formatted_description", "") or ""
 

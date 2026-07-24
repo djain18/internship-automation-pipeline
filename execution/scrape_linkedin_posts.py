@@ -12,12 +12,25 @@ Outputs:
 """
 
 import os
+import sys
 import json
 import re
 import concurrent.futures
 from datetime import datetime, timedelta
+
+# UTF-8 stdout so emoji log lines survive a redirected Windows console (cp1252).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 from apify_client import ApifyClient
 from dotenv import load_dotenv
+
+try:
+    from execution import quality_filter
+except ImportError:
+    import quality_filter
 
 # Load environment variables
 load_dotenv()
@@ -32,9 +45,16 @@ MAX_HOURS_OLD = 96  # Max 4 days old per user request
 PREFERRED_HOURS = 24  # Soft preference
 MIN_HIRING_SIGNALS = 1  # Relaxed to 1 signal
 
-# Apify actors (user-specified with correct schema)
-PRIMARY_ACTOR = "supreme_coder/linkedin-post"  # User-specified
-FALLBACK_ACTOR = "apimaestro/linkedin-posts-search-scraper-no-cookies"  # Backup
+# Apify actors.
+#   PRIMARY: harvestapi/linkedin-post-search — no-cookies, 19K users, 4.9★,
+#            $1.50/1k, actively maintained. Reliable keyword post search.
+#   FALLBACK: apimaestro no-cookies search scraper (url-based).
+# (The old primary supreme_coder/linkedin-post was dropped: it relies on a shared
+#  LinkedIn account pool that returns "no available accounts found" and it was
+#  under maintenance — every query came back empty.)
+PRIMARY_ACTOR = "harvestapi/linkedin-post-search"
+FALLBACK_ACTOR = "apimaestro/linkedin-posts-search-scraper-no-cookies"
+HARVESTAPI_MAX_POSTS = 25  # per query; ~21 queries → up to ~525 posts ≈ $0.79/run
 
 # Hiring intent keywords
 ROLE_KEYWORDS = ["hiring", "looking for", "opening", "position", "opportunity", "vacancy", "recruit"]
@@ -502,9 +522,20 @@ def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
         if any(kw in norm_text for kw in story_keywords):
             continue
 
-        # Hiring intent gate
-        has_hiring_intent = any(kw in norm_text for kw in hiring_keywords)
-        if not has_hiring_intent and "intern" not in norm_text:
+        # Aggregator / reposter / paid-mentorship pre-cut (cheap, saves LLM cost).
+        # Uses raw text (not norm_text) so URL/emoji patterns survive.
+        _author_name = p.get("authorName") or (p.get("author", {}) or {}).get("name", "") or ""
+        _author_headline = p.get("authorHeadline") or (p.get("author", {}) or {}).get("headline", "") or ""
+        _is_agg, _ = quality_filter.is_aggregator_post(_author_name, _author_headline, raw_text)
+        if _is_agg:
+            continue
+
+        # Hiring intent gate — scan the FULL post text (not just the first 150
+        # chars) so a genuine post isn't dropped when "intern"/"hiring" appears
+        # lower down. The LLM gate does the real screening; keep this permissive.
+        _full_lower = raw_text.lower()
+        has_hiring_intent = any(kw in _full_lower for kw in hiring_keywords)
+        if not has_hiring_intent and "intern" not in _full_lower:
             continue
 
         # Time filter â€” reject if clearly > 4 days old
@@ -526,20 +557,73 @@ def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
     return passed
 
 
+def _build_actor_input(actor_id, query, url_input):
+    """Build the run-input each actor expects. harvestapi uses `searchQueries`;
+    url-based actors (apimaestro/legacy) use the LinkedIn search URL input."""
+    if actor_id.startswith("harvestapi/"):
+        # Freshness window. Default 24h for nightly runs; override with
+        # SCRAPE_POSTED_LIMIT=week for a higher-supply catch-up run. The PHASE-2
+        # time filter still trims anything older than ~4 days.
+        posted_limit = os.getenv("SCRAPE_POSTED_LIMIT", "24h")
+        return {
+            "searchQueries": [query],
+            "maxPosts": HARVESTAPI_MAX_POSTS,
+            "postedLimit": posted_limit,
+            "sortBy": "date",
+        }
+    return url_input
+
+
+def _normalize_harvestapi_item(it):
+    """Map harvestapi's nested output to the flat schema the rest of the
+    pipeline reads (text/url/authorName/authorHeadline/postedAt*)."""
+    author = it.get("author") or {}
+    posted = it.get("postedAt") or {}
+    eng = it.get("engagement") or {}
+    return {
+        "authorName": author.get("name") or "",
+        "authorHeadline": author.get("info") or "",
+        "authorCompany": "",  # not provided for profile authors; resolved later
+        "text": it.get("content") or "",
+        "url": it.get("linkedinUrl") or it.get("shareLinkedinUrl") or "",
+        "postedTime": posted.get("postedAgoShort") or "",
+        "postedAtISO": posted.get("date") or "",
+        "postedAtTimestamp": posted.get("timestamp"),
+        "likes": eng.get("likes") or eng.get("reactions") or 0,
+        "comments": eng.get("comments") or 0,
+    }
+
+
+def _normalize_actor_items(actor_id, items):
+    if actor_id.startswith("harvestapi/"):
+        return [_normalize_harvestapi_item(it) for it in items]
+    return items  # url-based actors already emit fields the pipeline reads
+
+
 def _scrape_one_query(args):
-    """Scrape a single query â€” designed to run in a thread."""
-    query, run_input = args
+    """Scrape a single query - designed to run in a thread.
+
+    Falls back to the backup actor NOT only on an exception, but also when the
+    primary returns 0 items (an actor can report SUCCEEDED yet yield nothing -
+    e.g. maintenance / empty account pool). Each actor gets its own input format
+    and its output is normalized to the pipeline's common schema.
+    """
+    query, url_input = args
     try:
-        posts = run_apify_actor(PRIMARY_ACTOR, run_input)
-        return query, posts
-    except Exception as e:
-        print(f"   âŒ Primary scraper failed for query '{query[:60]}': {e}")
-        try:
-            posts = run_apify_actor(FALLBACK_ACTOR, run_input)
+        pin = _build_actor_input(PRIMARY_ACTOR, query, url_input)
+        posts = _normalize_actor_items(PRIMARY_ACTOR, run_apify_actor(PRIMARY_ACTOR, pin))
+        if posts:
             return query, posts
-        except Exception as e2:
-            print(f"   âŒ Fallback also failed: {e2}")
-            return query, []
+        print(f"   Primary returned 0 items for '{query[:50]}' - trying backup actor...")
+    except Exception as e:
+        print(f"   [X] Primary scraper failed for query '{query[:60]}': {e}")
+    try:
+        fin = _build_actor_input(FALLBACK_ACTOR, query, url_input)
+        posts = _normalize_actor_items(FALLBACK_ACTOR, run_apify_actor(FALLBACK_ACTOR, fin))
+        return query, posts
+    except Exception as e2:
+        print(f"   [X] Fallback also failed: {e2}")
+        return query, []
 
 
 def main():
@@ -552,7 +636,9 @@ def main():
     """
     ensure_tmp_dir()
 
-    TARGET_VERIFIED = 120  # Aim for 120 to absorb duplicates and reach 105 net-new in sheet
+    # Quality-first: this is a SOFT ceiling on how many raw candidates we gather
+    # per pass, not a quota to pad toward. We publish only what clears the gate.
+    TARGET_VERIFIED = 60
     IS_TOPUP = False
     verified_posts = []
     seen_urls = set()
@@ -597,21 +683,40 @@ def main():
             print(f"âš ï¸ Could not load topup config: {e}")
 
     # â”€â”€ Search queries (10 field-specific) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    search_queries_count = 10
-    MAX_PER_QUERY = (TARGET_VERIFIED // search_queries_count) + 1  # ~13 per query
-
-    search_queries = [
-        "(software intern) OR (sde intern) OR (full stack intern) OR (backend intern) OR (frontend intern) OR (web developer intern)",
-        "(data science intern) OR (ml intern) OR (machine learning intern) OR (ai intern) OR (data engineer intern) OR (data analyst intern)",
-        "(product management intern) OR (apm intern) OR (product analyst intern) OR (associate product manager intern)",
-        "(founder's office intern) OR (generalist intern) OR (chief of staff intern) OR (strategy intern) OR (operations intern)",
-        "(business development intern) OR (sales intern) OR (bd intern) OR (inside sales intern) OR (growth intern)",
-        "(digital marketing intern) OR (marketing intern) OR (seo intern) OR (performance marketing intern) OR (social media intern)",
-        "(video editing intern) OR (content writing intern) OR (copywriting intern) OR (graphic design intern) OR (vfx intern)",
-        "(ui ux intern) OR (product design intern) OR (visual design intern)",
-        "(finance intern) OR (investment banking intern) OR (vc intern) OR (audit intern) OR (consulting intern)",
-        "(hr intern india) OR (talent acquisition intern) OR (human resources intern) OR (law intern) OR (compliance intern)",
+    # Location-aware, plain-keyword queries. harvestapi (and LinkedIn) do fuzzy
+    # keyword search, so "<field> intern bangalore" reliably returns Bangalore
+    # posts (verified by probe). We DO scope location in the query now — the old
+    # actor broke on `AND (a OR "b")` boolean grouping, but plain keywords are
+    # fine. Onsite is Bengaluru-only; remote is India-eligible from anywhere, so
+    # we run a Bengaluru set + a remote-India set. The gate still enforces both.
+    _bengaluru_fields = [
+        "software developer intern bangalore",
+        "full stack developer intern bangalore",
+        "backend frontend developer intern bangalore",
+        "data science intern bangalore",
+        "machine learning ai intern bangalore",
+        "product management intern bangalore",
+        "business development sales intern bangalore",
+        "digital marketing intern bangalore",
+        "content writing intern bangalore",
+        "graphic design intern bangalore",
+        "ui ux design intern bangalore",
+        "finance intern bangalore",
+        "hr talent acquisition intern bangalore",
+        "operations strategy intern bangalore",
     ]
+    _remote_fields = [
+        "software developer intern remote india",
+        "data science intern remote india",
+        "product management intern remote india",
+        "digital marketing intern remote india",
+        "content writing intern remote india",
+        "graphic design intern remote india",
+        "business development intern remote india",
+    ]
+    search_queries = _bengaluru_fields + _remote_fields
+    search_queries_count = len(search_queries)
+    MAX_PER_QUERY = 12  # generous; location-targeted queries are already precise
     import random
     random.shuffle(search_queries)
 
@@ -658,6 +763,12 @@ def main():
 
     total_raw = sum(len(v) for v in all_raw_by_query.values())
     print(f"\n[PHASE 1 DONE] {total_raw} raw posts collected across all queries.")
+    # Persist raw posts so the pre-filter funnel can be analyzed offline.
+    try:
+        with open(RAW_OUTPUT, "w", encoding="utf-8") as _rf:
+            json.dump(all_raw_by_query, _rf, ensure_ascii=False)
+    except Exception as _e:
+        print(f"   (raw dump failed: {_e})")
 
     # â”€â”€ PHASE 2: Dedup + pre-filter (single-threaded, fast) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print(f"\n[PHASE 2] Deduplicating and pre-filtering...")
@@ -691,28 +802,8 @@ def main():
 
     # â”€â”€ PHASE 4: Post-LLM filters + build clean records â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print(f"\n[PHASE 4] Applying post-LLM filters to {len(llm_results)} results...")
-    _INDIA_CITIES = [
-        "india", "bangalore", "bengaluru", "mumbai", "delhi", "new delhi",
-        "gurgaon", "gurugram", "noida", "hyderabad", "chennai", "pune",
-        "kolkata", "ahmedabad", "jaipur", "lucknow", "chandigarh", "indore",
-        "kochi", "coimbatore", "nagpur", "bhopal", "visakhapatnam",
-        "thiruvananthapuram", "surat", "vadodara", "mysore", "mangalore",
-        "pan india", "wfh", "work from home",
-    ]
-    _OUTSIDE_INDICATORS = [
-        "usa", "uk", "london", "new york", "san francisco", "los angeles",
-        "dubai", "uae", "australia", "canada", "germany", "singapore",
-        "hong kong", "europe", "united states", "united kingdom", "korea",
-        "japan", "china", "malaysia", "netherlands", "france", "italy",
-        "toronto", "sydney", "berlin", "amsterdam", "paris", "seoul",
-        "riyadh", "kuwait", "qatar", "bahrain", "oman",
-    ]
-    _india_text_kw = [
-        "india", "bangalore", "bengaluru", "mumbai", "delhi",
-        "hyderabad", "pune", "noida", "gurgaon", "chennai",
-        "kolkata", "ahmedabad", "jaipur", "pan india",
-        "indian students", "for india", "in india", "indian candidates",
-    ]
+    # Location gating is delegated to quality_filter.location_decision (single
+    # source of truth) — Bengaluru onsite/hybrid OR India-eligible remote only.
 
     if use_llm:
         for post in llm_results:
@@ -750,25 +841,14 @@ def main():
 
             post_text = post.get("text") or post.get("postText") or post.get("content") or ""
             url = post.get("url") or post.get("postUrl") or post.get("link") or ""
-            loc_lower = final_location.lower()
-            text_lower = post_text.lower()
 
-            is_outside = any(kw in loc_lower for kw in _OUTSIDE_INDICATORS)
-            if is_outside and "india" not in loc_lower:
-                print(f"    ❌ Skipped (international): {final_location}")
+            # Bengaluru-onsite / India-remote gate (single source of truth).
+            accept_loc, resolved_mode, loc_reason = quality_filter.location_decision(
+                final_location, analysis.get("type") or "", post_text
+            )
+            if not accept_loc:
+                print(f"    ❌ Skipped ({loc_reason}): {final_company}")
                 continue
-
-            is_india_loc = any(kw in loc_lower for kw in _INDIA_CITIES)
-            is_remote_only = "remote" in loc_lower and not is_india_loc
-
-            if is_remote_only:
-                if not any(kw in text_lower for kw in _india_text_kw):
-                    print(f"    ❌ Skipped (Remote, no India context): {final_company}")
-                    continue
-            elif not is_india_loc and "remote" not in loc_lower:
-                if not any(kw in text_lower for kw in _india_text_kw):
-                    print(f"    ❌ Skipped (no India context): {final_location or 'unknown'}")
-                    continue
 
             # Resolve an ABSOLUTE posted date so the website can show real
             # freshness (not the time the row was added to the sheet).
