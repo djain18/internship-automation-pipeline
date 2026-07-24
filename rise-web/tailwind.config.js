@@ -21,9 +21,15 @@ export default {
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
+          warm: "hsl(var(--accent-warm))",
         },
         border: "hsl(var(--border))",
         ring: "hsl(var(--ring))",
+        paper: "hsl(var(--paper))",
+        ink: {
+          DEFAULT: "hsl(var(--ink))",
+          foreground: "hsl(var(--ink-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

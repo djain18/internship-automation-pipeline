@@ -21,10 +21,10 @@ export default function Footer() {
               <Link to="/internships" className="block text-muted-foreground hover:text-foreground">
                 Internships
               </Link>
-              <Link to="/how-it-works" className="block text-muted-foreground hover:text-foreground">
+              <Link to="/#how-it-works" className="block text-muted-foreground hover:text-foreground">
                 How it works
               </Link>
-              <Link to="/faq" className="block text-muted-foreground hover:text-foreground">
+              <Link to="/#faq" className="block text-muted-foreground hover:text-foreground">
                 FAQ
               </Link>
             </div>

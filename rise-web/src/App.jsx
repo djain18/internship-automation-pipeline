@@ -7,8 +7,6 @@ import Dashboard from "./components/Dashboard";
 import InternshipDetail from "./components/InternshipDetail";
 import Home from "./pages/Home";
 import Internships from "./pages/Internships";
-import HowItWorksPage from "./pages/HowItWorksPage";
-import FAQPage from "./pages/FAQPage";
 import { fetchListings, fetchStats } from "./lib/api";
 
 // On route change: scroll to top, or to the hashed section if a #hash is present.
@@ -66,8 +64,10 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home {...shared} />} />
           <Route path="/internships" element={<Internships {...shared} />} />
-          <Route path="/how-it-works" element={<HowItWorksPage stats={stats} />} />
-          <Route path="/faq" element={<FAQPage />} />
+          {/* How-it-works and FAQ are sections on Home now, not standalone pages —
+              old links still work by redirecting to the anchor. */}
+          <Route path="/how-it-works" element={<Navigate to="/#how-it-works" replace />} />
+          <Route path="/faq" element={<Navigate to="/#faq" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

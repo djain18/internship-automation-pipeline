@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import Reveal from "./Reveal";
 
 const ITEMS = [
@@ -34,22 +34,23 @@ function Item({ item, open, onToggle }) {
     <div className="border-b border-border">
       <button
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-4 py-5 text-left"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-6 py-6 text-left"
       >
-        <span className="text-base font-medium text-foreground">{item.q}</span>
-        <Plus
-          className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-300 ${
-            open ? "rotate-45" : ""
+        <span className="text-base font-medium text-foreground sm:text-lg">{item.q}</span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+            open ? "rotate-180" : ""
           }`}
         />
       </button>
       <div
         className={`grid transition-all duration-300 ${
-          open ? "grid-rows-[1fr] pb-5 opacity-100" : "grid-rows-[0fr] opacity-0"
+          open ? "grid-rows-[1fr] pb-6 opacity-100" : "grid-rows-[0fr] opacity-0"
         }`}
       >
         <div className="overflow-hidden">
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">{item.a}</p>
+          <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">{item.a}</p>
         </div>
       </div>
     </div>
@@ -61,22 +62,27 @@ export default function FAQ() {
 
   return (
     <section id="faq" className="scroll-mt-20 border-t border-border">
-      <div className="mx-auto max-w-3xl px-6 py-20 md:px-10">
-        <Reveal>
-          <h2 className="font-display text-4xl tracking-tight text-foreground md:text-5xl">
-            Questions, answered
-          </h2>
-        </Reveal>
-        <div className="mt-8">
-          {ITEMS.map((item, i) => (
-            <Reveal key={item.q} delay={i * 0.05}>
+      <div className="mx-auto max-w-5xl px-6 py-20 md:px-10">
+        <div className="md:grid md:grid-cols-[240px_1fr] md:gap-16">
+          <Reveal>
+            <span className="text-sm font-medium uppercase tracking-widest text-muted-foreground">
+              Need to know
+            </span>
+            <h2 className="mt-3 font-display text-4xl tracking-tight text-foreground md:sticky md:top-24">
+              Questions, answered
+            </h2>
+          </Reveal>
+
+          <Reveal delay={0.1} className="mt-10 border-t border-border md:mt-0 md:border-t-0">
+            {ITEMS.map((item, i) => (
               <Item
+                key={item.q}
                 item={item}
                 open={open === i}
                 onToggle={() => setOpen(open === i ? -1 : i)}
               />
-            </Reveal>
-          ))}
+            ))}
+          </Reveal>
         </div>
       </div>
     </section>

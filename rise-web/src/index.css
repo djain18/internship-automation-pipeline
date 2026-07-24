@@ -28,6 +28,15 @@
   --font-display: 'Instrument Serif', serif;
   --font-body: 'Inter', sans-serif;
 
+  /* Reserved narrowly for the "freshness / dawn" idea — a dot, an underline. Never a fill. */
+  --accent-warm: 28 75% 58%;
+
+  /* Warm off-white "paper" — blocks sections apart by tone instead of blur or a border-only line. */
+  --paper: 36 33% 97%;
+  /* Near-black "ink" band — the one inverted surface on the page (email panel). */
+  --ink: 210 22% 10%;
+  --ink-foreground: 36 20% 94%;
+
   --shadow-dashboard: 0 25px 80px -12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
@@ -53,5 +62,21 @@
       animation-duration: 0.01ms !important;
       transition-duration: 0.01ms !important;
     }
+  }
+}
+
+@layer utilities {
+  /* A single hairline rule used as the section-divider spine down the editorial column. */
+  .spine {
+    position: relative;
+  }
+  .spine::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 1px;
+    background: hsl(var(--border));
   }
 }
