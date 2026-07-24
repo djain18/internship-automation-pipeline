@@ -1,16 +1,21 @@
+import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 
-const links = [
-  { label: "Internships", to: "/internships" },
-  { label: "How it works", to: "/how-it-works" },
-  { label: "FAQ", to: "/faq" },
+// Internships is a real route (gets an active state); the other two are
+// anchors on Home, so a plain Link with no active styling is honest here —
+// NavLink would otherwise read "active" on every page that isn't /internships.
+const anchorLinks = [
+  { label: "How it works", to: "/#how-it-works" },
+  { label: "FAQ", to: "/#faq" },
 ];
 
 export default function Navbar() {
   const navigate = useNavigate();
   const { user, loading, signInWithGoogle, signOutUser } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
@@ -20,47 +25,112 @@ export default function Navbar() {
         </Link>
 
         <div className="hidden md:flex items-center gap-8">
-          {links.map((link) => (
-            <NavLink
+          <NavLink
+            to="/internships"
+            className={({ isActive }) =>
+              `text-sm transition-colors ${
+                isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
+              }`
+            }
+          >
+            Internships
+          </NavLink>
+          {anchorLinks.map((link) => (
+            <Link
               key={link.to}
               to={link.to}
-              className={({ isActive }) =>
-                `text-sm transition-colors ${
-                  isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-                }`
-              }
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               {link.label}
-            </NavLink>
+            </Link>
           ))}
         </div>
 
-        {loading ? null : user ? (
-          <div className="flex items-center gap-3">
-            {user.photoURL && (
-              <img
-                src={user.photoURL}
-                alt={user.displayName || user.email}
-                className="h-8 w-8 rounded-full"
-                referrerPolicy="no-referrer"
-              />
-            )}
-            <button
-              onClick={signOutUser}
-              className="text-sm text-muted-foreground hover:text-foreground"
+        <div className="flex items-center gap-3">
+          {loading ? null : user ? (
+            <div className="hidden items-center gap-3 md:flex">
+              {user.photoURL && (
+                <img
+                  src={user.photoURL}
+                  alt={user.displayName || user.email}
+                  className="h-8 w-8 rounded-full"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <button
+                onClick={signOutUser}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <Button
+              onClick={() => navigate("/#alerts")}
+              className="hidden rounded-full px-5 text-sm font-medium md:inline-flex"
             >
-              Sign out
-            </button>
-          </div>
-        ) : (
-          <Button
-            onClick={() => navigate("/#alerts")}
-            className="rounded-full px-5 text-sm font-medium"
+              Get daily alerts
+            </Button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-foreground md:hidden"
           >
-            Get daily alerts
-          </Button>
-        )}
+            {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </nav>
+
+      {menuOpen && (
+        <div className="border-t border-border/60 bg-background px-6 py-4 font-body md:hidden">
+          <div className="flex flex-col gap-4">
+            <NavLink
+              to="/internships"
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) =>
+                `text-sm ${isActive ? "font-medium text-foreground" : "text-muted-foreground"}`
+              }
+            >
+              Internships
+            </NavLink>
+            {anchorLinks.map((link) => (
+              <Link
+                key={link.to}
+                to={link.to}
+                onClick={() => setMenuOpen(false)}
+                className="text-sm text-muted-foreground"
+              >
+                {link.label}
+              </Link>
+            ))}
+            {user ? (
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  signOutUser();
+                }}
+                className="text-left text-sm text-muted-foreground"
+              >
+                Sign out
+              </button>
+            ) : (
+              <Button
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/#alerts");
+                }}
+                className="w-full rounded-full text-sm font-medium"
+              >
+                Get daily alerts
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
