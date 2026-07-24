@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Check, Loader2 } from "lucide-react";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
-import { subscribe } from "@/lib/api";
+import { db } from "@/lib/firebase";
+import { useAuth } from "@/lib/AuthContext";
 import Reveal from "./Reveal";
 
 const FIELDS = [
@@ -13,26 +15,58 @@ const CITIES = ["Bangalore", "Mumbai", "Delhi NCR", "Hyderabad", "Pune", "Chenna
 const GRAD_YEARS = ["2026", "2027", "2028", "2029"];
 
 export default function EmailAlerts() {
-  const [email, setEmail] = useState("");
+  const { user, signInWithGoogle } = useAuth();
   const [roles, setRoles] = useState([]);
   const [city, setCity] = useState("Bangalore");
   const [gradYear, setGradYear] = useState("2027");
   const [status, setStatus] = useState("idle"); // idle | loading | done | error
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState(false);
+
+  // Prefill from the user's existing saved preferences, if any.
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "users", user.uid)).then((snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (Array.isArray(data.roles)) setRoles(data.roles);
+      if (Array.isArray(data.cities) && data.cities[0]) setCity(data.cities[0]);
+      if (data.gradYear) setGradYear(data.gradYear);
+    });
+  }, [user]);
 
   const toggle = (f) =>
     setRoles((r) => (r.includes(f) ? r.filter((x) => x !== f) : [...r, f]));
 
+  async function handleSignIn() {
+    setSigningIn(true);
+    setSignInError(false);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      // auth/popup-closed-by-user is a normal cancel, not a failure worth
+      // surfacing; anything else (e.g. popup blocked, network error) gets
+      // an inline message so sign-in failure is visible, not silent.
+      if (err?.code !== "auth/popup-closed-by-user") {
+        setSignInError(true);
+      }
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!user) return;
     setStatus("loading");
     try {
-      await subscribe({
-        email: email.trim(),
+      await setDoc(doc(db, "users", user.uid), {
+        email: user.email,
         roles,
         cities: [city],
         remote: city === "Remote",
         gradYear,
+        updatedAt: serverTimestamp(),
       });
       setStatus("done");
     } catch {
@@ -60,9 +94,36 @@ export default function EmailAlerts() {
               </h3>
               <p className="mt-2 max-w-md text-muted-foreground">
                 Tomorrow morning you'll get your first edition — the freshest roles in{" "}
-                {roles.length ? roles.join(", ") : "your fields"}. One click unsubscribes, any time.
+                {roles.length ? roles.join(", ") : "your fields"}. Sign back in anytime to update
+                your preferences.
               </p>
             </motion.div>
+          ) : !user ? (
+            <>
+              <div className="max-w-xl">
+                <h2 className="font-display text-4xl tracking-tight text-foreground md:text-5xl">
+                  Get the edition in your inbox
+                </h2>
+                <p className="mt-3 text-muted-foreground">
+                  Sign in with Google, pick your fields and city, and get one short email a day
+                  with the freshest internships matched to you. Free, no spam, unsubscribe anytime.
+                </p>
+              </div>
+              <div className="mt-8">
+                <Button
+                  onClick={handleSignIn}
+                  disabled={signingIn}
+                  className="rounded-full px-7 py-6 text-sm font-medium"
+                >
+                  {signingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Continue with Google"}
+                </Button>
+                {signInError && (
+                  <p className="mt-3 text-sm text-red-500">
+                    Sign-in didn't go through — please try again.
+                  </p>
+                )}
+              </div>
+            </>
           ) : (
             <>
               <div className="max-w-xl">
@@ -70,8 +131,7 @@ export default function EmailAlerts() {
                   Get the edition in your inbox
                 </h2>
                 <p className="mt-3 text-muted-foreground">
-                  One short email a day with the freshest internships matched to your fields
-                  and city. Free, no spam, unsubscribe anytime.
+                  Signed in as {user.email}. Pick your fields and city below.
                 </p>
               </div>
 
@@ -133,32 +193,17 @@ export default function EmailAlerts() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@college.edu"
-                    aria-label="Your email address"
-                    className="flex-1 rounded-full border border-border bg-background px-5 py-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={status === "loading"}
-                    className="rounded-full px-7 py-6 text-sm font-medium"
-                  >
-                    {status === "loading" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      "Subscribe free"
-                    )}
-                  </Button>
-                </div>
+                <Button
+                  type="submit"
+                  disabled={status === "loading"}
+                  className="rounded-full px-7 py-6 text-sm font-medium"
+                >
+                  {status === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save preferences"}
+                </Button>
 
                 {status === "error" && (
                   <p className="text-sm text-red-500">
-                    Something went wrong — please check your email and try again.
+                    Something went wrong saving your preferences — please try again.
                   </p>
                 )}
               </form>
