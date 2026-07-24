@@ -42,7 +42,22 @@ image = (
     .add_local_dir("execution", remote_path="/app/execution")
     .add_local_file("run_pipeline.py", remote_path="/app/run_pipeline.py")
     .add_local_file("extraction_prompt.txt", remote_path="/app/extraction_prompt.txt")
-    .add_local_file("token.json", remote_path="/app/token.json") 
+    .add_local_file("token.json", remote_path="/app/token.json")
+)
+
+# ── Lightweight image for the website API — deliberately NOT the pipeline's
+# heavy image (apify-client, google-genai, groq, openai etc. are not needed
+# here and would add cold-start weight to a public-facing endpoint). ──
+api_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "fastapi[standard]==0.115.5",
+        "uvicorn[standard]==0.32.1",
+        "httpx==0.27.2",
+        "pydantic[email]==2.10.3",
+        "python-dotenv==1.0.1",
+    )
+    .add_local_dir("api", remote_path="/app/api")
 )
 
 
@@ -189,6 +204,27 @@ def run_now():
 def health():
     """Health check endpoint"""
     return {"status": "healthy", "app": "internship-pipeline", "schedule": "daily 11PM IST"}
+
+
+# ── Website API — replaces the now-dead Railway deployment ──────
+@app.function(
+    image=api_image,
+    secrets=[
+        modal.Secret.from_name("internship-secrets"),
+    ],
+    min_containers=1,  # keep one warm — this is public-facing, no cold starts
+)
+@modal.asgi_app()
+def api_web():
+    """Serves api/main.py's FastAPI app. Imports it lazily, after putting
+    api/ on sys.path, because main.py's own top-level imports
+    (`from sheets import ...`, `import email_service`) only resolve that way
+    — see tests/test_main_asgi_import.py for the pinned assumption."""
+    import sys
+    if "/app/api" not in sys.path:
+        sys.path.insert(0, "/app/api")
+    from main import app as fastapi_app
+    return fastapi_app
 
 
 @app.function(
