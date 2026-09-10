@@ -3,6 +3,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
+import { isApprovedUser } from "@/lib/personalHunt";
 
 // Internships is a real route (gets an active state); the other two are
 // anchors on Home, so a plain Link with no active styling is honest here —
@@ -16,11 +17,12 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { user, loading, signInWithGoogle, signOutUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const showMyHunt = isApprovedUser(user);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 md:px-10 py-4 font-body">
-        <Link to="/" aria-label="Rise — home" className="flex items-center">
+        <Link to="/" aria-label="Rise, home" className="flex items-center">
           <img src="/rise-logo.png" alt="Rise" className="h-7 w-auto" />
         </Link>
 
@@ -44,6 +46,18 @@ export default function Navbar() {
               {link.label}
             </Link>
           ))}
+          {showMyHunt && (
+            <NavLink
+              to="/my-hunt"
+              className={({ isActive }) =>
+                `text-sm transition-colors ${
+                  isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
+                }`
+              }
+            >
+              My hunt
+            </NavLink>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -107,6 +121,17 @@ export default function Navbar() {
                 {link.label}
               </Link>
             ))}
+            {showMyHunt && (
+              <NavLink
+                to="/my-hunt"
+                onClick={() => setMenuOpen(false)}
+                className={({ isActive }) =>
+                  `text-sm ${isActive ? "font-medium text-foreground" : "text-muted-foreground"}`
+                }
+              >
+                My hunt
+              </NavLink>
+            )}
             {user ? (
               <button
                 onClick={() => {
