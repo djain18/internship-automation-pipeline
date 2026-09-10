@@ -152,6 +152,7 @@ def latest(response: Response, claims: dict[str, Any] = Depends(require_daksh)) 
         },
         "bengaluru": _sanitize(run.get("digest_primary", [])),
         "remote": _sanitize(run.get("digest_remote_fallback", [])),
+        "needsVerification": _sanitize(run.get("needs_verification", [])),
         "withheldCount": sum(
             1
             for item in list(run.get("primary", [])) + list(run.get("remote_fallback", []))

@@ -7,7 +7,7 @@ from fetch_sources import fixture_health, load_json_records
 import pipeline
 from pipeline import _send_once
 from pipeline import _atomic_write_json, _load_latest_live, _write_latest_live
-from pipeline import run_pipeline
+from pipeline import run_pipeline, select_needs_verification
 from pipeline import route_resume
 from state import LocalState
 
@@ -123,3 +123,57 @@ def test_latest_digest_pointer_survives_newer_fixture_and_integration_failure(
     assert json.loads((tmp_path / "latest-live.json").read_text(encoding="utf-8"))[
         "run_id"
     ] == "run_live"
+
+
+def _linkedin_lead(**overrides) -> dict:
+    record = {
+        "id": "lead-1",
+        "company": "Signal Labs",
+        "title": "Growth Intern",
+        "score": 62,
+        "eligible": False,
+        "rejection_reasons": ["linkedin_post_requires_manual_verification"],
+    }
+    record.update(overrides)
+    return record
+
+
+def test_verification_tray_holds_only_sole_reason_leads() -> None:
+    tray = select_needs_verification(
+        [
+            _linkedin_lead(),
+            _linkedin_lead(id="lead-2", rejection_reasons=[
+                "linkedin_post_requires_manual_verification", "posted_over_7_days"
+            ]),
+            _linkedin_lead(id="lead-3", rejection_reasons=["senior_role"]),
+            _linkedin_lead(id="lead-4", rejection_reasons=[], eligible=True),
+        ],
+        {},
+    )
+    assert [item["id"] for item in tray] == ["lead-1"]
+
+
+def test_verification_tray_is_capped_and_freshest_first() -> None:
+    leads = [
+        _linkedin_lead(id=f"lead-{index}", posted_date=f"2026-09-0{index}")
+        for index in range(1, 7)
+    ]
+    tray = select_needs_verification(leads, {"max_needs_verification": 2})
+    assert [item["posted_date"] for item in tray] == ["2026-09-06", "2026-09-05"]
+
+
+def test_verification_tray_records_stay_rejected_and_uncounted(tmp_path: Path) -> None:
+    config = load_all()
+    records = load_json_records(
+        AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture"
+    )
+    run = run_pipeline(records, [], date(2026, 9, 8), config, tmp_path / "run")
+    approved_ids = {
+        item["id"] for item in run["digest_primary"] + run["digest_remote_fallback"]
+    }
+    for item in run["needs_verification"]:
+        assert item["eligible"] is False
+        assert item["id"] not in approved_ids
+    assert run["eligible_count"] == sum(
+        bool(item.get("eligible")) for item in run["all_scored"]
+    )

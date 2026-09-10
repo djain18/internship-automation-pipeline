@@ -38,6 +38,38 @@ def _section(title: str, records: list[Record]) -> str:
     return "\n".join(lines)
 
 
+def _verification_section(records: list[Record]) -> str:
+    """Unverified LinkedIn leads, kept apart from anything Kimi approved."""
+
+    lines = ["## Needs your verification (unverified LinkedIn leads)", ""]
+    if not records:
+        return "\n".join(lines + ["No leads are waiting on manual verification.", ""])
+    lines.extend(
+        [
+            "These cleared every other filter but carry a LinkedIn or lnkd.in link "
+            "that this pipeline is not permitted to open. They are machine-collected "
+            "unverified leads, they are NOT approved matches, and they do not count "
+            "toward the daily target.",
+            "",
+        ]
+    )
+    for index, item in enumerate(records, 1):
+        lines.extend(
+            [
+                f"### {index}. {item.get('company')} - {item.get('title')}",
+                "",
+                f"- Location: {item.get('location')} ({item.get('location_class')})",
+                f"- Posted: {item.get('posted_date')} ({item.get('posted_date_basis')})",
+                f"- Source: {item.get('source_url')}",
+                f"- Apply link: {item.get('apply_url')}",
+                "- Human action: open the link yourself, confirm the role is real "
+                "and still open, then decide",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _funding_section(title: str, records: list[Record]) -> str:
     lines = [f"## {title}", ""]
     if not records:
@@ -139,6 +171,7 @@ def render_digest(run: Record) -> str:
                 else "Daily internship quality target met."
             ),
             "",
+            _verification_section(run.get("needs_verification", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),
             _funding_section(
                 "Earlier this month (16-30 days; extension)",
@@ -194,6 +227,29 @@ def render_html_digest(run: Record) -> str:
             </tr>"""
         )
 
+    unverified: list[str] = []
+    for item in run.get("needs_verification", []):
+        company = html.escape(str(item.get("company") or ""))
+        title = html.escape(str(item.get("title") or "Internship"))
+        location = html.escape(str(item.get("location") or ""))
+        url = html.escape(
+            str(item.get("apply_url") or item.get("source_url") or site_url), quote=True
+        )
+        unverified.append(
+            f"<li style=\"margin:0 0 12px\"><a href=\"{url}\" style=\"color:#2a2e33;font-weight:600;text-decoration:none\">{title}</a>"
+            f"<div style=\"margin-top:3px;color:#6b7375\">{company}"
+            + (f" · {location}" if location else "")
+            + "</div></li>"
+        )
+    unverified_block = ""
+    if unverified:
+        unverified_block = f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#fafafa">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Needs your verification &middot; {len(unverified)} unverified lead{'s' if len(unverified) != 1 else ''}</div>
+          <div style="margin-top:6px;font-size:12px;color:#8b9294">LinkedIn links this pipeline may not open. Not approved matches, and not counted above.</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(unverified)}</ul>
+        </div>"""
+
     signals: list[str] = []
     for event in (list(run.get("funding_primary", [])) + list(run.get("funding_extended", [])))[:2]:
         company = html.escape(str(event.get("company") or ""))
@@ -225,6 +281,7 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
       <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
+      {unverified_block}
       {signal_block}
       <div style="padding:22px 28px;border-top:1px solid #e5e7eb">
         <a href="{html.escape(site_url, quote=True)}" style="display:inline-block;border-radius:999px;background:#2a2e33;color:#fff;padding:11px 18px;font-size:14px;font-weight:600;text-decoration:none">Open my hunt</a>
