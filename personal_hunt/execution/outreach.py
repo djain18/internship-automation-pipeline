@@ -67,12 +67,21 @@ def draft_outreach(record: Record) -> Record:
         "six-month onsite generalist internship in Bengaluru from November 2026 "
         "where I can own work across functions. Would the brief be useful?"
     )
+    # A long company name plus a long title pushed one real draft to 303
+    # characters, so the note is built short and then held under the limit.
     linkedin = (
-        f"Hi {contact_name} - the {title} work at {company} caught my attention. I mapped "
-        "the public context into a short evidence brief and one small solution idea. "
-        "I'm seeking a six-month Bengaluru Founder’s Office/generalist internship from "
+        f"Hi {contact_name} - the {title} work at {company} caught my attention. "
+        "I mapped the public context into a short evidence brief and one small "
+        "idea. I'm seeking a six-month Bengaluru generalist internship from "
         "November 2026. Useful if I share it?"
     )
+    if len(linkedin) > 300:
+        linkedin = (
+            f"Hi {contact_name} - the {title} work at {company} caught my "
+            "attention. I mapped the public context into a short brief and one "
+            "idea. Seeking a six-month Bengaluru internship from November 2026. "
+            "Share it?"
+        )[:300]
     followups = [
         {
             "day": 3,
