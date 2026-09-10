@@ -7,6 +7,36 @@ anti-spam gate plus an LLM classifier, and publishes only genuine, India-eligibl
 internships to a website students can browse, filter, and get a daily matching
 email for.
 
+## Private internship hunt
+
+Daksh's personal Founder’s Office/generalist hunt now lives in
+`personal_hunt/`. It is separate from the public Rise admission policy and
+subscriber digest while reusing policy-neutral networking and source helpers.
+
+```powershell
+python personal_hunt/execution/pipeline.py --fixtures --no-state
+python personal_hunt/execution/pipeline.py --live --dry-run
+python scripts/modal_system_ca.py deploy personal_hunt/deploy/modal_app.py
+```
+
+The deployed `daksh-internship-hunt` app uses one combined Asia/Kolkata cron:
+00:30 collects into the existing eight-tab tracker and 08:00 sends a new-only,
+Rise-branded Gmail digest to the single approved address. Paid personal Apify
+top-ups require `ENABLE_PERSONAL_APIFY_TOPUP=true`, run only below five
+deterministic candidates, and stop at $5 account usage with a $0.25 run cap.
+
+The `/my-hunt` route reads a Firebase-token-protected private endpoint. It has
+no seed fallback, is read-only, and is absent from public navigation. See
+`docs/superpowers/specs/2026-09-10-rise-private-internship-hunt.md`.
+
+On college Wi-Fi, keep TLS verification enabled and use the system trust store:
+
+```powershell
+$env:NODE_OPTIONS='--use-system-ca'
+python scripts/modal_system_ca.py app list
+node rise-web/node_modules/vite/bin/vite.js build
+```
+
 It's two systems that meet at a Google Sheet, and a Firestore collection — a
 **Python data pipeline** (scrape → quality gate → LLM extract/score → publish)
 and a **full-stack website** (FastAPI + React) that reads the published data and

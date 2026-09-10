@@ -13,6 +13,13 @@ Outputs:
 
 import os
 import sys
+
+try:
+    from execution.hunt_core.network import enable_system_ca
+except ImportError:
+    from hunt_core.network import enable_system_ca
+
+enable_system_ca()
 import json
 import re
 import concurrent.futures
@@ -28,9 +35,10 @@ from apify_client import ApifyClient
 from dotenv import load_dotenv
 
 try:
-    from execution import quality_filter
+    from execution import quality_filter, role_taxonomy
 except ImportError:
     import quality_filter
+    import role_taxonomy
 
 # Load environment variables
 load_dotenv()
@@ -40,21 +48,61 @@ TMP_DIR = ".tmp"
 RAW_OUTPUT = os.path.join(TMP_DIR, "linkedin_posts_raw.json")
 CLEAN_OUTPUT = os.path.join(TMP_DIR, "linkedin_posts_clean.json")
 
-# Filter thresholds
-MAX_HOURS_OLD = 96  # Max 4 days old per user request
+# Filter thresholds. Two windows now: abundant role tracks stay tight, scarce
+# ones (founder's office, forward-deployed, AI automation, product eng,
+# business ops) widen to 7 days. Those roles post rarely enough that a 24h/4d
+# window returned literally zero of them — see role_taxonomy.SCARCE_TRACKS.
+# Dedup already prevents re-publishing, so the only cost is slightly older posts
+# in the tracks that were previously empty.
+MAX_HOURS_OLD = 96       # 4 days — abundant tracks
+SCARCE_HOURS_OLD = 168   # 7 days — scarce tracks
 PREFERRED_HOURS = 24  # Soft preference
 MIN_HIRING_SIGNALS = 1  # Relaxed to 1 signal
 
-# Apify actors.
-#   PRIMARY: harvestapi/linkedin-post-search — no-cookies, 19K users, 4.9★,
-#            $1.50/1k, actively maintained. Reliable keyword post search.
-#   FALLBACK: apimaestro no-cookies search scraper (url-based).
+# Apify actor: harvestapi/linkedin-post-search — no-cookies, 19K users, 4.9★,
+# $2/1k, actively maintained. Reliable keyword post search.
 # (The old primary supreme_coder/linkedin-post was dropped: it relies on a shared
 #  LinkedIn account pool that returns "no available accounts found" and it was
 #  under maintenance — every query came back empty.)
+#
+# The apimaestro fallback (used on ANY 0-result primary query, not just
+# exceptions) was removed 2026-07-27 — it costs 2.5x more per result ($5/1k vs
+# $2/1k), and because it fired on every empty-result query, not just failures,
+# it was silently multiplying real spend on nights the primary actor simply
+# had nothing for a given city/field combo. It directly contributed to an
+# Apify account lockout. No fallback now — a 0-result query just stays empty.
 PRIMARY_ACTOR = "harvestapi/linkedin-post-search"
-FALLBACK_ACTOR = "apimaestro/linkedin-posts-search-scraper-no-cookies"
-HARVESTAPI_MAX_POSTS = 25  # per query; ~21 queries → up to ~525 posts ≈ $0.79/run
+HARVESTAPI_MAX_POSTS = 25       # scarce tracks — they never approach this
+# Abundant tracks were truncating at 25 on every remote query (2026-08-22), so
+# 40 looks right on supply grounds — but Apify bills per RESULT and the account
+# is capped at $5/month, where 118 queries x 40 = 4,720 results = $9.44 in a
+# SINGLE night. Cost, not supply, is the binding constraint, so this stays at
+# 25 and MAX_RESULTS_PER_RUN below does the real protecting.
+HARVESTAPI_MAX_POSTS_WIDE = 25
+
+# Hard ceiling on results collected per run — the safety net that stops a run
+# from eating a whole month's Apify budget. harvestapi bills ~$2 per 1k results,
+# so 700 results is ~$1.40/night, the per-run figure agreed with the product
+# owner on 2026-08-23. Tune via SCRAPE_MAX_RESULTS.
+MAX_RESULTS_PER_RUN = int(os.getenv("SCRAPE_MAX_RESULTS", "700"))
+APIFY_USD_PER_RESULT = 0.002
+
+# Apify reserves projected spend for every QUEUED actor run, not just running
+# ones, and counts that against the account's monthly cap. A 118-query fan-out
+# at 8 workers spiked the reported usage to $8.29 against a $5 cap on
+# 2026-08-23 and got most queries rejected with "Monthly usage hard limit
+# exceeded" — while actually billing about $0.05, because rejected runs aren't
+# charged. Keeping the burst small is what stops that reservation spike.
+APIFY_WORKERS = int(os.getenv("SCRAPE_WORKERS", "4"))
+
+# The budget is spent PER TRACK, not first-come-first-served. A single global
+# cap would be eaten by whichever queries return fastest — and that is the
+# high-volume marketing/design tracks, which would starve the scarce tracks of
+# spend and rebuild the very skew role balancing exists to fix. Splitting the
+# budget evenly across tracks enforces diversity at the SPEND layer, before the
+# quality gate or the publish quota ever see a post.
+def _per_track_budget(n_tracks):
+    return max(20, MAX_RESULTS_PER_RUN // max(1, n_tracks))
 
 # Hiring intent keywords
 ROLE_KEYWORDS = ["hiring", "looking for", "opening", "position", "opportunity", "vacancy", "recruit"]
@@ -152,24 +200,12 @@ def _normalize_company(name: str) -> str:
 
 
 def _std_role_key(role: str) -> str:
-    """Map a role string to a broad category key for cross-query deduplication."""
-    r = role.lower()
-    for cat, kws in [
-        ("software",  ["software", "sde", "developer", "frontend", "backend", "full stack", "web", "ios", "android"]),
-        ("data",      ["data", "machine learning", "ml", "ai", "analytics", "scientist"]),
-        ("product",   ["product", "apm"]),
-        ("marketing", ["marketing", "seo", "social media", "content"]),
-        ("design",    ["design", "ui", "ux", "graphic", "video", "animation"]),
-        ("finance",   ["finance", "audit", "accounting", "ca "]),
-        ("sales",     ["sales", "business development", "bd"]),
-        ("hr",        ["hr", "human resources", "talent", "recruitment"]),
-        ("strategy",  ["founder", "generalist", "chief of staff", "operations", "strategy"]),
-        ("legal",     ["law", "legal", "compliance"]),
-        ("research",  ["research"]),
-    ]:
-        if any(k in r for k in kws):
-            return cat
-    return r[:20]
+    """Broad role category for cross-query dedup.
+
+    Delegates to role_taxonomy so the scraper, publish_to_sheets, and the
+    website API can never disagree about what kind of role something is again.
+    """
+    return role_taxonomy.infer_track(role)
 
 
 def detect_hiring_signals(text: str) -> list:
@@ -220,6 +256,17 @@ def extract_role(text: str) -> str:
     
     # Specific role patterns (most specific first)
     role_patterns = [
+        # Specific 2026 role families — MUST precede the broad tech/business
+        # patterns below, which would otherwise swallow them ("Founder's Office
+        # Intern" matched the generic "office" rule and came out as "Admin
+        # Intern"; "AI Automation Intern" came out as "ML/AI Intern"). Mirrors
+        # the ordering role_taxonomy._RULES uses for the same reason.
+        (r"(founder'?s?\s*(office|associate)|chief\s*of\s*staff|entrepreneur\s*in\s*residence|business\s*generalist)", "Founder's Office Intern"),
+        (r"(forward\s*deployed|solutions?\s*(engineer|architect)|implementation\s*engineer|deployment\s*engineer)", "Forward Deployed Engineer Intern"),
+        (r"(ai\s*automation|automation\s*engineer|workflow\s*automation|ai\s*agent|agentic|llm\s*engineer|gen\s*ai|generative\s*ai|prompt\s*engineer)", "AI Automation Intern"),
+        (r"(product\s*engineer|growth\s*engineer|gtm\s*engineer|founding\s*engineer)", "Product Engineer Intern"),
+        (r"(business\s*operations|biz\s*ops|revenue\s*operations|rev\s*ops)", "Business Operations Intern"),
+
         # Tech roles
         (r"(software|sde|backend|frontend|full[- ]?stack|web|app|mobile|ios|android)\s*(developer|engineer|dev|intern)", "Software Developer Intern"),
         (r"(data\s*(science|scientist|analyst|analytics|engineer))", "Data Science Intern"),
@@ -444,6 +491,24 @@ def filter_posts(posts: list) -> list:
     return clean_posts
 
 
+def _run_field(run, key: str, default=None):
+    """Read one field off an Apify run result, whichever shape the client returns.
+
+    apify-client hands back a plain dict on 2.x but a `Run` model object (attributes,
+    snake_case, no `.get`) on 3.x. requirements.txt pinned only `apify-client>=1.0.0`,
+    so Modal's image resolved a newer major than local dev and every cloud query died
+    on `'Run' object has no attribute 'get'` -- while the actors still ran and BILLED.
+    Reading through this helper keeps both shapes working.
+    """
+    if run is None:
+        return default
+    if isinstance(run, dict):
+        return run.get(key, default)
+    # Run model: defaultDatasetId -> default_dataset_id
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
+    return getattr(run, snake, getattr(run, key, default))
+
+
 def run_apify_actor(actor_id: str, search_params: dict) -> list:
     """
     Run an Apify actor and return results.
@@ -458,14 +523,20 @@ def run_apify_actor(actor_id: str, search_params: dict) -> list:
     run = client.actor(actor_id).call(run_input=search_params)
     
     # CHECK FOR ACTOR FAILURE
-    status = run.get("status")
+    status = _run_field(run, "status")
     if status != "SUCCEEDED":
-        print(f"   âš ï¸ Actor {actor_id} run {run.get('id')} ended with status: {status}")
+        print(f"   âš ï¸ Actor {actor_id} run {_run_field(run, 'id')} ended with status: {status}")
         # Even if failed, some items might have been saved to the dataset
         # But for reliability, we should treat it as a failure if we got 0 items
     
     # Fetch results from dataset
-    items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+    dataset_id = _run_field(run, "defaultDatasetId")
+    if not dataset_id:
+        # The run was billed either way, so never let this degrade into a silent 0.
+        raise Exception(
+            f"Apify actor {actor_id} returned no dataset id "
+            f"(status={status}, result type={type(run).__name__})")
+    items = list(client.dataset(dataset_id).iterate_items())
     print(f"Actor returned {len(items)} items")
     
     if not items and status != "SUCCEEDED":
@@ -474,8 +545,13 @@ def run_apify_actor(actor_id: str, search_params: dict) -> list:
     return items
 
 
-def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
-    """Apply pre-LLM filters: dedup, spam, story, hiring-intent, time."""
+def _pre_filter_posts(raw_posts: list, seen_urls: set, max_days: int = 4) -> list:
+    """Apply pre-LLM filters: dedup, spam, story, hiring-intent, time.
+
+    `max_days` is track-aware: 4 for abundant tracks, 7 for scarce ones. Without
+    this the widened scrape window for scarce tracks would be thrown away one
+    stage later, right here.
+    """
     _PRE_COMPANY_BLACKLIST = ["gao group", "gaotek", "gao tek"]
     _PRE_SCAM_PATTERNS = [
         "registration fee", "reg fee", "training fee", "training charges",
@@ -538,12 +614,15 @@ def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
         if not has_hiring_intent and "intern" not in _full_lower:
             continue
 
-        # Time filter â€” reject if clearly > 4 days old
+        # Time filter — reject if older than this track's window
         posted_time = str(p.get("postedTime") or p.get("publishedAt") or p.get("time") or "").lower().strip()
-        if "w" in posted_time or "mo" in posted_time or "yr" in posted_time or "year" in posted_time or "month" in posted_time or "week" in posted_time:
+        if "mo" in posted_time or "yr" in posted_time or "year" in posted_time or "month" in posted_time:
+            continue
+        weeks_match = re.search(r"(\d+)\s*w", posted_time)
+        if weeks_match and int(weeks_match.group(1)) * 7 > max_days:
             continue
         days_match = re.search(r"(\d+)\s*d", posted_time)
-        if days_match and int(days_match.group(1)) > 4:
+        if days_match and int(days_match.group(1)) > max_days:
             continue
 
         # URL/text dedup (thread-safe read â€” caller must not mutate seen_urls concurrently)
@@ -557,17 +636,27 @@ def _pre_filter_posts(raw_posts: list, seen_urls: set) -> list:
     return passed
 
 
-def _build_actor_input(actor_id, query, url_input):
+def _build_actor_input(actor_id, query, url_input, scarce=False):
     """Build the run-input each actor expects. harvestapi uses `searchQueries`;
     url-based actors (apimaestro/legacy) use the LinkedIn search URL input."""
     if actor_id.startswith("harvestapi/"):
-        # Freshness window. Default 24h for nightly runs; override with
-        # SCRAPE_POSTED_LIMIT=week for a higher-supply catch-up run. The PHASE-2
-        # time filter still trims anything older than ~4 days.
-        posted_limit = os.getenv("SCRAPE_POSTED_LIMIT", "24h")
+        # Freshness window. Abundant tracks stay at 24h for nightly runs;
+        # scarce tracks widen to 7d because a 24h window returns nothing for
+        # them. SCRAPE_POSTED_LIMIT overrides both for a catch-up run. The
+        # PHASE-2 time filter trims to the matching MAX_HOURS_OLD /
+        # SCARCE_HOURS_OLD bound.
+        # harvestapi validates this field against a fixed vocabulary:
+        # any | 1h | 24h | week | month | 3months | 6months | year.
+        # "7d" is REJECTED ("Input is not valid") and the whole query fails, so
+        # the 7-day window for scarce tracks must be spelled "week".
+        default_limit = "week" if scarce else "24h"
+        posted_limit = os.getenv("SCRAPE_POSTED_LIMIT", default_limit)
         return {
             "searchQueries": [query],
-            "maxPosts": HARVESTAPI_MAX_POSTS,
+            # Scarce tracks rarely fill even the base cap; abundant ones were
+            # hitting exactly 25 on every remote query last run (truncated
+            # supply), so give them headroom.
+            "maxPosts": HARVESTAPI_MAX_POSTS if scarce else HARVESTAPI_MAX_POSTS_WIDE,
             "postedLimit": posted_limit,
             "sortBy": "date",
         }
@@ -600,29 +689,51 @@ def _normalize_actor_items(actor_id, items):
     return items  # url-based actors already emit fields the pipeline reads
 
 
+def check_apify_budget():
+    """Return (ok, message). Reads the account's monthly usage before spending.
+
+    Without this, an exhausted cap surfaces as 118 identical
+    "Monthly usage hard limit exceeded" failures buried in the log and a run
+    that silently publishes nothing — which is exactly how a real run failed on
+    2026-08-23. One clear line up front beats 118 confusing ones.
+    """
+    token = os.getenv("APIFY_API_TOKEN")
+    if not token:
+        return True, "no token to check (will fail later if truly missing)"
+    try:
+        import requests
+        r = requests.get("https://api.apify.com/v2/users/me/limits",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        d = r.json().get("data", {})
+        used = float(d.get("current", {}).get("monthlyUsageUsd") or 0)
+        cap = float(d.get("limits", {}).get("maxMonthlyUsageUsd") or 0)
+        if not cap:
+            return True, "no monthly cap set"
+        remaining = cap - used
+        affordable = int(remaining / 0.002)  # harvestapi bills ~$2 / 1k results
+        msg = (f"Apify budget: ${used:.2f} / ${cap:.2f} used, ${remaining:.2f} left "
+               f"(~{affordable} results)")
+        if remaining <= 0.10:
+            return False, msg + " — EXHAUSTED, skipping scrape to avoid 100+ failures"
+        return True, msg
+    except Exception as e:
+        return True, f"budget check failed ({e}) — proceeding"
+
+
 def _scrape_one_query(args):
     """Scrape a single query - designed to run in a thread.
 
-    Falls back to the backup actor NOT only on an exception, but also when the
-    primary returns 0 items (an actor can report SUCCEEDED yet yield nothing -
-    e.g. maintenance / empty account pool). Each actor gets its own input format
-    and its output is normalized to the pipeline's common schema.
+    harvestapi only, no fallback actor (removed 2026-07-27 — see PRIMARY_ACTOR
+    comment above). A 0-result query or an exception both just return empty;
+    the caller's per-city/field loop already tolerates gaps.
     """
-    query, url_input = args
+    query, url_input, scarce = args
     try:
-        pin = _build_actor_input(PRIMARY_ACTOR, query, url_input)
+        pin = _build_actor_input(PRIMARY_ACTOR, query, url_input, scarce=scarce)
         posts = _normalize_actor_items(PRIMARY_ACTOR, run_apify_actor(PRIMARY_ACTOR, pin))
-        if posts:
-            return query, posts
-        print(f"   Primary returned 0 items for '{query[:50]}' - trying backup actor...")
+        return query, posts
     except Exception as e:
         print(f"   [X] Primary scraper failed for query '{query[:60]}': {e}")
-    try:
-        fin = _build_actor_input(FALLBACK_ACTOR, query, url_input)
-        posts = _normalize_actor_items(FALLBACK_ACTOR, run_apify_actor(FALLBACK_ACTOR, fin))
-        return query, posts
-    except Exception as e2:
-        print(f"   [X] Fallback also failed: {e2}")
         return query, []
 
 
@@ -682,47 +793,33 @@ def main():
         except Exception as e:
             print(f"âš ï¸ Could not load topup config: {e}")
 
-    # â”€â”€ Search queries (10 field-specific) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Location-aware, plain-keyword queries. harvestapi (and LinkedIn) do fuzzy
-    # keyword search, so "<field> intern bangalore" reliably returns Bangalore
-    # posts (verified by probe). We DO scope location in the query now — the old
-    # actor broke on `AND (a OR "b")` boolean grouping, but plain keywords are
-    # fine. Onsite is Bengaluru-only; remote is India-eligible from anywhere, so
-    # we run a Bengaluru set + a remote-India set. The gate still enforces both.
-    _bengaluru_fields = [
-        "software developer intern bangalore",
-        "full stack developer intern bangalore",
-        "backend frontend developer intern bangalore",
-        "data science intern bangalore",
-        "machine learning ai intern bangalore",
-        "product management intern bangalore",
-        "business development sales intern bangalore",
-        "digital marketing intern bangalore",
-        "content writing intern bangalore",
-        "graphic design intern bangalore",
-        "ui ux design intern bangalore",
-        "finance intern bangalore",
-        "hr talent acquisition intern bangalore",
-        "operations strategy intern bangalore",
-    ]
-    _remote_fields = [
-        "software developer intern remote india",
-        "data science intern remote india",
-        "product management intern remote india",
-        "digital marketing intern remote india",
-        "content writing intern remote india",
-        "graphic design intern remote india",
-        "business development intern remote india",
-    ]
-    search_queries = _bengaluru_fields + _remote_fields
-    search_queries_count = len(search_queries)
+    # ── Search queries — one plan per role track ───────────────────────────────
+    # The query plan now lives in role_taxonomy.query_plan(). Before this, six
+    # broad field buckets x 12 cities produced 78 queries in which "ai" was a
+    # single word buried inside the data-science bucket and founder's-office /
+    # forward-deployed / product-engineering / business-ops had no query at all
+    # — which is exactly why the sheet held zero of those roles and 72%
+    # marketing.
+    #
+    # The plan is deliberately WEIGHTED, not uniform: the scarce tracks get the
+    # most query terms because they are what was missing, while marketing drops
+    # from 13 queries to 5 because one query already returned 94 of 219 raw
+    # posts. Abundant tracks rotate through the 12-city list by day-of-year, so
+    # nationwide coverage happens across a week without paying for 12 cities
+    # every night. ~118 queries total — comparable runtime to the old 78, since
+    # Apify bills per RESULT and the narrow tracks return few.
+    _rotation = datetime.now().timetuple().tm_yday
+    query_specs = role_taxonomy.query_plan(rotation=_rotation)
+    search_queries_count = len(query_specs)
     MAX_PER_QUERY = 12  # generous; location-targeted queries are already precise
     import random
-    random.shuffle(search_queries)
+    random.shuffle(query_specs)
 
     print("="*60)
     print(f"LINKEDIN POSTS SCRAPER - PARALLEL MODE")
     print(f"Target: {TARGET_VERIFIED} verified | Max per query: {MAX_PER_QUERY}")
+    print(f"Plan: {search_queries_count} queries across {len(role_taxonomy.TRACKS)} "
+          f"role tracks (city rotation {_rotation % len(role_taxonomy.ALL_CITIES)})")
     print("="*60)
 
     # â”€â”€ Configure LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -736,27 +833,65 @@ def main():
     use_llm = llm_post_analyzer.PROVIDER != "none"
 
     # â”€â”€ PHASE 1: Parallel Apify scraping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # All 10 queries run concurrently (5 workers) instead of sequentially.
-    # Apify calls are pure I/O waits (1-3 min each) â€” threads eliminate that wait.
+    # ~118 queries run concurrently instead of sequentially. Apify calls are
+    # pure I/O waits (1-3 min each) — threads eliminate that wait.
     query_inputs = []
-    for query in search_queries:
+    track_by_query = {}   # query -> its role track, so PHASE 2 knows the window
+    for spec in query_specs:
+        query = spec["query"]
+        track_by_query[query] = spec["track"]
         search_url = (
             f"https://www.linkedin.com/search/results/content/"
             f"?datePosted=%22past-24h%22&keywords={query.replace(' ', '%20')}"
             f"&origin=FACETED_SEARCH"
         )
-        query_inputs.append((query, {"urls": [search_url], "limitPerSource": 40}))
+        query_inputs.append((query, {"urls": [search_url], "limitPerSource": 40},
+                             spec["scarce"]))
 
-    print(f"\n[PHASE 1] Launching {len(query_inputs)} Apify scrapes in parallel (5 workers)...")
-    all_raw_by_query = {}  # query â†’ list of raw posts
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # 8 workers, up from 5: the plan grew from 78 to ~118 queries and each is a
+    # pure I/O wait on Apify, so the extra concurrency keeps wall-clock roughly
+    # where it was rather than pushing the run past run_pipeline's timeout.
+    _budget_ok, _budget_msg = check_apify_budget()
+    print(f"\n[PHASE 1] {_budget_msg}")
+    if not _budget_ok:
+        print("   Aborting scrape — raise the Apify monthly cap or wait for the cycle to reset.")
+        query_inputs = []
+    print(f"[PHASE 1] Launching {len(query_inputs)} Apify scrapes in parallel ({APIFY_WORKERS} workers), "
+          f"result budget {MAX_RESULTS_PER_RUN} "
+          f"(~${MAX_RESULTS_PER_RUN * APIFY_USD_PER_RESULT:.2f}, "
+          f"{_per_track_budget(len(role_taxonomy.TRACKS))}/track)...")
+    all_raw_by_query = {}  # query -> list of raw posts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=APIFY_WORKERS) as executor:
+        _track_budget = _per_track_budget(len(role_taxonomy.TRACKS))
+        _spent = {t: 0 for t in role_taxonomy.TRACK_KEYS}
+        _results_seen = [0]
         future_map = {executor.submit(_scrape_one_query, qi): qi[0] for qi in query_inputs}
         for future in concurrent.futures.as_completed(future_map):
             query_str = future_map[future]
             try:
                 _, posts = future.result()
+                # Result budget: once spent, drop further results on the floor
+                # and cancel what hasn't started. Apify bills per result, so an
+                # unbounded 118-query fan-out can burn a month's cap in one run.
+                _tr = track_by_query.get(query_str, "")
+                # Per-track budget: trim this query's haul to whatever share
+                # its track has left. Results already fetched are already
+                # billed, but trimming stops downstream LLM cost too and keeps
+                # one track from dominating the raw pool.
+                _left = max(0, _track_budget - _spent.get(_tr, 0))
+                if _left <= 0:
+                    all_raw_by_query[query_str] = []
+                    continue
+                posts = posts[:_left]
+                _spent[_tr] = _spent.get(_tr, 0) + len(posts)
+                _results_seen[0] += len(posts)
                 all_raw_by_query[query_str] = posts
-                print(f"   âœ… '{query_str[:60]}' â†’ {len(posts)} raw posts")
+                print(f"   [ok] '{query_str[:60]}' -> {len(posts)} raw posts "
+                      f"[{_tr} {_spent[_tr]}/{_track_budget}] "
+                      f"(total {_results_seen[0]}/{MAX_RESULTS_PER_RUN})")
+                if _results_seen[0] >= MAX_RESULTS_PER_RUN:
+                    for f in future_map:
+                        f.cancel()
             except Exception as e:
                 print(f"   âŒ Query failed: {e}")
                 all_raw_by_query[query_str] = []
@@ -776,7 +911,9 @@ def main():
     for query_str, raw_posts in all_raw_by_query.items():
         if not raw_posts:
             continue
-        passed = _pre_filter_posts(raw_posts, seen_urls)
+        _track = track_by_query.get(query_str, "")
+        _max_days = 7 if role_taxonomy.is_scarce(_track) else 4
+        passed = _pre_filter_posts(raw_posts, seen_urls, max_days=_max_days)
         # Commit seen hashes for this query's batch
         query_passed = []
         for p, url, text_hash in passed:
@@ -886,6 +1023,10 @@ def main():
                 "company": final_company,
                 "work_type": llm_work_type,
                 "hiring_signals": ["llm_extracted"],
+                # Genuineness score from quality_filter.evaluate_post, carried
+                # through llm_post_analyzer. role_taxonomy.balance ranks by it
+                # so a capped track keeps its BEST posts, not an arbitrary slice.
+                "quality_score": post.get("quality_score", 0),
                 "engagement_score": 1,
                 "freshness_bonus": 1,
                 "is_stale": False,
@@ -912,6 +1053,22 @@ def main():
             print(f"\nTopup merged: {len(prev_posts)} existing + {len(verified_posts) - len(prev_posts)} new = {len(verified_posts)} total")
         except Exception as e:
             print(f"⚠️ Could not merge with existing posts: {e}")
+
+    # ── PHASE 5: Role balance ────────────────────────────────
+    # Runs AFTER the quality gate and AFTER the topup merge, never before.
+    # quality_filter decides what is PUBLISHABLE; this only decides which of
+    # the survivors to publish, capping each role track so one oversupplied
+    # field can't take the whole night (marketing was 72% of the live sheet).
+    # It never pads — short supply just yields fewer, preserving the
+    # quality-first contract in run_pipeline.py. Running it after the merge
+    # matters: otherwise a topup pass re-floods the track the first pass
+    # just capped.
+    _pre_balance = len(verified_posts)
+    _mix_before = role_taxonomy.mix(verified_posts)
+    verified_posts = role_taxonomy.balance(verified_posts)
+    print(f"\n[PHASE 5] Role balance: {_pre_balance} → {len(verified_posts)} posts")
+    print(f"   before: {_mix_before}")
+    print(f"   after : {role_taxonomy.mix(verified_posts)}")
 
     with open(CLEAN_OUTPUT, "w", encoding="utf-8") as f:
         json.dump(verified_posts, f, indent=2, ensure_ascii=False)

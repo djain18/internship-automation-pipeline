@@ -30,13 +30,14 @@ image = (
         "apify-client",
         "python-dotenv",
         "google-auth",
-        "google-auth-oauthlib", 
+        "google-auth-oauthlib",
         "google-api-python-client",
         "requests",
         "fastapi[standard]",
         "google-genai",          # Replaces deprecated google-generativeai
         "groq",
         "openai",
+        "boto3",                 # AWS Bedrock (GLM 5) — primary LLM provider
         "python-dateutil",
         "firebase-admin",
     )
@@ -59,6 +60,13 @@ api_image = (
         "python-dotenv==1.0.1",
     )
     .add_local_dir("api", remote_path="/app/api")
+    # api/sheets.py imports role_taxonomy for its cluster labels. This image
+    # deliberately does NOT mount execution/ (it would drag the pipeline's
+    # weight onto a public endpoint), so the one dependency-free module it
+    # needs is mounted flat beside it — api/sheets.py falls back to that import
+    # path. Without this line api_web fails to import in production.
+    .add_local_file("execution/role_taxonomy.py",
+                    remote_path="/app/api/role_taxonomy.py")
 )
 
 
@@ -66,7 +74,18 @@ def _setup_env():
     """Common setup: create credential files from Modal secrets."""
     os.chdir("/app")
     os.makedirs(".tmp", exist_ok=True)
-    
+
+    # 2026-08-22: nightly's default 24h scrape window was chronically
+    # under-supplying genuine posts (7 published vs a soft target of 35).
+    # A live A/B on the same night showed a widened window nearly quadrupling
+    # raw supply (48 -> ~437 raw posts) and tripling genuine publishes (7 ->
+    # 30), with no change to the quality gate — _pre_filter_posts still hard-
+    # rejects anything older than ~4 days regardless of this setting, so this
+    # doesn't relax anti-spam filtering, only gives it more raw material.
+    # setdefault so an explicit Modal secret value (or a local override for a
+    # manual catch-up run) still wins.
+    os.environ.setdefault("SCRAPE_POSTED_LIMIT", "week")
+
     if os.getenv("GOOGLE_CREDENTIALS_JSON"):
         with open("credentials.json", "w") as f:
             f.write(os.getenv("GOOGLE_CREDENTIALS_JSON"))
@@ -236,23 +255,34 @@ def api_web():
     schedule=modal.Period(minutes=30),
 )
 def api_uptime_check():
+    import time
     import httpx
     url = "https://dakshinjain187--internship-pipeline-api-web.modal.run/api/listings"
-    try:
-        resp = httpx.get(url, timeout=10, follow_redirects=True)
-        resp.raise_for_status()
-        data = resp.json()
-        count = len(data) if isinstance(data, list) else 0
-        if count == 0:
-            print(f"⚠️  UPTIME CHECK: {url} returned 0 listings")
-            raise RuntimeError(f"Uptime check got 0 listings from {url}")
-        else:
+
+    # One retry before failing — a lone httpx.ReadTimeout is often just a
+    # transient blip between two Modal containers, not a real outage. Still
+    # raises (and pages) if the second attempt also fails, so a genuine
+    # outage is never swallowed.
+    last_err = None
+    for attempt in range(2):
+        try:
+            resp = httpx.get(url, timeout=20, follow_redirects=True)
+            resp.raise_for_status()
+            data = resp.json()
+            count = len(data) if isinstance(data, list) else 0
+            if count == 0:
+                print(f"⚠️  UPTIME CHECK: {url} returned 0 listings")
+                raise RuntimeError(f"Uptime check got 0 listings from {url}")
             print(f"✅ UPTIME CHECK: {url} returned {count} listings")
-    except RuntimeError:
-        raise
-    except Exception as e:
-        print(f"❌ UPTIME CHECK FAILED: {url} — {e}")
-        raise
+            return
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                print(f"⚠️  UPTIME CHECK attempt 1 failed ({e}) — retrying once...")
+                time.sleep(5)
+
+    print(f"❌ UPTIME CHECK FAILED after retry: {url} — {last_err}")
+    raise last_err
 
 
 @app.function(
