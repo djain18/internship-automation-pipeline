@@ -1,8 +1,9 @@
 """
 llm_post_analyzer.py
 --------------------
-Uses OpenAI (GPT-4o-mini), Gemini, or Groq (Llama 3.1 70B) to analyze LinkedIn posts.
-Prioritizes OpenRouter/Gemini if keys are present.
+Uses AWS Bedrock (GLM 5), OpenAI (GPT-4o-mini), Gemini, or Groq (Llama 3.1 70B)
+to analyze LinkedIn posts. Prioritizes Bedrock, then OpenRouter/Gemini, if keys
+are present.
 """
 
 import logging
@@ -25,6 +26,13 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configuration
+BEDROCK_AVAILABLE = False
+try:
+    import boto3
+    BEDROCK_AVAILABLE = True
+except ImportError:
+    pass
+
 OPENAI_AVAILABLE = False
 try:
     from openai import OpenAI
@@ -156,9 +164,25 @@ def analyze_post_regex(post_text: str, posted_time_str: str = None) -> dict:
     }
 
 def configure_llm():
-    """Configure the LLM client (OpenRouter > OpenAI > Gemini > Groq)."""
+    """Configure the LLM client (Bedrock > OpenRouter > OpenAI > Gemini > Groq)."""
     global PROVIDER, CLIENT, MODEL, REQUEST_DELAY
-    
+
+    # AWS Bedrock API key (bearer token, not an IAM access key/secret pair —
+    # see https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html).
+    # Stored as AWS_BEDROCK in .env; boto3 itself looks for the token under the
+    # AWS_BEARER_TOKEN_BEDROCK name, so we bridge the two here.
+    bedrock_token = os.getenv("AWS_BEDROCK") or os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+    if bedrock_token and BEDROCK_AVAILABLE:
+        os.environ["AWS_BEARER_TOKEN_BEDROCK"] = bedrock_token
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+        model_id = os.getenv("BEDROCK_MODEL_ID", "zai.glm-5")
+        print(f"✅ Using AWS Bedrock ({model_id}, {region})")
+        PROVIDER = "bedrock"
+        CLIENT = boto3.client("bedrock-runtime", region_name=region)
+        MODEL = model_id
+        REQUEST_DELAY = 0.5
+        return
+
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if openrouter_key and OPENAI_AVAILABLE:
         print("✅ Using OpenRouter (gpt-oss-120b) - EXTRACTION ONLY")
@@ -209,7 +233,7 @@ EXTRACT the following fields from the post. Be accurate — only extract what is
 
 --- CLASSIFICATION RULES ---
 You are an ADVERSARIAL SCREENER. Assume the post is spam until it proves otherwise.
-We only want GENUINE internships that are (a) Bengaluru-based onsite/hybrid OR (b) remote and open to candidates in India.
+We only want GENUINE internships that are (a) onsite/hybrid anywhere in India OR (b) remote and open to candidates in India.
 
 - IS_HIRING_POST: Set should_include to true ONLY if the post is a specific recruitment notice for ONE actual internship opening at a REAL identifiable employer.
 - REJECT (should_include = false) if ANY of the following are true:
@@ -219,7 +243,7 @@ We only want GENUINE internships that are (a) Bengaluru-based onsite/hybrid OR (
     - A career coach giving advice, a personal achievement/story, an internship completion certificate, or a candidate looking for a job ("open to work", "seeking opportunities").
     - PAY-TO-WORK SCAM: asks candidates to pay ANY fee (registration, training, security deposit, caution money, certification). Reject immediately.
     - SCAM PATTERNS: "typing job", "data entry job", "form filling", "copy paste work", "earn ₹X daily", "guaranteed income/placement", "100% genuine opportunity", "no investment needed earn daily".
-    - LOCATION MISMATCH: An ONSITE or HYBRID role in any Indian city OTHER than Bengaluru/Bangalore (Mumbai, Delhi, Hyderabad, Pune, Chennai, etc.). Onsite is allowed ONLY in Bengaluru. Remote roles are allowed from anywhere AS LONG AS candidates in India are eligible.
+    - LOCATION MISMATCH: An ONSITE or HYBRID role based OUTSIDE India. Onsite/hybrid is allowed anywhere in India. Remote roles are allowed from anywhere AS LONG AS candidates in India are eligible.
     - FOREIGN-ONLY: Based outside India with no India eligibility (e.g. "Remote, US only"). Remote is fine only if India-eligible or from an Indian company.
     - UNPAID TECH: An UNPAID (or certificate-only, no stipend) software / developer / data / ML / engineering role. Unpaid roles in non-tech fields (research, design, content, NGO) are allowed but must be marked is_paid="no".
 ---------------------------
@@ -338,7 +362,15 @@ Output JSON:
     for attempt in range(max_retries):
         try:
             content = ""
-            if PROVIDER == "gemini":
+            if PROVIDER == "bedrock":
+                response = client.converse(
+                    modelId=MODEL,
+                    messages=[{"role": "user", "content": [{"text": prompt}]}],
+                    inferenceConfig={"maxTokens": 2000, "temperature": 0.1},
+                )
+                content = response["output"]["message"]["content"][0]["text"]
+
+            elif PROVIDER == "gemini":
                 # New google.genai SDK — strict 45s timeout
                 from google.genai import types as genai_types
                 response = client.models.generate_content(
@@ -418,7 +450,7 @@ def batch_analyze_posts(posts: list) -> list:
 
         # 2. DETERMINISTIC QUALITY GATE — single source of truth (quality_filter).
         #    Handles: scam, aggregator/reposter, WhatsApp/DM apply, unpaid-tech,
-        #    Bengaluru-onsite / India-remote location, and LLM legitimacy signals.
+        #    all-India-onsite / India-remote location, and LLM legitimacy signals.
         decision = quality_filter.evaluate_post(analysis, post)
         if not decision.get("accept"):
             print(f"    ❌ [{i+1}/{len(posts)}] Rejected: {decision.get('reason', 'failed quality gate')}")
@@ -476,6 +508,10 @@ def batch_analyze_posts(posts: list) -> list:
             entry["contact_email"] = contact_email
             entry["apply_link"] = apply_link
             entry["formatted_description"] = formatted_description
+            # Carry the gate's genuineness score forward. role_taxonomy.balance
+            # ranks within each role track by it, so the per-role cap keeps the
+            # BEST posts of a track rather than an arbitrary slice.
+            entry["quality_score"] = decision.get("score", 0)
             local_results.append(entry)
             print(f"    ✅ [{i+1}/{len(posts)}] Ready: {role.strip()} @ {company}")
             

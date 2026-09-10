@@ -22,6 +22,11 @@ from __future__ import annotations
 
 import os
 import re
+
+try:
+    from execution import role_taxonomy
+except ImportError:  # Modal api_image mounts it flat beside this module
+    import role_taxonomy
 import csv
 import io
 import json
@@ -99,18 +104,15 @@ def _hours_ago(date_str: str) -> int:
 
 
 def _infer_cluster(title: str, tags: list[str]) -> str:
-    text = (title + " " + " ".join(tags)).lower()
-    if any(w in text for w in ["software", "sde", "developer", "frontend", "backend", "full stack", "web", "ios", "android", "flutter", "mobile"]): return "Software"
-    if any(w in text for w in ["data", "machine learning", "ml", "ai", "analytics", "scientist"]): return "Data/AI"
-    if any(w in text for w in ["product", " pm ", "apm"]): return "Product"
-    if any(w in text for w in ["design", "ui", "ux", "graphic", "video", "motion", "figma"]): return "Design"
-    if any(w in text for w in ["marketing", "seo", "social media", "growth", "performance"]): return "Marketing"
-    if any(w in text for w in ["finance", "audit", "accounting", "equity", "markets"]): return "Finance"
-    if any(w in text for w in ["sales", "business development", "bd", "bdr", "sdr"]): return "Business Dev"
-    if any(w in text for w in ["hr", "human resources", "talent", "recruit"]): return "HR"
-    if any(w in text for w in ["content", "writing", "copywriting", "editorial"]): return "Content"
-    if any(w in text for w in ["legal", "compliance", "contracts", "law"]): return "Legal"
-    return "Operations"
+    """Display cluster for a listing.
+
+    The rule table moved to execution/role_taxonomy.py, which is now the single
+    source of truth shared with the pipeline's dedup and per-role quota — the
+    three copies of this logic used to disagree. Every label this returned
+    before is still returned; the taxonomy adds "Product Engineering" and
+    "Business Ops" for role families the pipeline now searches for.
+    """
+    return role_taxonomy.infer_cluster(title, tags)
 
 
 def _score(hours_ago: int, stipend: int) -> int:

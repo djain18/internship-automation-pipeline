@@ -10,9 +10,13 @@ llm_post_analyzer.py, so the rules can never drift apart again.
 Design philosophy (see CLAUDE.md): the LLM extracts/labels; THIS CODE decides.
 Quality-first: when a signal is ambiguous, we drop rather than pad.
 
-Policy (locked with product owner, 2026-07):
+Policy (locked with product owner, 2026-07; location widened 2026-07-27,
+widened again to all-India 2026-08-21):
   - Location: Remote (India-eligible) accepted from anywhere; onsite/hybrid
-    accepted ONLY if Bengaluru. All other-city onsite roles are dropped.
+    accepted anywhere in India in ACCEPTED_CITY_TERMS (metros plus a broad
+    set of tier-2/3 cities and state capitals). Only explicitly foreign
+    locations, or posts with no recognizable location signal at all, are
+    dropped.
   - Aggregator/reposter "multiple positions" lists + paid-mentorship promos: DROP.
   - Apply-via WhatsApp / DM / "comment interested": DROP (no real application).
   - Unpaid TECH roles: DROP. Unpaid non-tech: keep, but flagged.
@@ -27,20 +31,49 @@ import re
 # ─────────────────────────────────────────────────────────────────────────────
 # Location vocab
 # ─────────────────────────────────────────────────────────────────────────────
+# Onsite/hybrid accepted cities — all of India. Started as a Bengaluru-only
+# gate, widened 2026-07-27 to the top 12 internship-volume metros, then widened
+# again 2026-08-21 to a broad tier-2/3 list per product decision (a fixed metro
+# whitelist structurally can't cover "roles across India") — see
+# [[anti-spam-policy]]. Delhi, Gurgaon, and Noida are kept as separate entries
+# (not merged into one "NCR" term) because posts name the specific city, not
+# the region.
+ACCEPTED_CITY_TERMS = (
+    # Metros / original 12
+    "bengaluru", "bangalore", "bangaluru", "blr",
+    "mumbai", "bombay",
+    "delhi", "new delhi",
+    "gurgaon", "gurugram",
+    "noida",
+    "pune",
+    "hyderabad",
+    "chennai",
+    "jaipur",
+    "ahmedabad",
+    "kolkata",
+    "indore",
+    # Tier-2/3 cities and state capitals
+    "lucknow", "chandigarh", "kochi", "cochin", "coimbatore", "nagpur",
+    "bhopal", "visakhapatnam", "vizag", "thiruvananthapuram", "trivandrum",
+    "surat", "vadodara", "mysore", "mysuru", "mangalore", "mangaluru",
+    "gandhinagar", "faridabad", "thane", "navi mumbai",
+    "patna", "ranchi", "raipur", "bhubaneswar", "guwahati", "dehradun",
+    "shimla", "jammu", "srinagar", "panaji", "goa",
+    "imphal", "agartala", "aizawl", "kohima", "itanagar", "gangtok",
+    "amritsar", "ludhiana", "jalandhar",
+    "varanasi", "kanpur", "agra", "prayagraj", "allahabad", "meerut",
+    "nashik", "aurangabad", "nagpur", "rajkot", "vijayawada", "warangal",
+    "madurai", "tiruchirappalli", "trichy", "salem",
+    "hubli", "dharwad", "belgaum", "belagavi",
+    "jodhpur", "udaipur", "kota", "bikaner",
+    "siliguri", "durgapur", "asansol", "cuttack",
+    "jamshedpur", "dhanbad", "bhilai", "gwalior", "jabalpur", "ujjain",
+    "pondicherry", "puducherry",
+)
+# Back-compat alias — some call sites/tests may still refer to the old name.
 BENGALURU_TERMS = ("bengaluru", "bangalore", "bangaluru", "blr")
 
 REMOTE_TERMS = ("remote", "work from home", "wfh", "work-from-home")
-
-# A specific non-Bengaluru Indian city in the *location* field means an onsite
-# role we no longer want (unless the role is also remote).
-OTHER_INDIAN_CITIES = (
-    "mumbai", "delhi", "new delhi", "gurgaon", "gurugram", "noida",
-    "hyderabad", "chennai", "pune", "kolkata", "ahmedabad", "jaipur",
-    "lucknow", "chandigarh", "indore", "kochi", "coimbatore", "nagpur",
-    "bhopal", "visakhapatnam", "thiruvananthapuram", "surat", "vadodara",
-    "mysore", "mysuru", "mangalore", "mangaluru", "gandhinagar", "faridabad",
-    "thane", "navi mumbai",
-)
 
 # Explicit foreign markers — a remote role that is foreign-ONLY is useless to an
 # India-based candidate, so we still drop those.
@@ -277,30 +310,28 @@ def is_aggregator_post(author_name: str = "", author_headline: str = "",
 
 
 def location_decision(location: str, work_mode: str = "", text: str = "") -> tuple:
-    """Bengaluru-onsite OR India-eligible-remote gate.
+    """Accepted-city-onsite (all of India) OR India-eligible-remote gate.
 
     Returns (accept: bool, resolved_mode: str, reason: str)
-      resolved_mode in {'remote', 'bengaluru', 'other'}
+      resolved_mode in {'remote', 'onsite', 'other'}
     Rules:
-      - Remote (and not foreign-only)         → accept
-      - Onsite/Hybrid in Bengaluru            → accept
-      - Onsite/Hybrid in another city         → reject
-      - Unknown but text shows remote/bengaluru → accept
-      - Otherwise                             → reject (can't confirm)
+      - Remote (and not foreign-only)               → accept
+      - Onsite/Hybrid in a recognized Indian city    → accept
+      - Unknown but text shows remote/accepted-city  → accept
+      - Otherwise (foreign, or no location signal)   → reject
     """
     loc = _norm(location)
     mode = _norm(work_mode)
     body = _norm(text)
 
     # The STRUCTURED fields (location + work_mode) are authoritative. A stray
-    # "remote" in the body must NOT override an explicit "Gurgaon / Onsite".
+    # "remote" in the body must NOT override an explicit "Nagpur / Onsite".
     loc_remote = any(t in loc for t in REMOTE_TERMS) or any(t in mode for t in REMOTE_TERMS)
-    loc_blr = any(t in loc for t in BENGALURU_TERMS)
-    loc_other = any(c in loc for c in OTHER_INDIAN_CITIES)
+    loc_accepted = any(t in loc for t in ACCEPTED_CITY_TERMS)
 
     foreign_present = any(f in loc for f in FOREIGN_TERMS) or \
         any(f in body for f in FOREIGN_TERMS)
-    india_ctx = any(t in loc or t in body for t in INDIA_CONTEXT_TERMS) or loc_blr
+    india_ctx = any(t in loc or t in body for t in INDIA_CONTEXT_TERMS) or loc_accepted
 
     # 1) Explicit remote in the structured fields → accept unless foreign-only.
     if loc_remote:
@@ -308,27 +339,27 @@ def location_decision(location: str, work_mode: str = "", text: str = "") -> tup
             return False, "remote", "remote but foreign-only (no India eligibility)"
         return True, "remote", "remote / India-eligible"
 
-    # 2) Explicit Bengaluru in the location field → accept (even if multi-city).
-    if loc_blr:
-        return True, "bengaluru", "Bengaluru (multi-city incl. BLR)" if loc_other else "onsite Bengaluru"
+    # 2) Explicit accepted (Indian) city in the location field → accept.
+    if loc_accepted:
+        return True, "onsite", "onsite accepted city"
 
-    # 3) Explicit OTHER city, no Bengaluru, no remote → reject. This comes BEFORE
-    #    any body scan so a body "remote" mention can't rescue an other-city post.
-    if loc_other:
-        return False, "other", f"onsite other city ({location})"
+    # 3) Explicit foreign location, no remote → reject. This comes BEFORE any
+    #    body scan so a body "remote" mention can't rescue it.
+    if foreign_present and not india_ctx:
+        return False, "other", f"onsite foreign location ({location})"
 
     # 4) Location field empty/unknown → fall back to the body as last resort.
-    body_blr = any(t in body for t in BENGALURU_TERMS)
+    body_accepted = any(t in body for t in ACCEPTED_CITY_TERMS)
     body_remote = bool(re.search(r"\bremote\b", body)) or bool(re.search(r"\bwfh\b", body)) \
         or "work from home" in body
-    if body_blr:
-        return True, "bengaluru", "Bengaluru (from post text)"
+    if body_accepted:
+        return True, "onsite", "accepted city (from post text)"
     if body_remote:
         if foreign_present and not india_ctx:
             return False, "remote", "remote but foreign-only (no India eligibility)"
         return True, "remote", "remote / India-eligible (from post text)"
 
-    return False, "other", "location not Bengaluru/remote (unconfirmed)"
+    return False, "other", "location not an accepted city/remote (unconfirmed)"
 
 
 def evaluate_post(analysis: dict, post: dict) -> dict:
@@ -343,7 +374,7 @@ def evaluate_post(analysis: dict, post: dict) -> dict:
           "reason": str,          # why rejected (empty if accepted)
           "score": int,           # 0-100 genuineness score (for ranking/logging)
           "apply_method": str,
-          "resolved_mode": str,   # remote / bengaluru / other
+          "resolved_mode": str,   # remote / onsite / other
           "unpaid_flag": bool,    # accepted-but-unpaid (non-tech)
         }
     """
@@ -457,8 +488,8 @@ def evaluate_post(analysis: dict, post: dict) -> dict:
         score += 8
     if not unpaid:
         score += 8
-    if mode == "bengaluru":
-        score += 4  # slight preference: confirmed local
+    if mode == "onsite":
+        score += 4  # slight preference: confirmed accepted-city onsite
     result["score"] = min(100, score)
     result["accept"] = True
     return result

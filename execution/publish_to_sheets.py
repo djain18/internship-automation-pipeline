@@ -19,6 +19,11 @@ import os
 import sys
 import json
 import hashlib
+
+try:
+    from execution import role_taxonomy
+except ImportError:
+    import role_taxonomy
 import time
 import requests
 from datetime import datetime, timedelta
@@ -159,17 +164,16 @@ def _normalize_company(name: str) -> str:
 
 
 def standardize_role_for_dedup(role: str) -> str:
-    """Map arbitrary job titles to strict generic categories for robust deduplication."""
-    r = role.lower()
-    if any(x in r for x in ['software', 'sde', 'developer', 'frontend', 'backend', 'full stack', 'app', 'web', 'ios', 'android']): return 'software'
-    if any(x in r for x in ['data', 'machine learning', 'ml', 'ai', 'analytics', 'scientist']): return 'data'
-    if any(x in r for x in ['product', 'pm']): return 'product'
-    if any(x in r for x in ['marketing', 'seo', 'social media', 'content']): return 'marketing'
-    if any(x in r for x in ['design', 'ui', 'ux', 'graphic', 'video', 'animation']): return 'design'
-    if any(x in r for x in ['finance', 'audit', 'accounting', 'ca ']): return 'finance'
-    if any(x in r for x in ['sales', 'business development', 'bd', 'bdr']): return 'sales'
-    if any(x in r for x in ['hr', 'human resources', 'talent', 'recruitment']): return 'hr'
-    return ''.join(filter(str.isalpha, r))
+    """Map an arbitrary job title to a broad role bucket for robust dedup.
+
+    Delegates to role_taxonomy — the same buckets the scraper's cross-query
+    dedup and the website's cluster labels use. Previously this had its own
+    keyword list, so an "AI Automation Intern" deduped under `data` while the
+    site showed it as `AI Automation`: two different roles at the same company
+    could silently collide.
+    """
+    return role_taxonomy.infer_track(role)
+
 
 def generate_dedup_keys(item: dict) -> list:
     """
