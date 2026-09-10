@@ -1,5 +1,8 @@
 # Temporary files
 .tmp/
+personal_hunt/.tmp/
+personal_hunt/out/
+personal_hunt/state/
 error_*.txt
 error_*.log
 modal_output.txt

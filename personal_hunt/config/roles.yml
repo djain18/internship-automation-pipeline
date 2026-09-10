@@ -1,0 +1,99 @@
+accepted:
+  - founders office
+  - founder's office
+  - founder’s office
+  - founders associate
+  - founder's associate
+  - founder’s associate
+  - founder office
+  - founder associate
+  - chief of staff intern
+  - special projects
+  - business generalist
+  - generalist intern
+  - business operations intern
+  - operations intern
+  - strategy intern
+  - strategy and operations
+  - strategy & operations
+  - growth intern
+  - growth marketing intern
+  - gtm intern
+  - product operations
+  - launch operations
+  - brand operations
+  - growth operations
+  - venture builder intern
+
+# Tier 1 role families Daksh named. Matched against the TITLE only: these are
+# broad words that appear incidentally in almost any description ("our growth",
+# "the operations team"), so description-wide matching would admit unrelated
+# roles. Description-level judgement is Tier 2 (llm_rank.judge_cross_functional).
+accepted_title:
+  - generalist
+  - growth
+  - operations
+  - ops
+  - strategy
+  - chief of staff
+  - business development
+  - business operations
+  - biz ops
+  - bizops
+  - revenue operations
+  - partnerships
+
+cross_functional_terms:
+  - work with founders
+  - directly with the founder
+  - cross-functional
+  - cross functional
+  - wear multiple hats
+  - zero to one
+  - 0 to 1
+  - strategy and execution
+  - special projects
+
+specialist_reject:
+  - software engineer
+  - data scientist
+  - ui designer
+  - graphic designer
+  - accountant
+  - legal counsel
+  - campus ambassador
+  - commission only
+
+senior_reject:
+  - vice president
+  - director
+  - head of
+  - senior manager
+  - staff engineer
+  - principal
+  - 8+ years
+  - 10+ years
+
+ai_terms:
+  - ai
+  - artificial intelligence
+  - generative ai
+  - genai
+  - ai agent
+  - llm
+  - machine learning
+  - automation
+
+consumer_terms:
+  - consumer
+  - d2c
+  - retail
+  - ecommerce
+  - e-commerce
+  - home
+  - electrical
+  - physical product
+  - brand
+  - commerce
+  - supply chain
+

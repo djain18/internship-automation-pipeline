@@ -1,0 +1,35 @@
+provider: amazon_bedrock
+region_env: AWS_REGION
+enabled_env: ENABLE_BEDROCK
+
+extraction:
+  model_id_env: BEDROCK_EXTRACTION_MODEL_ID
+  required_eval_precision: 0.90
+  max_input_chars: 12000
+  max_output_tokens: 900
+
+research:
+  model_id_env: BEDROCK_RESEARCH_MODEL_ID
+  pinned_model_id: moonshotai.kimi-k2.5
+  required_eval_precision: 0.90
+  max_input_chars: 24000
+  max_output_tokens: 1800
+
+shortlist_scoring:
+  model_id_env: BEDROCK_RESEARCH_MODEL_ID
+  evaluation_target_model_id: moonshotai.kimi-k2.5
+  pinned_model_id: moonshotai.kimi-k2.5
+  required_eval_precision: 0.90
+  fit_threshold: 70
+  max_input_chars: 24000
+  max_output_tokens: 1800
+  fail_closed_for_digest: true
+
+rules:
+  - no_llm_for_fetching
+  - no_llm_for_hard_filters
+  - no_llm_for_deduplication
+  - no_llm_for_state_transitions
+  - log_model_and_token_usage
+  - reject_unparseable_json
+
