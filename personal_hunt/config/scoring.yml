@@ -12,6 +12,9 @@ validate_application_links: true
 adaptive_apify_topup: true
 llm_fit_threshold: 70
 max_role_judgements_per_run: 25
+# Unverified LinkedIn leads shown per run for manual checking. Capped so a
+# long tail of low-confidence leads cannot bury the approved matches.
+max_needs_verification: 10
 funding_primary_age_days: 15
 funding_extension_age_days: 30
 funding_primary_min_items: 3

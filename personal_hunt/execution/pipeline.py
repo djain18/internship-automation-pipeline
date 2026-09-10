@@ -102,6 +102,30 @@ def _validate_selected_links(records: list[Record]) -> None:
             item["apply_link_warning"] = "manual_verification_required"
 
 
+def select_needs_verification(
+    records: list[Record], scoring: dict[str, Any]
+) -> list[Record]:
+    """Leads dropped only because a LinkedIn link needs Daksh's own check.
+
+    Policy allows retaining these as low-confidence unverified leads, so they
+    are surfaced for manual review instead of being discarded. They stay
+    rejected and ineligible: this reads the rejection list rather than
+    changing it, so no scoring, digest or API path can promote one. The sole
+    reason test matters - a record that is also stale, senior or out of scope
+    is not worth a manual check.
+    """
+    tray = [
+        item
+        for item in records
+        if list(item.get("rejection_reasons") or [])
+        == ["linkedin_post_requires_manual_verification"]
+    ]
+    # score() returns 0 for every ineligible record, so it cannot rank these.
+    # Freshest first is the ordering that helps a manual check.
+    tray.sort(key=lambda item: str(item.get("posted_date") or ""), reverse=True)
+    return tray[: int(scoring.get("max_needs_verification", 10))]
+
+
 def deterministic_candidate_count(
     raw_records: list[Record],
     run_date: date,
@@ -266,6 +290,7 @@ def run_pipeline(
         "deduplicated_count": len(unique),
         "duplicate_count": len(duplicates),
         "eligible_count": sum(bool(item.get("eligible")) for item in scored),
+        "needs_verification": select_needs_verification(scored, config["scoring"]),
         "primary": primary,
         "remote_fallback": remote,
         "digest_primary": [item for item in primary if item.get("digest_approved")],

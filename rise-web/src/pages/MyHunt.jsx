@@ -191,6 +191,7 @@ export default function MyHunt() {
   const matches = useMemo(() => matchesFromPayload(payload), [payload]);
   const selected = matches.find((item) => item.id === selectedId) || matches[0];
   const funding = [...(payload?.funding?.primary || []), ...(payload?.funding?.extended || [])];
+  const needsVerification = payload?.needsVerification || [];
   const failedSources = (payload?.sourceHealth || []).filter((item) => item.status === "failed");
 
   if (authLoading) return <Skeleton />;
@@ -228,7 +229,7 @@ export default function MyHunt() {
         )}
 
         <div className="mt-8 flex gap-1 rounded-lg border border-border bg-background p-1" role="tablist" aria-label="Personal hunt sections">
-          {[["matches", "Matches", BriefcaseBusiness], ["funding", "Funding", Sparkles], ["pipeline", "Pipeline", SearchCheck]].map(([value, label, Icon]) => (
+          {[["matches", "Matches", BriefcaseBusiness], ["funding", "Funding", Sparkles], ["verify", `Verify${needsVerification.length ? ` (${needsVerification.length})` : ""}`, ShieldCheck], ["pipeline", "Pipeline", SearchCheck]].map(([value, label, Icon]) => (
             <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tab === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               <Icon className="h-4 w-4" /> {label}
             </button>
@@ -259,6 +260,25 @@ export default function MyHunt() {
                 {event.problem_research?.problem_hypothesis && <div className="mt-4 rounded-lg bg-secondary/70 p-4 text-sm leading-6"><span className="font-medium">Inference to validate: </span><span className="text-muted-foreground">{event.problem_research.problem_hypothesis}</span></div>}
               </article>
             )) : <div className="p-8 text-sm text-muted-foreground">No current funding signal passed the dated evidence gate.</div>}
+          </div>
+        )}
+
+        {tab === "verify" && (
+          <div className="mt-5 overflow-hidden rounded-xl border border-border bg-background">
+            <div className="border-b border-border bg-secondary/40 px-5 py-4 text-sm">
+              <div className="font-medium">Unverified LinkedIn leads</div>
+              <div className="mt-1 text-muted-foreground">These cleared every other filter but link to LinkedIn, which this pipeline is not permitted to open. They are machine-collected unverified leads, not approved matches, and they are not counted in the numbers above. Open each one yourself before acting on it.</div>
+            </div>
+            {needsVerification.length ? needsVerification.map((item) => (
+              <article key={item.id} className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4 text-sm last:border-b-0">
+                <div>
+                  <div className="font-semibold text-foreground">{item.title}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{item.company}</div>
+                  <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{item.location}</span><span>Posted {item.posted_date}</span></div>
+                </div>
+                <a href={item.apply_url || item.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Verify <ArrowUpRight className="h-4 w-4" /></a>
+              </article>
+            )) : <div className="p-8 text-sm text-muted-foreground">Nothing is waiting on manual verification.</div>}
           </div>
         )}
 
