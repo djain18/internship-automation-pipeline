@@ -146,7 +146,9 @@ def normalize_record(
     location = clean_text(_first(raw, "location", "job_location"))
     source_url = canonical_url(_first(raw, "source_url", "_source_url", "link", "url"))
     apply_url = canonical_url(_first(raw, "apply_url", "link", "application_url", "url"))
-    company_url = canonical_url(_first(raw, "company_url", "website"))
+    company_url = canonical_url(_first(raw, "company_url", "website")) or _company_url_from_links(
+        company, apply_url, source_url
+    )
     location_class, work_mode = classify_location(
         location, clean_text(_first(raw, "work_mode", "type"))
     )
@@ -160,6 +162,15 @@ def normalize_record(
             "role": "hiring manager",
             "email": clean_text(raw.get("hiringManagerEmail")),
             "linkedin": canonical_url(raw.get("hiringManagerLinkedin")),
+            "source_url": source_url,
+            "verification_status": "published_by_source",
+        }
+    if not contact and clean_text(raw.get("contact_email")):
+        # fetch_sources emits this flat field from the Rise sheet's Contact
+        # Email column. It was silently discarded before this branch existed.
+        contact = {
+            "role": "listed contact",
+            "email": clean_text(raw.get("contact_email")),
             "source_url": source_url,
             "verification_status": "published_by_source",
         }
@@ -244,6 +255,49 @@ def normalize_record(
     normalized["rejection_reasons"] = hard_exclusions(normalized, roles, scoring)
     normalized["eligible"] = not normalized["rejection_reasons"]
     return normalized
+
+
+# Hosts that carry a job but are not the company: aggregators, applicant
+# tracking systems, and social platforms. The host of an apply link that is
+# none of these IS the company's own site - an observed URL, not a guess.
+NON_COMPANY_HOSTS = (
+    "lever.co", "greenhouse.io", "workable.com", "ashbyhq.com", "recruitee.com",
+    "smartrecruiters.com", "zohorecruit.com", "keka.com", "darwinbox.com",
+    "linkedin.com", "lnkd.in", "twitter.com", "x.com", "facebook.com",
+    "instagram.com", "notion.site", "notion.so", "docs.google.com",
+    "forms.gle", "google.com", "typeform.com", "airtable.com", "wellfound.com",
+    "angel.co", "ycombinator.com", "weworkremotely.com", "internshala.com",
+    "naukri.com", "indeed.com", "glassdoor.com", "unstop.com", "cutshort.io",
+    "instahyre.com", "hirist.com", "github.io", "bit.ly", "tinyurl.com",
+)
+
+
+def _company_url_from_links(company: str, *urls: str) -> str:
+    """The apply link's host, but only when it is demonstrably this company.
+
+    A live run derived binary.so for "Ethereal Labs" and would have attached
+    another company's about page as evidence. An unrecognized host is left
+    empty: no site research is better than research about the wrong company.
+    """
+
+    tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", company.casefold())
+        if len(token) >= 4 and token not in {"labs", "technologies", "solutions",
+                                             "private", "limited", "india", "the"}
+    }
+    for url in urls:
+        host = urlsplit(str(url or "")).netloc.casefold().removeprefix("www.")
+        if not host or any(
+            host == blocked or host.endswith("." + blocked)
+            for blocked in NON_COMPANY_HOSTS
+        ):
+            continue
+        label = host.split(".")[0]
+        compact = "".join(ch for ch in company.casefold() if ch.isalnum())
+        if label == compact or any(token in label for token in tokens):
+            return f"https://{host}"
+    return ""
 
 
 def hard_exclusions(

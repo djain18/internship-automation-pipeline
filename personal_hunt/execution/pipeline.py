@@ -258,6 +258,10 @@ def run_pipeline(
     )
     for event in funding_primary + funding_extended:
         event["problem_research"] = research_funding_event(event)
+        # Funding events skipped choose_contact entirely, which is why contact
+        # was null on every one of them.
+        event["research"] = event["problem_research"]
+        event["selected_contact"] = choose_contact(event)
     run_id = stable_id(
         run_kind,
         run_date.isoformat(),
