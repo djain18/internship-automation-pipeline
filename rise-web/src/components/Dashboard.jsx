@@ -25,11 +25,19 @@ import {
   Package,
   Settings,
   ArrowUpRight,
+  Crown,
+  Rocket,
+  Bot,
+  Boxes,
 } from "lucide-react";
 import { formatStipend, formatAge } from "@/lib/format";
 
 // Map a cluster name (from api/sheets.py _infer_cluster) to a sidebar icon.
 const CLUSTER_ICON = {
+  "Founder's Office": Crown,
+  "Forward Deployed": Rocket,
+  "AI Automation": Bot,
+  "Product Engineering": Boxes,
   Software: Code2,
   "Data/AI": LineChart,
   Product: Package,
@@ -40,6 +48,7 @@ const CLUSTER_ICON = {
   HR: Users,
   Content: PenTool,
   Legal: Scale,
+  "Business Ops": Briefcase,
   Operations: Settings,
 };
 
@@ -252,7 +261,7 @@ export default function Dashboard({ open, onClose, stats, listings = [], onOpenL
               <div className="min-w-0 flex-1 overflow-y-auto bg-secondary/30 p-5">
                 <div className="flex items-center justify-between">
                   <div className="text-lg font-semibold">
-                    {activeField === "All" ? "Welcome back 👋" : `${activeField} roles`}
+                    {activeField === "All" ? "Welcome back" : `${activeField} roles`}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {filtered.length} {filtered.length === 1 ? "role" : "roles"}
@@ -262,11 +271,11 @@ export default function Dashboard({ open, onClose, stats, listings = [], onOpenL
                 {/* Stat tiles */}
                 <div className="mt-4 flex flex-wrap gap-3">
                   <StatTile label="Verified tonight" value={verified} sub="live now" />
-                  <StatTile label="Companies hiring" value={companies || "—"} />
-                  <StatTile label="Fields covered" value={fields || "—"} />
+                  <StatTile label="Companies hiring" value={companies || "N/A"} />
+                  <StatTile label="Fields covered" value={fields || "N/A"} />
                   <StatTile
                     label="Scams filtered"
-                    value={spiked ? `−${spiked}` : "—"}
+                    value={spiked ? `−${spiked}` : "N/A"}
                     sub="kept out"
                     tone="red"
                   />

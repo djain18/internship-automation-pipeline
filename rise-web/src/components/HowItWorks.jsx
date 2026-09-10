@@ -5,26 +5,26 @@ const STEPS = [
   {
     icon: Radar,
     n: "01",
-    head: "We read the whole wire",
-    body: "Every night a scraper pulls every internship posted across LinkedIn in the last 24 hours — hundreds of them, raw and unsorted, across ten fields.",
+    head: "Every posting is collected",
+    body: "Each night, an automated scraper collects every internship posted across LinkedIn in the past 24 hours: hundreds of postings, unsorted, across more than a dozen fields.",
   },
   {
     icon: ShieldX,
     n: "02",
-    head: "We spike the junk",
-    body: "Registration-fee scams, “earn ₹5,000 a day” schemes, posts with no way to apply, and roles not open to students in India are thrown out.",
+    head: "Scams and invalid postings are removed",
+    body: "Registration-fee scams, “earn ₹5,000 a day” schemes, postings with no way to apply, and roles not open to students in India are excluded.",
   },
   {
     icon: Sparkles,
     n: "03",
-    head: "A model grades what's left",
-    body: "An LLM reads each surviving post, pulls out the real role, company, stipend and apply link, and scores it on freshness and quality.",
+    head: "Remaining postings are evaluated",
+    body: "A language model reads each remaining posting, extracts the role, company, stipend, and apply link, and scores it for freshness and quality.",
   },
   {
     icon: Send,
     n: "04",
-    head: "The best go to the board",
-    body: "Only verified, fresh, India-eligible roles are published — here and to your inbox if you want them. Stale posts drop off automatically.",
+    head: "Verified roles are published",
+    body: "Only verified, current, India-eligible roles are published, on the site and by email for subscribers. Outdated postings are removed automatically.",
   },
 ];
 
@@ -49,12 +49,12 @@ export default function HowItWorks({ stats }) {
             How Rise works
           </span>
           <h2 className="mt-3 font-display text-4xl tracking-tight text-foreground md:text-5xl">
-            An editor that never sleeps
+            Reviewed every night
           </h2>
           <p className="mt-3 text-muted-foreground">
-            You shouldn't have to scroll past a hundred fake posts to find one real
-            internship. So every night, between you going to bed and waking up, Rise does it
-            for you.
+            Students should not have to scroll past a hundred fake postings to find one
+            real internship. Rise reviews every posting overnight, so a verified list is
+            ready each morning.
           </p>
         </div>
 

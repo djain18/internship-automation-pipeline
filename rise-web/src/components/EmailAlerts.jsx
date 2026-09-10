@@ -8,8 +8,9 @@ import { useAuth } from "@/lib/AuthContext";
 import Reveal from "./Reveal";
 
 const FIELDS = [
-  "Software", "Data/AI", "Design", "Product", "Marketing",
-  "Finance", "Business Dev", "HR", "Content", "Operations",
+  "Software", "Data/AI", "AI Automation", "Design", "Product", "Marketing",
+  "Finance", "Business Dev", "Founder's Office", "Forward Deployed",
+  "HR", "Content", "Operations",
 ];
 const CITIES = ["Bangalore", "Mumbai", "Delhi NCR", "Hyderabad", "Pune", "Chennai", "Remote"];
 const GRAD_YEARS = ["2026", "2027", "2028", "2029"];
@@ -40,7 +41,7 @@ function EditionPreview() {
         ))}
       </div>
       <p className="mt-4 text-xs leading-relaxed text-ink-foreground/40">
-        One email, once a day. Matched to the fields and city you pick below.
+        One email each day, matched to the fields and city selected below.
       </p>
     </div>
   );
@@ -133,22 +134,23 @@ export default function EmailAlerts() {
                   <Check className="h-5 w-5" />
                 </div>
                 <h2 className="mt-5 font-display text-4xl tracking-tight text-ink-foreground md:text-5xl">
-                  You're on the list
+                  Preferences saved
                 </h2>
                 <p className="mt-3 max-w-md text-ink-foreground/60">
-                  Tomorrow morning you'll get your first edition — the freshest roles in{" "}
-                  {roles.length ? roles.join(", ") : "your fields"}. Sign back in anytime to update
-                  your preferences.
+                  The first email will arrive tomorrow morning with the newest roles in{" "}
+                  {roles.length ? roles.join(", ") : "the selected fields"}. Sign in at any time
+                  to update these preferences.
                 </p>
               </motion.div>
             ) : !user ? (
               <>
                 <h2 className="font-display text-4xl tracking-tight text-ink-foreground md:text-5xl">
-                  Get the edition in your inbox
+                  Receive the daily edition by email
                 </h2>
                 <p className="mt-3 max-w-md text-ink-foreground/60">
-                  Sign in with Google, pick your fields and city, and get one short email a day
-                  with the freshest internships matched to you. Free, no spam, unsubscribe anytime.
+                  Sign in with Google, select fields and a city, and receive one short email
+                  each day with internships matched to those preferences. Free, with no
+                  spam, and unsubscribe at any time.
                 </p>
                 <div className="mt-8">
                   <Button
@@ -160,7 +162,7 @@ export default function EmailAlerts() {
                   </Button>
                   {signInError && (
                     <p className="mt-3 text-sm text-red-400">
-                      Sign-in didn't go through — please try again.
+                      Sign-in was not completed. Please try again.
                     </p>
                   )}
                 </div>
@@ -168,16 +170,16 @@ export default function EmailAlerts() {
             ) : (
               <>
                 <h2 className="font-display text-4xl tracking-tight text-ink-foreground md:text-5xl">
-                  Get the edition in your inbox
+                  Receive the daily edition by email
                 </h2>
                 <p className="mt-3 text-ink-foreground/60">
-                  Signed in as {user.email}. Pick your fields and city below.
+                  Signed in as {user.email}. Select fields and a city below.
                 </p>
 
                 <form onSubmit={onSubmit} className="mt-8 space-y-6">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-ink-foreground">
-                      Fields you care about
+                      Fields of interest
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {FIELDS.map((f) => (
@@ -242,7 +244,7 @@ export default function EmailAlerts() {
 
                   {status === "error" && (
                     <p className="text-sm text-red-400">
-                      Something went wrong saving your preferences — please try again.
+                      Preferences could not be saved. Please try again.
                     </p>
                   )}
                 </form>

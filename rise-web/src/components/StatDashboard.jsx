@@ -138,16 +138,16 @@ export default function StatDashboard({ stats, listings = [] }) {
 
         {/* Main content */}
         <div className="flex-1 bg-secondary/30 p-4">
-          <div className="text-sm font-semibold">Welcome back 👋</div>
+          <div className="text-sm font-semibold">Welcome back</div>
 
           {/* Stat tiles */}
           <div className="mt-3 flex gap-3">
             <StatTile label="Verified tonight" value={verified} sub="live now" />
-            <StatTile label="Companies hiring" value={companies || "—"} />
-            <StatTile label="Fields covered" value={fields || "—"} />
+            <StatTile label="Companies hiring" value={companies || "N/A"} />
+            <StatTile label="Fields covered" value={fields || "N/A"} />
             <StatTile
               label="Scams filtered"
-              value={spiked ? `−${spiked}` : "—"}
+              value={spiked ? `−${spiked}` : "N/A"}
               sub="kept out"
               tone="red"
             />
