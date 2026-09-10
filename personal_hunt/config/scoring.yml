@@ -1,0 +1,39 @@
+publish_threshold: 70
+daily_target: 10
+daily_min_target: 5
+max_artifacts: 2
+max_employees: 400
+preferred_max_employees: 150
+funding_recency_days: 365
+max_posting_age_days: 10
+min_duration_months: 2
+max_duration_months: 12
+validate_application_links: true
+adaptive_apify_topup: true
+llm_fit_threshold: 70
+max_role_judgements_per_run: 25
+funding_primary_age_days: 15
+funding_extension_age_days: 30
+funding_primary_min_items: 3
+funding_max_items: 5
+
+weights:
+  location: 20
+  role_breadth: 20
+  lane_fit: 15
+  candidate_fit: 15
+  company_size: 10
+  funding_growth: 10
+  learning: 5
+  source_contact: 5
+
+lane_quota:
+  ai: 5
+  consumer: 5
+
+confidence:
+  official: 1.0
+  high: 0.9
+  medium: 0.7
+  low: 0.4
+  unverified: 0.2

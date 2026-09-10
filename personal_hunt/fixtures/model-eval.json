@@ -1,0 +1,107 @@
+{
+  "cases": [
+    {
+      "id": "observed-vs-inferred",
+      "company": "Fixture AI",
+      "title": "Founder’s Office Intern",
+      "description": "Work with founders across product and operations.",
+      "evidence": [
+        {
+          "url": "https://example.com/job",
+          "observation": "The public role spans product and operations."
+        }
+      ],
+      "required_terms": ["public", "verify"],
+      "forbidden_terms": ["guaranteed", "definitely", "increased revenue"]
+    },
+    {
+      "id": "no-fabricated-metric",
+      "company": "Fixture Consumer",
+      "title": "Growth Operations Intern",
+      "description": "Run brand experiments and customer operations.",
+      "evidence": [
+        {
+          "url": "https://example.com/growth",
+          "observation": "The role names brand experiments and customer operations."
+        }
+      ],
+      "required_terms": ["uncertain"],
+      "forbidden_terms": ["percent", "revenue", "conversion improved"]
+    },
+    {
+      "id": "rank-strong-founders-office",
+      "task": "rank",
+      "records": [
+        {
+          "id": "strong",
+          "company": "Fixture AI",
+          "title": "Founder’s Office Intern",
+          "location_class": "bengaluru_hybrid",
+          "deterministic_score": 86,
+          "description": "Work directly with the founders across product launches, operations, growth experiments, and weekly business reviews.",
+          "source_confidence": "official"
+        }
+      ],
+      "expected": [
+        {"id": "strong", "admitted": true, "relevant": true, "spam": false}
+      ]
+    },
+    {
+      "id": "rank-specialist-only",
+      "task": "rank",
+      "records": [
+        {
+          "id": "specialist",
+          "company": "Fixture Code",
+          "title": "Backend Engineering Intern",
+          "location_class": "bengaluru_onsite",
+          "deterministic_score": 72,
+          "description": "Implement database indexes and write Go services. No business, operations, strategy, growth, or founder-facing work is described.",
+          "source_confidence": "official"
+        }
+      ],
+      "expected": [
+        {"id": "specialist", "admitted": false, "relevant": false, "spam": false}
+      ]
+    },
+    {
+      "id": "rank-course-spam",
+      "task": "rank",
+      "must_reject": true,
+      "records": [
+        {
+          "id": "course",
+          "company": "Guaranteed Careers Academy",
+          "title": "Founder Internship Certificate",
+          "location_class": "india_remote",
+          "deterministic_score": 75,
+          "description": "Pay a registration fee for our training course and receive a guaranteed internship certificate. Limited seats, enroll now.",
+          "source_confidence": "low"
+        }
+      ],
+      "expected": [
+        {"id": "course", "admitted": false, "relevant": false, "spam": true}
+      ]
+    },
+    {
+      "id": "rank-vague-scraped-noise",
+      "task": "rank",
+      "must_reject": true,
+      "records": [
+        {
+          "id": "noise",
+          "company": "Unknown",
+          "title": "Hiring now internship work from home",
+          "location_class": "india_remote",
+          "deterministic_score": 71,
+          "description": "DM fast earn daily urgent hiring no role details no company site.",
+          "source_confidence": "low"
+        }
+      ],
+      "expected": [
+        {"id": "noise", "admitted": false, "relevant": false, "spam": true}
+      ]
+    }
+  ]
+}
+

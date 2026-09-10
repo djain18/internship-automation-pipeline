@@ -1,0 +1,179 @@
+user_agent: "DakshInternshipResearch/0.1 (+manual review; low-volume)"
+timeout_seconds: 25
+min_interval_seconds: 2
+
+apify:
+  monthly_budget_usd: 5.00
+  warn_at_usd: 5.00
+  max_run_charge_usd: 0.25
+
+funding_sources:
+  - id: inc42_buzz_rss
+    name: Inc42 Buzz
+    url: "https://inc42.com/feed/"
+    enabled: true
+    adapter: funding_rss
+    source_confidence: medium
+    access_policy: public_rss_with_attribution
+
+  - id: yourstory_rss
+    name: YourStory
+    url: "https://yourstory.com/feed"
+    enabled: true
+    adapter: funding_rss
+    source_confidence: medium
+    access_policy: public_rss_with_attribution
+
+sources:
+  - id: rise_public_sheet
+    name: Rise Live Internship Sheet
+    kind: public_csv
+    enabled: true
+    adapter: rise_sheet
+    access_policy: public_sheet_no_seed_fallback
+    source_priority: 1
+
+  - id: ftb_internships
+    name: FTB Internships
+    kind: json_api
+    url: "https://www.ftbhustle.com/api/internships?limit=100&offset=0"
+    enabled: true
+    location_class: mixed
+    adapter: ftb
+    access_policy: public_api
+    source_priority: 5
+
+  - id: wwr_rss
+    name: We Work Remotely
+    kind: rss
+    url: "https://weworkremotely.com/remote-jobs.rss"
+    enabled: true
+    location_class: india_remote_fallback
+    adapter: wwr
+    access_policy: public_rss_with_attribution
+    source_priority: 6
+
+  - id: yc_bengaluru
+    name: Y Combinator Bengaluru Jobs
+    kind: public_html
+    url: "https://www.ycombinator.com/jobs/role/operations/bengaluru"
+    enabled: true
+    location_class: bengaluru
+    adapter: yc
+    access_policy: public_page
+    source_priority: 3
+
+  - id: wellfound_bengaluru
+    name: Wellfound Bengaluru
+    kind: public_html
+    url: "https://wellfound.com/location/bangalore"
+    enabled: true
+    location_class: bengaluru
+    adapter: wellfound
+    access_policy: anonymous_public_page_no_proxy
+    source_priority: 2
+
+  - id: human_import
+    name: Human Verified Imports
+    kind: json_file
+    enabled: true
+    adapter: human_import
+    access_policy: manual
+
+  - id: linkedin_posts_apify
+    name: Public LinkedIn Posts via HarvestAPI
+    kind: apify_actor
+    enabled: false
+    adaptive_enabled: true
+    adapter: apify_linkedin_posts
+    actor_id: harvestapi/linkedin-post-search
+    max_items: 80
+    source_priority: 1
+    access_policy: approved_public_posts_low_confidence
+    input:
+      searchQueries:
+        - "founder's office intern Bengaluru"
+        - "founder associate intern Bangalore"
+        - "generalist intern Bengaluru startup"
+        - "growth operations intern Bengaluru"
+      maxPosts: 20
+      postedLimit: week
+      sortBy: date
+      profileScraperMode: short
+      scrapeComments: false
+      scrapeReactions: false
+
+  - id: career_pages_apify
+    name: Public ATS Career Pages via i-scraper
+    kind: apify_actor
+    enabled: false
+    adapter: apify_career_pages
+    actor_id: i-scraper/ats-jobs-scraper
+    max_items: 100
+    source_priority: 3
+    access_policy: public_ats_contract_required
+    input:
+      targets: []
+      presetLists:
+        - yc-alumni
+      keywords:
+        - intern
+        - founder
+        - generalist
+        - operations
+        - growth
+        - strategy
+        - associate
+      excludeKeywords: []
+      locations:
+        - bengaluru
+        - bangalore
+        - india
+        - remote
+      maxJobsPerTarget: 20
+      includeDescriptions: true
+      proxyConfiguration:
+        useApifyProxy: false
+
+  - id: x_posts_apify
+    name: Public X Posts via Simoit
+    kind: apify_actor
+    enabled: false
+    adapter: apify_x_posts
+    actor_id: simoit/x-twitter-search-tweets-scrapper
+    max_items: 50
+    source_priority: 4
+    access_policy: approved_public_posts_low_confidence
+    input:
+      inputTargetType: search
+      searchTerms: "founder's office intern Bengaluru\nfounder associate intern Bangalore\ngeneralist intern Bengaluru startup\ngrowth operations intern Bengaluru"
+      sort: latest
+      includeReplies: false
+      includeRetweets: false
+      page: 1
+      limit: 50
+      maxPages: 1
+      maxItems: 50
+
+registries:
+  - "https://www.peakxv.com/our-companies"
+  - "https://careers.peakxv.com/jobs"
+  - "https://kalaari.com/portfolio"
+  - "https://jobs.accel.com/jobs"
+  - "https://rainmatter.com/portfolio/"
+
+disabled_until_contract_test:
+  - greenhouse_discovery
+  - lever_discovery
+  - ashby_discovery
+  - workable_discovery
+  - search_indexed_linkedin_posts
+  - linkedin_posts_apify
+  - career_pages_apify
+  - x_posts_apify
+
+excluded:
+  - internshala
+  - naukri
+  - linkedin_jobs
+  - direct_linkedin_scraping

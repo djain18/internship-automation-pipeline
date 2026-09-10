@@ -1,0 +1,16 @@
+{
+  "internships": [
+    {
+      "id": 42,
+      "title": "Founder’s Office Intern",
+      "description": "Work directly with founders across operations and growth.",
+      "hiringOrganization": "Fixture Labs",
+      "location": "Bengaluru",
+      "link": "https://example.com/fixture-labs/intern",
+      "hiringManager": "Founder",
+      "hiringManagerEmail": "hello@example.com"
+    }
+  ]
+}
+
+

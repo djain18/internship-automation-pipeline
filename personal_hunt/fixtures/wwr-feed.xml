@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Fixture Remote Jobs</title>
+    <item>
+      <guid>remote-1</guid>
+      <title>Remote Fixture: Chief of Staff Intern</title>
+      <link>https://example.com/remote-fixture/chief-of-staff</link>
+      <description>India remote founder-facing operations and growth role.</description>
+    </item>
+  </channel>
+</rss>
+
+
