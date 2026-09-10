@@ -16,7 +16,7 @@ export default function InternshipRow({ listing, onOpen }) {
           {listing.title}
         </h3>
         <div className="mt-0.5 truncate text-sm text-muted-foreground">
-          {listing.org} · {listing.location || "—"}
+          {listing.org} · {listing.location || "N/A"}
         </div>
       </div>
 

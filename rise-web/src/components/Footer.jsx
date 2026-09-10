@@ -6,11 +6,11 @@ export default function Footer() {
       <div className="mx-auto max-w-6xl px-6 py-12 md:px-10">
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
           <div className="max-w-sm">
-            <Link to="/" aria-label="Rise — home" className="inline-flex">
+            <Link to="/" aria-label="Rise, home" className="inline-flex">
               <img src="/rise-logo.png" alt="Rise" className="h-7 w-auto" />
             </Link>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              Real internships for students in India — scraped, scam-filtered and verified
+              Real internships for students in India, screened for scams and verified
               every night. Free to use, always.
             </p>
           </div>

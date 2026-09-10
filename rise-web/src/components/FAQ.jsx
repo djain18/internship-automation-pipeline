@@ -5,27 +5,27 @@ import Reveal from "./Reveal";
 const ITEMS = [
   {
     q: "Is Rise genuinely free?",
-    a: "Yes — free for students, and intended to stay that way. We don't charge readers and we don't sell your email address.",
+    a: "Yes. Rise is free for students and is intended to stay that way. We do not charge readers, and we do not sell email addresses.",
   },
   {
     q: "How are the scams kept out?",
-    a: "A language model reads every posted internship and spikes registration fees, “earn ₹X a day” schemes, typing jobs, posts with no apply link, and roles that aren't open to students in India. Edge cases are checked by hand.",
+    a: "A language model reviews every posted internship and removes registration-fee scams, “earn ₹X a day” schemes, typing jobs, postings with no apply link, and roles not open to students in India. Edge cases are checked manually.",
   },
   {
     q: "Is it only for engineers?",
-    a: "No. The board carries Design, Marketing, Finance, HR, Content, Product, Business Development, Legal and Operations alongside Software. Every field gets its own feed.",
+    a: "No. Alongside Software and Data/AI, the board carries Design, Marketing, Finance, HR, Content, Product, Business Development, Legal, Operations, and the newer AI Automation, Founder's Office, and Forward Deployed Engineer tracks. Every field has its own feed.",
   },
   {
     q: "How fresh are the listings?",
-    a: "Every role is pulled from posts made in the last 24 hours and republished each night. Stale listings drop off the board automatically, so what you see is current.",
+    a: "Every role is drawn from postings made in the last 24 hours and republished each night. Outdated listings are removed from the board automatically, keeping the list current.",
   },
   {
     q: "What arrives in the daily email?",
-    a: "One short email: the freshest, highest-graded roles matched to the fields and cities you pick. No digest, no advertising — and one click unsubscribes, any time.",
+    a: "One short email containing the newest, highest-scored roles matched to the fields and cities selected. There is no advertising, and a single click unsubscribes at any time.",
   },
   {
     q: "How do I actually apply?",
-    a: "Every listing links straight to the source — the company's apply link, the original post, or the recruiter's email. You apply directly with them; Rise never sits in between.",
+    a: "Every listing links directly to the source: the company's apply link, the original post, or the recruiter's email. Applications go straight to the employer; Rise is not an intermediary.",
   },
 ];
 

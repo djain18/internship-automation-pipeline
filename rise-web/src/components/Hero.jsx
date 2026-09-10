@@ -50,7 +50,7 @@ export default function Hero({ stats, listings = [], onOpenDashboard }) {
           transition={{ duration: 0.5 }}
           className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-4 py-1.5 text-sm text-muted-foreground font-body"
         >
-          Updated nightly · {verified} new internships tonight ✨
+          Updated nightly · {verified} new internships tonight
         </motion.div>
 
         {/* Headline */}
@@ -70,9 +70,10 @@ export default function Hero({ stats, listings = [], onOpenDashboard }) {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mt-4 max-w-[650px] text-center text-base md:text-lg text-muted-foreground leading-relaxed font-body"
         >
-          Every night we read every internship posted across LinkedIn, throw out the
-          scams and the roles you can't apply to, and publish only the real, fresh,
-          India-eligible ones—so you stop scrolling and start applying.
+          Every night, Rise reviews every internship posted across LinkedIn, removes
+          scams and roles that are not open to applicants, and publishes only real,
+          current, India-eligible postings, so students spend less time searching and
+          more time applying.
         </motion.p>
 
         {/* CTA buttons */}
