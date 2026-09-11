@@ -7,7 +7,7 @@ def test_kimi_fit_and_spam_gate(monkeypatch) -> None:
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
     monkeypatch.setattr(
         llm_rank,
-        "_bedrock_json_with_usage",
+        "cached_bedrock_json",
         lambda *_args, **_kwargs: (
             {
                 "ranked": [
@@ -49,7 +49,7 @@ def test_invalid_kimi_batch_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
     monkeypatch.setattr(
         llm_rank,
-        "_bedrock_json_with_usage",
+        "cached_bedrock_json",
         lambda *_args, **_kwargs: ({"ranked": []}, {}),
     )
     scored, summary = llm_rank.score_shortlist(
@@ -67,7 +67,7 @@ def test_overlong_reason_is_bounded_without_discarding_valid_verdict(monkeypatch
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
     monkeypatch.setattr(
         llm_rank,
-        "_bedrock_json_with_usage",
+        "cached_bedrock_json",
         lambda *_args, **_kwargs: (
             {
                 "ranked": [
@@ -134,11 +134,27 @@ def test_judge_cross_functional_fails_closed_when_disabled(monkeypatch) -> None:
     assert output[0]["rejection_reasons"] == ["role_not_cross_functional"]
 
 
-def test_judge_cross_functional_admits_from_cache_without_calling_the_model() -> None:
+def test_judge_cross_functional_admits_from_cache_without_calling_the_model(monkeypatch) -> None:
     from llm_rank import judge_cross_functional
+    from models import llm_cache_key
 
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
     records = [_cross_functional_record("a", ["role_not_cross_functional"])]
-    cache = {"a": {"cross_functional": True, "reason": "spans ops and hiring"}}
+    key, _ = llm_cache_key(
+        "role_judgement",
+        "model-a",
+        "v1",
+        {
+            "title": "Marketing Intern",
+            "company": "SeedCo",
+            "description": "Own campaigns, hiring and vendor operations with the founder.",
+        },
+    )
+    cache = {
+        key: {
+            "verdict": {"cross_functional": True, "reason": "spans ops and hiring"}
+        }
+    }
     output, meta, _ = judge_cross_functional(records, {}, cache)
     assert meta["status"] == "cache_only"
     assert meta["cached"] == 1
@@ -180,3 +196,119 @@ def test_llm_judged_record_earns_cross_functional_role_breadth() -> None:
     scored = score_record(record, config["roles"], config["scoring"], date(2026, 9, 8))
     assert scored["score_components"]["role_breadth"] == 14
     assert "role:llm_cross_functional_judgement" in scored["score_reasons"]
+
+
+def test_shortlist_cache_skips_identical_call_and_invalidates_content(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    calls = 0
+
+    def fake_cached(**kwargs):
+        nonlocal calls
+        from models import llm_cache_key
+
+        key, content_hash = llm_cache_key(
+            kwargs["purpose"], kwargs["model_id"], kwargs["prompt_version"], kwargs["content"]
+        )
+        if key in kwargs["cache"]:
+            return kwargs["cache"][key]["payload"], {
+                "calls": 0, "cache_hits": 1, "cache_key": key,
+                "content_hash": content_hash,
+            }
+        calls += 1
+        payload = {"ranked": [{
+            "id": "candidate", "rank": 1, "fit_score": 90,
+            "relevant": True, "spam": False, "reason": "grounded",
+        }]}
+        kwargs["cache"][key] = {"payload": payload}
+        return payload, {"calls": 1, "cache_hits": 0, "cache_key": key,
+                         "content_hash": content_hash}
+
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", fake_cached)
+    cache = {}
+    record = {"id": "candidate", "company": "Co", "title": "Generalist Intern"}
+    _, first = llm_rank.score_shortlist([record], {}, "primary", cache)
+    _, second = llm_rank.score_shortlist([record], {}, "primary", cache)
+    changed = {**record, "description": "Changed scope"}
+    llm_rank.score_shortlist([changed], {}, "primary", cache)
+    assert calls == 2
+    assert first["usage"]["calls"] == 1
+    assert second["usage"]["cache_hits"] == 1
+
+
+def test_linkedin_batch_extraction_requires_exact_evidence_quote(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = "Signal AI is hiring a Growth Intern in Bengaluru. Apply at https://signal.ai/jobs/1"
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-1",
+                        "company": "Signal AI",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "apply_url": "https://signal.ai/jobs/1",
+                        "evidence_quote": text,
+                    }
+                ]
+            },
+            {"calls": 1, "cache_hits": 0, "total_tokens": 20},
+        ),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": text,
+            "source_url": "https://linkedin.com/posts/1",
+        }
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["resolved"] == 1
+    assert output[0]["company"] == "Signal AI"
+    assert output[0]["apply_url"] == "https://signal.ai/jobs/1"
+
+
+def test_linkedin_batch_extraction_rejects_unquoted_fields(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = "Hiring an intern for a remote role."
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-1",
+                        "company": "Invented Co",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "apply_url": "",
+                        "evidence_quote": "Invented Co is hiring in Bengaluru",
+                    }
+                ]
+            },
+            {"calls": 1},
+        ),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "description": text,
+        }
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["resolved"] == 0
+    assert not output[0].get("company")

@@ -90,8 +90,8 @@ def test_posting_recency_accepts_ten_days_and_rejects_eleven() -> None:
         config["scoring"],
         "2026-09-09",
     )
-    assert "posted_over_7_days" not in ten["rejection_reasons"]
-    assert "posted_over_7_days" in eleven["rejection_reasons"]
+    assert "posted_over_10_days" not in ten["rejection_reasons"]
+    assert "posted_over_10_days" in eleven["rejection_reasons"]
 
 
 def test_approved_linkedin_actor_is_low_unverified_but_not_source_rejected() -> None:
@@ -147,8 +147,14 @@ def _record(**overrides: object) -> dict:
     return normalize_record(payload, config["roles"], config["scoring"], "2026-09-08")
 
 
-def test_tier_one_role_family_in_title_is_accepted() -> None:
-    record = _record(title="Business Development Intern")
+def test_broad_title_requires_two_function_or_leadership_evidence() -> None:
+    thin = _record(title="Business Development Intern")
+    assert "role_not_cross_functional" in thin["rejection_reasons"]
+
+    record = _record(
+        title="Business Development Intern",
+        description="Support partnerships, customer onboarding, and market research.",
+    )
     assert record["eligible"], record["rejection_reasons"]
 
 
@@ -218,7 +224,11 @@ def test_title_family_match_scores_as_an_explicit_role_match() -> None:
     from score import score_record
 
     config = load_all()
-    record = _record(title="Business Development Intern", location="Bengaluru onsite")
+    record = _record(
+        title="Business Development Intern",
+        description="Support partnerships, customer onboarding, and market research.",
+        location="Bengaluru onsite",
+    )
     assert record["eligible"], record["rejection_reasons"]
     scored = score_record(
         dict(record), config["roles"], config["scoring"], date(2026, 9, 8)

@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,11 +39,11 @@ from digest import render_digest, render_html_digest, send_self_digest, write_di
 from discover_companies import fetch_registries
 from fetch_sources import fetch_live, fixture_health, load_json_records
 from funding import fetch_funding_live, select_funding_events
-from llm_rank import judge_cross_functional, score_shortlist
-from models import Record, stable_id, utc_timestamp
+from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
+from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
 from normalize import normalize_many
 from outreach import draft_outreach, validate_outreach
-from research import research_funding_event, research_record
+from research import research_funding_event, research_records
 from score import score_many, select_balanced
 from sheets import publish_run
 from state import LocalState
@@ -71,13 +71,32 @@ def route_resume(record: Record) -> str:
 
 
 def enrich_selected(
-    records: list[Record], output_root: Path, max_artifacts: int
+    records: list[Record],
+    output_root: Path,
+    max_artifacts: int,
+    llm_cache: dict[str, Any] | None = None,
 ) -> list[Record]:
     output = deepcopy(records)
-    for item in output:
-        item["research"] = research_record(item)
+    research_results = research_records(output, cache=llm_cache)
+    for item, research in zip(output, research_results, strict=True):
+        item["research"] = research
         item["selected_contact"] = choose_contact(item)
         item["resume"] = route_resume(item)
+        item["content_hash"] = normalized_content_hash(
+            {
+                "title": item.get("title"),
+                "company": item.get("company"),
+                "description": str(item.get("description", ""))[:6000],
+            }
+        )
+        item["contact_priority"] = (item["selected_contact"] or {}).get(
+            "contact_priority", ""
+        )
+        item["research_cache"] = {
+            "llm_status": research.get("llm_status"),
+            "model_id": research.get("model_id", ""),
+            "cache_key": (research.get("model_usage") or {}).get("cache_key", ""),
+        }
     create_artifacts(output, output_root, max_artifacts=max_artifacts)
     for item in output:
         draft = draft_outreach(item)
@@ -85,12 +104,14 @@ def enrich_selected(
         if draft["validation_errors"]:
             draft["send_status"] = "blocked_validation"
         item["outreach"] = draft
+        item["strategy_id"] = draft.get("strategy_id", "")
     return output
 
 
 def _validate_selected_links(records: list[Record]) -> None:
     for item in records:
-        if not item.get("digest_approved"):
+        reasons = list(item.get("rejection_reasons") or [])
+        if not item.get("eligible") and reasons != ["role_not_cross_functional"]:
             continue
         target = str(item.get("apply_url") or item.get("source_url") or "")
         result = validate_application_link(target)
@@ -126,6 +147,137 @@ def select_needs_verification(
     return tray[: int(scoring.get("max_needs_verification", 10))]
 
 
+def _company_key(value: object) -> str:
+    return "".join(character for character in clean_text(value).casefold() if character.isalnum())
+
+
+def attach_company_provenance(
+    records: list[Record], companies: list[Record]
+) -> list[Record]:
+    """Attach an official URL only when one reviewed company name is an exact match."""
+
+    matches: dict[str, list[Record]] = {}
+    for company in companies:
+        key = _company_key(company.get("company"))
+        if key and company.get("company_url"):
+            matches.setdefault(key, []).append(company)
+    output: list[Record] = []
+    for record in records:
+        item = dict(record)
+        candidates = matches.get(_company_key(item.get("company")), [])
+        if not item.get("company_url") and len(candidates) == 1:
+            candidate = candidates[0]
+            item["company_url"] = candidate["company_url"]
+            item["company_url_basis"] = "reviewed_registry_exact_company_name"
+            item["company_url_source"] = candidate.get("registry_url")
+        output.append(item)
+    return output
+
+
+def _dated_signal(signal: Record, run_date: date, max_age_days: int) -> bool:
+    value = signal.get("date") or signal.get("event_date") or signal.get("posted_date")
+    try:
+        age = (run_date - datetime.fromisoformat(str(value)).date()).days
+    except (TypeError, ValueError):
+        return False
+    return 0 <= age <= max_age_days and bool(signal.get("url") or signal.get("source_url"))
+
+
+def select_weekly_targets(
+    companies: list[Record],
+    funding_events: list[Record],
+    run_date: date,
+    scoring: dict[str, Any],
+) -> list[Record]:
+    """Return a separate Monday queue of evidence-backed founder targets."""
+
+    if run_date.weekday() != 0:
+        return []
+    funding_by_company: dict[str, list[Record]] = {}
+    for event in funding_events:
+        funding_by_company.setdefault(_company_key(event.get("company")), []).append(
+            {
+                "type": "funding",
+                "date": event.get("event_date"),
+                "url": event.get("source_url"),
+                "observation": event.get("headline"),
+                "confidence": event.get("source_confidence"),
+            }
+        )
+    candidates: list[Record] = []
+    current_days = int(scoring.get("weekly_target_signal_days", 90))
+    recent_days = int(scoring.get("weekly_target_recent_signal_days", 30))
+    for company in companies:
+        location_text = clean_text(
+            company.get("location") or company.get("bengaluru_presence")
+        ).casefold()
+        if "bengaluru" not in location_text and "bangalore" not in location_text:
+            continue
+        count = company.get("employee_count")
+        if isinstance(count, int) and count > int(scoring.get("max_employees", 400)):
+            continue
+        if company.get("lane") not in {"ai", "consumer"}:
+            continue
+        signals = [
+            dict(item)
+            for item in list(company.get("signals") or [])
+            if isinstance(item, dict)
+        ]
+        signals.extend(funding_by_company.get(_company_key(company.get("company")), []))
+        current = [item for item in signals if _dated_signal(item, run_date, current_days)]
+        unique_signals: dict[str, Record] = {}
+        for signal in current:
+            key = clean_text(signal.get("url") or signal.get("source_url"))
+            unique_signals.setdefault(key, signal)
+        current = list(unique_signals.values())
+        if len(current) < 2 or not any(
+            _dated_signal(item, run_date, recent_days) for item in current
+        ):
+            continue
+        item = dict(company)
+        item.update(
+            {
+                "id": company.get("id") or stable_id(company.get("company"), prefix="target"),
+                "title": "Founder’s Office / generalist internship",
+                "weekly_target": True,
+                "signals": current,
+                "target_status": "manual_review_required",
+            }
+        )
+        candidates.append(item)
+    candidates.sort(
+        key=lambda item: max(clean_text(signal.get("date")) for signal in item["signals"]),
+        reverse=True,
+    )
+    return candidates[: int(scoring.get("weekly_target_max_items", 3))]
+
+
+def build_source_yield(
+    raw_records: list[Record], unique_records: list[Record], published: list[Record]
+) -> list[Record]:
+    buckets: dict[str, Record] = {}
+    for record in raw_records:
+        source = clean_text(record.get("source") or "unknown")
+        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket["raw"] += 1
+    for record in unique_records:
+        source = clean_text(record.get("source") or "unknown")
+        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket["unique"] += 1
+        bucket["eligible"] += int(bool(record.get("eligible")))
+        status = clean_text(record.get("status")).casefold()
+        reply = clean_text(record.get("reply_outcome")).casefold()
+        interview = clean_text(record.get("interview_outcome")).casefold()
+        bucket["manually_applied"] += int(status in {"applied", "sent_manually"})
+        bucket["replied"] += int(bool(reply and reply != "no_reply"))
+        bucket["interviewed"] += int(bool(interview and interview not in {"none", "no_interview"}))
+    for record in published:
+        source = clean_text(record.get("source") or "unknown")
+        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket["kimi_approved"] += int(bool(record.get("digest_approved")))
+    return sorted(buckets.values(), key=lambda item: item["source"])
+
+
 def deterministic_candidate_count(
     raw_records: list[Record],
     run_date: date,
@@ -151,12 +303,30 @@ def _adaptive_apify_topup(
     run_date: date,
     config: dict[str, dict[str, Any]],
     first_seen: dict[str, str],
+    allow_paid_sources: bool = False,
 ) -> None:
     scoring = config["scoring"]
     minimum = int(scoring.get("daily_min_target", 5))
-    if deterministic_candidate_count(raw, run_date, config, first_seen) >= minimum:
-        return
+    # Daksh 2026-09-11: linkedin_every_run skips the below-minimum gate so the
+    # actor fires on every scheduled run. The paid dual gate below still holds.
+    if not scoring.get("linkedin_every_run", False):
+        if deterministic_candidate_count(raw, run_date, config, first_seen) >= minimum:
+            return
     if not scoring.get("adaptive_apify_topup", True):
+        return
+    if not allow_paid_sources:
+        health.append(
+            {
+                "source_id": "linkedin_posts_apify",
+                "status": "disabled",
+                "record_count": 0,
+                "checked_at": utc_timestamp(),
+                "human_action": (
+                    "Paid sources require --allow-paid-sources as well as "
+                    "ENABLE_PERSONAL_APIFY_TOPUP=true."
+                ),
+            }
+        )
         return
     if os.getenv("ENABLE_PERSONAL_APIFY_TOPUP", "false").casefold() not in {
         "1", "true", "yes"
@@ -226,7 +396,11 @@ def run_pipeline(
     run_kind: str = "fixture",
     validate_links: bool = False,
     role_judgements: dict[str, Any] | None = None,
+    company_candidates: list[Record] | None = None,
+    llm_cache: dict[str, Any] | None = None,
 ) -> Record:
+    llm_cache = llm_cache if llm_cache is not None else dict(role_judgements or {})
+    raw_records = attach_company_provenance(raw_records, company_candidates or [])
     normalized = normalize_many(
         raw_records,
         config["roles"],
@@ -235,33 +409,69 @@ def run_pipeline(
         first_seen_by_id,
     )
     unique, duplicates = deduplicate(normalized)
+    if validate_links:
+        _validate_selected_links(unique)
     unique, role_judgement, role_judgement_cache = judge_cross_functional(
-        unique, config["scoring"], role_judgements
+        unique, config["scoring"], llm_cache
     )
     scored = score_many(unique, config["roles"], config["scoring"], run_date)
     selected = select_balanced(scored, config["scoring"])
-    enriched_primary = enrich_selected(
-        selected["primary"], output_root, int(config["scoring"]["max_artifacts"])
-    )
-    enriched_remote = enrich_selected(selected["remote_fallback"], output_root, 0)
     primary, primary_llm = score_shortlist(
-        enriched_primary, config["scoring"], "bengaluru_primary"
+        selected["primary"], config["scoring"], "bengaluru_primary", cache=llm_cache
     )
     remote, remote_llm = score_shortlist(
-        enriched_remote, config["scoring"], "india_remote_fallback"
+        selected["remote_fallback"],
+        config["scoring"],
+        "india_remote_fallback",
+        cache=llm_cache,
     )
-    if validate_links and config["scoring"].get("validate_application_links", True):
-        _validate_selected_links(primary)
-        _validate_selected_links(remote)
     funding_primary, funding_extended, funding_excluded = select_funding_events(
         funding_records or [], run_date, config["scoring"]
     )
     for event in funding_primary + funding_extended:
-        event["problem_research"] = research_funding_event(event)
+        event["problem_research"] = research_funding_event(
+            event, allow_llm=False, cache=llm_cache
+        )
         # Funding events skipped choose_contact entirely, which is why contact
         # was null on every one of them.
         event["research"] = event["problem_research"]
         event["selected_contact"] = choose_contact(event)
+    weekly_targets = select_weekly_targets(
+        company_candidates or [], funding_primary + funding_extended, run_date, config["scoring"]
+    )
+    research_queue = (
+        [item for item in primary if item.get("digest_approved")]
+        + [item for item in remote if item.get("digest_approved")]
+        + weekly_targets
+    )
+    enriched = enrich_selected(
+        research_queue,
+        output_root,
+        int(config["scoring"]["max_artifacts"]),
+        llm_cache,
+    )
+    enriched_by_id = {item["id"]: item for item in enriched}
+    primary = [enriched_by_id.get(item["id"], item) for item in primary]
+    remote = [enriched_by_id.get(item["id"], item) for item in remote]
+    weekly_targets = [enriched_by_id.get(item["id"], item) for item in weekly_targets]
+    usage_items = [
+        item
+        for item in (
+            role_judgement.get("usage"),
+            primary_llm.get("usage"),
+            remote_llm.get("usage"),
+            *[(item.get("research") or {}).get("model_usage") for item in primary + remote],
+            *[(item.get("research") or {}).get("model_usage") for item in weekly_targets],
+            *[item.get("usage") for item in source_health],
+        )
+        if isinstance(item, dict)
+    ]
+    llm_usage = usage_summary(usage_items)
+    cache_statistics = {
+        "entries": len(llm_cache),
+        "hits": llm_usage["cache_hits"],
+        "calls": llm_usage["calls"],
+    }
     run_id = stable_id(
         run_kind,
         run_date.isoformat(),
@@ -277,7 +487,7 @@ def run_pipeline(
         "run_id": run_id,
         "run_kind": run_kind,
         "run_date": run_date.isoformat(),
-        "internship_window_days": int(config["scoring"].get("max_posting_age_days", 7)),
+        "internship_window_days": int(config["scoring"].get("max_posting_age_days", 10)),
         "funding_primary_window_days": int(
             config["scoring"].get("funding_primary_age_days", 15)
         ),
@@ -295,6 +505,7 @@ def run_pipeline(
         "duplicate_count": len(duplicates),
         "eligible_count": sum(bool(item.get("eligible")) for item in scored),
         "needs_verification": select_needs_verification(scored, config["scoring"]),
+        "weekly_targets": weekly_targets,
         "primary": primary,
         "remote_fallback": remote,
         "digest_primary": [item for item in primary if item.get("digest_approved")],
@@ -307,6 +518,13 @@ def run_pipeline(
         },
         "role_judgement": role_judgement,
         "role_judgement_cache": role_judgement_cache,
+        "llm_cache": llm_cache,
+        "llm_usage": llm_usage,
+        "cost_summary": {
+            **llm_usage,
+            "basis": "provider_token_usage; no verified dollar price configured",
+        },
+        "cache_statistics": cache_statistics,
         "digest_usable": digest_usable,
         "funding_primary": funding_primary,
         "funding_extended": funding_extended,
@@ -314,6 +532,7 @@ def run_pipeline(
         "all_scored": scored,
         "duplicates": duplicates,
         "source_health": source_health,
+        "source_yield": build_source_yield(raw_records, scored, primary + remote),
         "completed_at": utc_timestamp(),
     }
 
@@ -329,6 +548,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--publish-sheets", action="store_true")
     parser.add_argument("--send-digest", action="store_true")
     parser.add_argument("--no-state", action="store_true")
+    parser.add_argument(
+        "--allow-paid-sources",
+        action="store_true",
+        help="Permit explicitly enabled, budget-capped paid source calls.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -434,6 +658,7 @@ def main() -> int:
         os.getenv("PIPELINE_STATE_DIR", str(AUTOMATION_ROOT / "state"))
     )
     state = LocalState(state_base / "state.json")
+    llm_cache = {} if args.no_state else state.llm_cache()
     if args.digest_latest:
         run, run_path = _load_latest_live(output_base)
         digest_path = run_path.with_name(f"{run['run_id']}-digest.md")
@@ -459,7 +684,31 @@ def main() -> int:
         preview_first_seen = (
             {} if args.no_state or args.dry_run else state.first_seen_dates()
         )
-        _adaptive_apify_topup(raw, health, run_date, config, preview_first_seen)
+        _adaptive_apify_topup(
+            raw,
+            health,
+            run_date,
+            config,
+            preview_first_seen,
+            allow_paid_sources=args.allow_paid_sources,
+        )
+        raw, extraction = extract_linkedin_hiring_fields(raw, cache=llm_cache)
+        if extraction.get("status") != "not_needed":
+            health.append(
+                {
+                    "source_id": "linkedin_posts_apify_extraction",
+                    "status": extraction.get("status"),
+                    "record_count": extraction.get("resolved", 0),
+                    "checked_at": utc_timestamp(),
+                    "usage": extraction.get("usage", {}),
+                    "error_message": extraction.get("error", ""),
+                    "human_action": (
+                        "Inspect unresolved public posts; unproven fields remain rejected."
+                        if extraction.get("status") != "ok"
+                        else ""
+                    ),
+                }
+            )
         funding_records, funding_health = fetch_funding_live(config["sources"])
         health.extend(funding_health)
         company_candidates, registry_health = fetch_registries(config["sources"])
@@ -493,6 +742,8 @@ def main() -> int:
         run_kind=run_kind,
         validate_links=run_kind.startswith("live"),
         role_judgements={} if args.no_state else state.role_judgements(),
+        company_candidates=company_candidates,
+        llm_cache=llm_cache,
     )
     run["company_candidates"] = company_candidates
     output_root.mkdir(parents=True, exist_ok=True)

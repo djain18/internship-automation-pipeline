@@ -15,6 +15,21 @@ ROLE_MAILBOXES = (
     "careers@", "jobs@", "hr@", "press@", "noreply@", "no-reply@",
 )
 
+ALLOWED_FALLBACK_PREFIXES = ("careers@", "jobs@", "founder@", "founders@", "hello@")
+EXCLUDED_PREFIXES = (
+    "support@", "press@", "media@", "pr@", "sales@", "admin@", "noreply@",
+    "no-reply@", "privacy@", "legal@", "security@", "billing@",
+)
+
+
+def _mailbox_kind(email: str) -> str:
+    lowered = email.casefold().strip()
+    if any(lowered.startswith(prefix) for prefix in EXCLUDED_PREFIXES):
+        return "excluded"
+    if any(lowered.startswith(prefix) for prefix in ALLOWED_FALLBACK_PREFIXES):
+        return "generic_fallback"
+    return "named"
+
 
 def _site_email(record: Record) -> tuple[str, str]:
     """The best address published on the company's own site, if any.
@@ -32,11 +47,14 @@ def _site_email(record: Record) -> tuple[str, str]:
     direct = [
         item
         for item in published
-        if not any(item.casefold().startswith(prefix) for prefix in ROLE_MAILBOXES)
+        if _mailbox_kind(item) == "named"
     ]
     if direct:
         return direct[0], "site_published_direct"
-    return published[0], "site_published_role_mailbox"
+    fallback = [item for item in published if _mailbox_kind(item) == "generic_fallback"]
+    if fallback:
+        return fallback[0], "site_published_role_mailbox"
+    return "", ""
 
 
 def choose_contact(record: Record) -> Record:
@@ -67,8 +85,24 @@ def choose_contact(record: Record) -> Record:
             "basis": kind,
             # Published by the company, but not confirmed as the right person.
             "confidence": "medium",
+            "contact_priority": (
+                "preferred_named" if kind == "site_published_direct" else "fallback_generic"
+            ),
         }
     status = clean_text(raw.get("verification_status") or "unverified").casefold()
+    mailbox_kind = _mailbox_kind(email) if email else "named"
+    if mailbox_kind == "excluded":
+        email = ""
+        if not any((raw.get("name"), linkedin)):
+            return {
+                "status": "contact_research_required",
+                "confidence": "low",
+                "source_url": source_url,
+                "reason": "excluded_unrelated_mailbox",
+            }
+    if mailbox_kind == "generic_fallback" and status not in TRUSTED_STATUSES:
+        email = ""
+        mailbox_kind = "unverified_generic"
     confidence = "high" if status in TRUSTED_STATUSES else "low"
     return {
         "status": "available",
@@ -81,4 +115,9 @@ def choose_contact(record: Record) -> Record:
         "verification_status": status,
         "basis": "record_contact",
         "confidence": confidence,
+        "contact_priority": (
+            "preferred_named" if mailbox_kind == "named" and raw.get("name")
+            else "fallback_generic" if mailbox_kind == "generic_fallback"
+            else "unverified_lead"
+        ),
     }

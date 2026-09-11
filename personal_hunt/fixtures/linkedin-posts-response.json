@@ -1,0 +1,20 @@
+[
+  {
+    "id": "li-1",
+    "content": "We are hiring a Founder's Office Intern in Bengaluru.",
+    "linkedinUrl": "https://www.linkedin.com/posts/recruiter-1",
+    "author": {"name": "Outside Recruiter"},
+    "jobTitle": "Founder's Office Intern",
+    "hiringCompany": {"name": "Fixture Labs"},
+    "jobLocation": "Bengaluru",
+    "applyUrl": "https://fixture.example/jobs/1",
+    "postedAt": {"date": "2026-09-10T09:00:00Z"}
+  },
+  {
+    "id": "li-2",
+    "content": "Generalist internship. Search query mentioned Bangalore.",
+    "linkedinUrl": "https://www.linkedin.com/posts/founder-2",
+    "author": {"name": "Named Author"},
+    "postedAt": {"date": "2026-09-10T10:00:00Z"}
+  }
+]

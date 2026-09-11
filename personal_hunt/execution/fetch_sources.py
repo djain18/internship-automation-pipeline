@@ -68,9 +68,7 @@ def _rise_sheet(content: str, source: dict[str, Any]) -> list[Record]:
                 "apply_url": apply_url,
                 "posted_at": value(row, "PostedDate") or value(row, "Date Added"),
                 "source_confidence": "low" if is_linkedin else "medium",
-                "verification_status": (
-                    "machine_collected_unverified" if is_linkedin else "machine_collected"
-                ),
+                "verification_status": ("machine_collected_unverified" if is_linkedin else "machine_collected"),
                 "source_priority": source.get("source_priority", 99),
             }
         )
@@ -112,11 +110,7 @@ def _ftb(payload: Any, source: dict[str, Any]) -> list[Record]:
         rows = payload
     elif isinstance(payload, dict):
         rows = next(
-            (
-                payload[key]
-                for key in ("internships", "data", "results", "items")
-                if isinstance(payload.get(key), list)
-            ),
+            (payload[key] for key in ("internships", "data", "results", "items") if isinstance(payload.get(key), list)),
             [],
         )
     else:
@@ -154,9 +148,7 @@ def _wwr(content: bytes, source: dict[str, Any]) -> list[Record]:
                 "id": clean_text(entry.get("id") or entry.get("link")),
                 "company": clean_text(company) if separator else "",
                 "title": clean_text(role) if separator else title,
-                "description": clean_text(
-                    entry.get("summary") or entry.get("description")
-                ),
+                "description": clean_text(entry.get("summary") or entry.get("description")),
                 "location": "Remote - worldwide",
                 "work_mode": "remote",
                 "link": entry.get("link"),
@@ -176,9 +168,7 @@ def _replace_query(url: str, **updates: Any) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def _fetch_ftb_paginated(
-    session: requests.Session, source: dict[str, Any], timeout: int
-) -> list[Record]:
+def _fetch_ftb_paginated(session: requests.Session, source: dict[str, Any], timeout: int) -> list[Record]:
     page_size = int(source.get("page_size", 100))
     max_pages = int(source.get("max_pages", 5))
     output: list[Record] = []
@@ -245,12 +235,7 @@ def _wellfound(content: str, source: dict[str, Any]) -> list[Record]:
     if not next_data or not next_data.string:
         raise ValueError("Wellfound public page has no __NEXT_DATA__ contract")
     payload = json.loads(next_data.string)
-    data = (
-        payload.get("props", {})
-        .get("pageProps", {})
-        .get("apolloState", {})
-        .get("data", {})
-    )
+    data = payload.get("props", {}).get("pageProps", {}).get("apolloState", {}).get("data", {})
     if not isinstance(data, dict):
         raise ValueError("Wellfound Apollo state is missing")
     company_by_job: dict[str, dict[str, Any]] = {}
@@ -276,12 +261,12 @@ def _wellfound(content: str, source: dict[str, Any]) -> list[Record]:
         if isinstance(timestamp, (int, float)):
             posted_at = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
         locations = item.get("locationNames")
-        location = ", ".join(clean_text(value) for value in locations) if isinstance(
-            locations, list
-        ) else clean_text(locations)
-        remote_config = item.get("remoteConfig") if isinstance(
-            item.get("remoteConfig"), dict
-        ) else {}
+        location = (
+            ", ".join(clean_text(value) for value in locations)
+            if isinstance(locations, list)
+            else clean_text(locations)
+        )
+        remote_config = item.get("remoteConfig") if isinstance(item.get("remoteConfig"), dict) else {}
         output.append(
             {
                 "_source_id": source["id"],
@@ -289,17 +274,12 @@ def _wellfound(content: str, source: dict[str, Any]) -> list[Record]:
                 "source": source["id"],
                 "id": job_id,
                 "company": clean_text(company.get("name")),
-                "company_url": (
-                    f"https://wellfound.com/company/{company.get('slug')}"
-                    if company.get("slug")
-                    else ""
-                ),
+                "company_url": (f"https://wellfound.com/company/{company.get('slug')}" if company.get("slug") else ""),
                 "company_size": clean_text(company.get("companySize")),
                 "title": clean_text(item.get("title")),
                 "description": clean_text(item.get("description")),
                 "location": location,
-                "work_mode": clean_text(remote_config.get("kind"))
-                or ("remote" if item.get("remote") else "onsite"),
+                "work_mode": clean_text(remote_config.get("kind")) or ("remote" if item.get("remote") else "onsite"),
                 "employment_type": clean_text(item.get("jobType")),
                 "link": url,
                 "source_url": url,
@@ -310,6 +290,155 @@ def _wellfound(content: str, source: dict[str, Any]) -> list[Record]:
             }
         )
     return output
+
+
+_ATS_HOSTS = {
+    "greenhouse": {"boards-api.greenhouse.io"},
+    "lever": {"api.lever.co"},
+    "ashby": {"api.ashbyhq.com"},
+    "workable": {"apply.workable.com"},
+}
+
+
+def _verified_ats_url(source: dict[str, Any]) -> str:
+    """Require a reviewed, source-native URL; adapters never derive company domains."""
+
+    url = clean_text(source.get("url"))
+    adapter = clean_text(source.get("adapter"))
+    vendor = adapter.removesuffix("_ats")
+    parts = urlsplit(url)
+    if not url or parts.scheme != "https" or parts.hostname not in _ATS_HOSTS.get(vendor, set()):
+        raise ValueError(f"{adapter} requires an explicit reviewed {vendor} HTTPS API URL")
+    return url
+
+
+def _ats_record(source: dict[str, Any], **values: Any) -> Record:
+    url = clean_text(values.get("url"))
+    return {
+        "_source_id": source["id"],
+        "_source_url": source["url"],
+        "source": source["id"],
+        "id": clean_text(values.get("id")) or url,
+        "company": clean_text(values.get("company") or source.get("company")),
+        "company_url": clean_text(source.get("company_url")),
+        "title": clean_text(values.get("title")),
+        "description": clean_text(values.get("description")),
+        "location": clean_text(values.get("location")),
+        "work_mode": clean_text(values.get("work_mode")),
+        "employment_type": clean_text(values.get("employment_type")),
+        "link": url,
+        "source_url": url,
+        "apply_url": clean_text(values.get("apply_url")) or url,
+        "posted_at": values.get("posted_at") or "",
+        "source_confidence": "official",
+        "verification_status": "machine_collected",
+        "source_priority": source.get("source_priority", 99),
+    }
+
+
+def _greenhouse(payload: Any, source: dict[str, Any]) -> list[Record]:
+    rows = payload.get("jobs", []) if isinstance(payload, dict) else []
+    output: list[Record] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        location = item.get("location") if isinstance(item.get("location"), dict) else {}
+        output.append(
+            _ats_record(
+                source,
+                id=item.get("id"),
+                title=item.get("title"),
+                location=location.get("name"),
+                url=item.get("absolute_url"),
+                posted_at=item.get("updated_at"),
+                description=item.get("content"),
+            )
+        )
+    return output
+
+
+def _lever(payload: Any, source: dict[str, Any]) -> list[Record]:
+    rows = payload if isinstance(payload, list) else []
+    output: list[Record] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        categories = item.get("categories") if isinstance(item.get("categories"), dict) else {}
+        output.append(
+            _ats_record(
+                source,
+                id=item.get("id"),
+                title=item.get("text"),
+                location=categories.get("location"),
+                employment_type=categories.get("commitment"),
+                work_mode=item.get("workplaceType"),
+                url=item.get("hostedUrl"),
+                apply_url=item.get("applyUrl"),
+                posted_at=item.get("createdAt"),
+                description=item.get("descriptionPlain") or item.get("description"),
+            )
+        )
+    return output
+
+
+def _ashby(payload: Any, source: dict[str, Any]) -> list[Record]:
+    rows = payload.get("jobs", []) if isinstance(payload, dict) else []
+    output: list[Record] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        output.append(
+            _ats_record(
+                source,
+                id=item.get("id"),
+                title=item.get("title"),
+                location=item.get("location"),
+                employment_type=item.get("employmentType"),
+                work_mode="remote" if item.get("isRemote") else "",
+                url=item.get("jobUrl"),
+                apply_url=item.get("applyUrl"),
+                posted_at=item.get("publishedAt"),
+                description=item.get("descriptionPlain"),
+            )
+        )
+    return output
+
+
+def _workable(payload: Any, source: dict[str, Any]) -> list[Record]:
+    rows = payload.get("jobs", payload.get("results", [])) if isinstance(payload, dict) else []
+    output: list[Record] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        location = item.get("location")
+        if isinstance(location, dict):
+            location = location.get("location_str") or location.get("city")
+        output.append(
+            _ats_record(
+                source,
+                id=item.get("shortcode") or item.get("id"),
+                title=item.get("title"),
+                location=location,
+                employment_type=item.get("employment_type"),
+                work_mode=item.get("workplace"),
+                url=item.get("url") or item.get("shortlink"),
+                posted_at=item.get("published_on") or item.get("created_at"),
+                description=item.get("description"),
+            )
+        )
+    return output
+
+
+def _fetch_ats(session: requests.Session, source: dict[str, Any], timeout: int) -> list[Record]:
+    url = _verified_ats_url(source)
+    response = _request(session, url, timeout)
+    parser = {
+        "greenhouse_ats": _greenhouse,
+        "lever_ats": _lever,
+        "ashby_ats": _ashby,
+        "workable_ats": _workable,
+    }[source["adapter"]]
+    return parser(response.json(), source)
 
 
 def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
@@ -328,10 +457,7 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
                 sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
                 if not sheet_id:
                     raise RuntimeError("GOOGLE_SHEET_ID is required for the Rise Sheet source")
-                url = (
-                    f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-                    "?format=csv&gid=0"
-                )
+                url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
                 response = _request(session, url, timeout)
                 records = _rise_sheet(response.text, {**source, "url": url})
             elif source["adapter"] == "ftb":
@@ -345,21 +471,21 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
             elif source["adapter"] == "wellfound":
                 response = _request(session, source["url"], timeout)
                 records = _wellfound(response.text, source)
+            elif source["adapter"] in {"greenhouse_ats", "lever_ats", "ashby_ats", "workable_ats"}:
+                records = _fetch_ats(session, source, timeout)
             elif str(source["adapter"]).startswith("apify_"):
                 from apify_sources import fetch_apify_actor
 
-                records, apify_metadata = fetch_apify_actor(
-                    source, config.get("apify", {}), timeout
-                )
+                records, apify_metadata = fetch_apify_actor(source, config.get("apify", {}), timeout)
             else:
                 raise ValueError(f"unknown enabled adapter: {source['adapter']}")
             all_records.extend(records)
             event = SourceHealth(
-                    source_id=source["id"],
-                    status="ok" if records else "zero_results",
-                    record_count=len(records),
-                    latency_ms=int((time.perf_counter() - started) * 1000),
-                ).to_dict()
+                source_id=source["id"],
+                status="ok" if records else "zero_results",
+                record_count=len(records),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            ).to_dict()
             if str(source["adapter"]).startswith("apify_"):
                 health_status = apify_metadata.pop("health_status", event["status"])
                 event.update(apify_metadata)
@@ -367,9 +493,13 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
             health.append(event)
         except Exception as exc:
             status_code = int(getattr(exc, "status_code", 0) or 0)
-            error_type, action = classify_http_failure(status_code) if status_code else (
-                type(exc).__name__,
-                "Inspect logs and the dated public source contract.",
+            error_type, action = (
+                classify_http_failure(status_code)
+                if status_code
+                else (
+                    type(exc).__name__,
+                    "Inspect logs and the dated public source contract.",
+                )
             )
             health.append(
                 SourceHealth(

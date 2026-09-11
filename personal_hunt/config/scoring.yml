@@ -10,11 +10,17 @@ min_duration_months: 2
 max_duration_months: 12
 validate_application_links: true
 adaptive_apify_topup: true
+# Daksh 2026-09-11: run the LinkedIn actor on every scheduled run, not only
+# below the daily minimum. The dual paid gate stays: dry runs never spend.
+linkedin_every_run: true
 llm_fit_threshold: 70
 max_role_judgements_per_run: 25
 # Unverified LinkedIn leads shown per run for manual checking. Capped so a
 # long tail of low-confidence leads cannot bury the approved matches.
 max_needs_verification: 10
+weekly_target_max_items: 3
+weekly_target_signal_days: 90
+weekly_target_recent_signal_days: 30
 funding_primary_age_days: 15
 funding_extension_age_days: 30
 funding_primary_min_items: 3

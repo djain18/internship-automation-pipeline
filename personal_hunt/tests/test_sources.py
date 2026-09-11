@@ -1,7 +1,20 @@
 import json
 from pathlib import Path
 
-from fetch_sources import _ftb, _rise_sheet, _wellfound, _wwr, _yc
+import pytest
+
+from fetch_sources import (
+    _ashby,
+    _ftb,
+    _greenhouse,
+    _lever,
+    _rise_sheet,
+    _verified_ats_url,
+    _wellfound,
+    _workable,
+    _wwr,
+    _yc,
+)
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -16,9 +29,7 @@ def test_rise_sheet_adapter_preserves_public_post_provenance() -> None:
         "Bangalore,,,Example Labs,,https://linkedin.com/posts/1,https://example.com/apply,,"
         "2026-09-10,,,2026-09-10\n"
     )
-    records = _rise_sheet(
-        csv_text, {"id": "rise_public_sheet", "source_priority": 1}
-    )
+    records = _rise_sheet(csv_text, {"id": "rise_public_sheet", "source_priority": 1})
     assert len(records) == 1
     assert records[0]["verification_status"] == "machine_collected_unverified"
     assert records[0]["source_url"] == "https://linkedin.com/posts/1"
@@ -74,9 +85,7 @@ def test_wellfound_parser_uses_public_next_data_contract() -> None:
                             "name": "Startup One",
                             "slug": "startup-one",
                             "companySize": "SIZE_11_50",
-                            "highlightedJobListings": [
-                                {"__ref": "JobListingSearchResult:10"}
-                            ],
+                            "highlightedJobListings": [{"__ref": "JobListingSearchResult:10"}],
                         },
                         "JobListingSearchResult:10": {
                             "id": "10",
@@ -103,3 +112,49 @@ def test_wellfound_parser_uses_public_next_data_contract() -> None:
     assert records[0]["company"] == "Startup One"
     assert records[0]["title"] == "Founder’s Office Intern"
     assert records[0]["posted_at"]
+
+
+@pytest.mark.parametrize(
+    ("vendor", "adapter", "url", "expected_title"),
+    [
+        (
+            "greenhouse",
+            "greenhouse_ats",
+            "https://boards-api.greenhouse.io/v1/boards/example/jobs?content=true",
+            "Strategy Intern",
+        ),
+        ("lever", "lever_ats", "https://api.lever.co/v0/postings/example?mode=json", "Growth Operations Intern"),
+        ("ashby", "ashby_ats", "https://api.ashbyhq.com/posting-api/job-board/example", "Founder Associate Intern"),
+        (
+            "workable",
+            "workable_ats",
+            "https://apply.workable.com/api/v3/accounts/example/jobs",
+            "Business Operations Intern",
+        ),
+    ],
+)
+def test_official_ats_contract_fixtures(vendor, adapter, url, expected_title) -> None:
+    payload = json.loads((FIXTURES / "ats-responses.json").read_text(encoding="utf-8"))[vendor]
+    source = {
+        "id": f"example_{vendor}",
+        "adapter": adapter,
+        "url": url,
+        "company": "Example",
+        "company_url": "https://example.com",
+        "source_priority": 2,
+    }
+    parser = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby, "workable": _workable}[vendor]
+    assert _verified_ats_url(source) == url
+    records = parser(payload, source)
+    assert len(records) == 1
+    assert records[0]["company"] == "Example"
+    assert records[0]["title"] == expected_title
+    assert records[0]["location"]
+    assert records[0]["source_confidence"] == "official"
+    assert records[0]["source_url"].startswith("https://")
+
+
+@pytest.mark.parametrize("url", ["", "http://api.lever.co/v0/postings/example", "https://example.com/jobs"])
+def test_ats_adapter_rejects_missing_guessed_or_non_https_urls(url) -> None:
+    with pytest.raises(ValueError, match="explicit reviewed"):
+        _verified_ats_url({"adapter": "lever_ats", "url": url})

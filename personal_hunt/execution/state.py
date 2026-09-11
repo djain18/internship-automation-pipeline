@@ -18,6 +18,7 @@ class LocalState:
                 "sent_opportunity_ids": [],
                 "apify_spend": {},
                 "role_judgements": {},
+                "llm_cache": {},
             }
         with self.path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -29,6 +30,7 @@ class LocalState:
         payload.setdefault("sent_opportunity_ids", [])
         payload.setdefault("apify_spend", {})
         payload.setdefault("role_judgements", {})
+        payload.setdefault("llm_cache", {})
         return payload
 
     def save(self, payload: dict[str, Any]) -> None:
@@ -49,6 +51,7 @@ class LocalState:
             "completed_at": run.get("completed_at"),
             "primary_count": len(run.get("primary", [])),
             "remote_count": len(run.get("remote_fallback", [])),
+            "llm_usage": run.get("llm_usage", {}),
         }
         for record in run.get("all_scored", []):
             previous = state["seen_opportunities"].get(record["id"], {})
@@ -64,6 +67,9 @@ class LocalState:
         judgements = run.get("role_judgement_cache")
         if isinstance(judgements, dict):
             state.setdefault("role_judgements", {}).update(judgements)
+        llm_cache = run.get("llm_cache")
+        if isinstance(llm_cache, dict):
+            state.setdefault("llm_cache", {}).update(llm_cache)
         self.save(state)
 
     def first_seen_dates(self) -> dict[str, str]:
@@ -78,6 +84,16 @@ class LocalState:
         state = self.load()
         value = state.get("role_judgements", {})
         return dict(value) if isinstance(value, dict) else {}
+
+    def llm_cache(self) -> dict[str, Any]:
+        state = self.load()
+        value = state.get("llm_cache", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def update_llm_cache(self, entries: dict[str, Any]) -> None:
+        state = self.load()
+        state.setdefault("llm_cache", {}).update(entries)
+        self.save(state)
 
     def digest_delivery(self, run_id: str) -> dict[str, Any]:
         state = self.load()
@@ -127,6 +143,7 @@ class LocalState:
         item_count: int,
         status: str,
         checked_at: str,
+        slot: str = "",
     ) -> None:
         state = self.load()
         bucket = state.setdefault("apify_spend", {}).setdefault(month, {"runs": {}})
@@ -136,5 +153,6 @@ class LocalState:
             "item_count": int(item_count),
             "status": status,
             "checked_at": checked_at,
+            "slot": slot,
         }
         self.save(state)

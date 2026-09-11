@@ -67,8 +67,9 @@ pipeline_secrets = [
     modal.Secret.from_name("internship-hunt-secrets"),
     modal.Secret.from_name("internship-hunt-gmail"),
     modal.Secret.from_name("internship-hunt-self-digest"),
-    # Step 3b only: the public-post actor remains adaptive, low-confidence,
-    # and bounded by the account usage check plus maxTotalChargeUsd.
+    # The public-post actor runs every scheduled run (linkedin_every_run),
+    # stays low-confidence, and is bounded by per-slot usage checks plus
+    # maxTotalChargeUsd. Keys come from APIFY_TOKEN_1..7 in this secret.
     modal.Secret.from_name("apify-token"),
     # Rise's GOOGLE_SHEET_ID only, for the rise_public_sheet ingestion source
     # (spec: fetch the Rise live Sheet as upstream source 1). Deliberately
@@ -104,6 +105,10 @@ def _self_digest_enabled() -> bool:
 )
 def collect() -> dict[str, object]:
     arguments = ["--live"]
+    if os.getenv("ENABLE_PERSONAL_APIFY_TOPUP", "false").casefold() in {
+        "1", "true", "yes"
+    }:
+        arguments.append("--allow-paid-sources")
     if os.getenv("INTERNSHIP_SHEET_ID"):
         arguments.append("--publish-sheets")
     return _run(*arguments)

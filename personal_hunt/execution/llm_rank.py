@@ -5,10 +5,11 @@ import os
 from typing import Any
 
 from models import Record, clean_text
-from research import _bedrock_json_with_usage
+from research import cached_bedrock_json
 
 
 MAX_REASON_CHARS = 180
+LINKEDIN_EXTRACTION_LIMIT = 20
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -59,8 +60,123 @@ def _validate_response(payload: Any, expected_ids: set[str]) -> list[Record]:
     return ranked
 
 
+def extract_linkedin_hiring_fields(
+    records: list[Record], cache: dict[str, Any] | None = None
+) -> tuple[list[Record], Record]:
+    """Resolve structured fields in one bounded batch and reject unquoted output."""
+
+    candidates = [
+        item
+        for item in records
+        if item.get("source") == "linkedin_posts_apify"
+        and not all(item.get(key) for key in ("company", "title", "location"))
+        and "intern" in str(item.get("description", "")).casefold()
+        and any(
+            term in str(item.get("description", "")).casefold()
+            for term in ("hiring", "opening", "apply")
+        )
+        and any(
+            term in str(item.get("description", "")).casefold()
+            for term in ("bengaluru", "bangalore", "remote", "hybrid")
+        )
+    ][:LINKEDIN_EXTRACTION_LIMIT]
+    if not candidates:
+        return records, {"status": "not_needed", "sent": 0, "resolved": 0}
+    if os.getenv("ENABLE_BEDROCK", "").casefold() not in {"1", "true", "yes"}:
+        return records, {"status": "skipped_disabled", "sent": 0, "resolved": 0}
+    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
+    region = os.getenv("AWS_REGION", "")
+    if not model_id or not region:
+        return records, {"status": "skipped_missing_configuration", "sent": 0, "resolved": 0}
+    content = {
+        "instruction": (
+            "Extract only explicitly stated hiring fields. Return raw JSON as "
+            '{"records":[{"id":"...","company":"","title":"","location":"",'
+            '"apply_url":"","evidence_quote":""}]}. Include every ID exactly once. '
+            "evidence_quote must be an exact substring containing the employer, internship "
+            "title, and location. Leave fields empty when the post does not prove them."
+        ),
+        "records": [
+            {"id": item["id"], "text": str(item.get("description", ""))[:6000]}
+            for item in candidates
+        ],
+    }
+    prompt = json.dumps(content, ensure_ascii=False)
+    try:
+        payload, usage = cached_bedrock_json(
+            purpose="linkedin_hiring_field_extraction",
+            model_id=model_id,
+            prompt_version="v1",
+            content=content,
+            prompt=prompt,
+            region=region,
+            cache=cache,
+        )
+        extracted = payload.get("records") if isinstance(payload, dict) else None
+        if not isinstance(extracted, list):
+            raise ValueError("response must contain a records list")
+        by_id = {str(item.get("id")): item for item in extracted if isinstance(item, dict)}
+        if set(by_id) != {str(item["id"]) for item in candidates} or len(by_id) != len(extracted):
+            raise ValueError("extraction IDs must match supplied records exactly")
+    except Exception as exc:
+        return records, {
+            "status": "failed",
+            "sent": len(candidates),
+            "resolved": 0,
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+    candidate_ids = {str(item["id"]) for item in candidates}
+    output: list[Record] = []
+    resolved = 0
+    for record in records:
+        item = dict(record)
+        if str(record.get("id")) not in candidate_ids:
+            output.append(item)
+            continue
+        result = by_id[str(record["id"])]
+        text = str(record.get("description", ""))
+        quote = clean_text(result.get("evidence_quote"))
+        company = clean_text(result.get("company"))
+        title = clean_text(result.get("title"))
+        location = clean_text(result.get("location"))
+        quote_lower = quote.casefold()
+        valid = bool(
+            quote
+            and quote_lower in text.casefold()
+            and company.casefold() in quote_lower
+            and "intern" in title.casefold()
+            and "intern" in quote_lower
+            and any(term in location.casefold() for term in ("bengaluru", "bangalore", "remote", "hybrid"))
+            and any(term in quote_lower for term in ("bengaluru", "bangalore", "remote", "hybrid"))
+        )
+        if valid:
+            item.update(
+                {
+                    "company": company,
+                    "title": title,
+                    "location": location,
+                    "extraction_evidence_quote": quote,
+                    "extraction_status": "llm_evidence_validated",
+                }
+            )
+            apply_url = clean_text(result.get("apply_url"))
+            if apply_url and apply_url in text:
+                item["apply_url"] = apply_url
+            resolved += 1
+        output.append(item)
+    return output, {
+        "status": "ok",
+        "sent": len(candidates),
+        "resolved": resolved,
+        "usage": usage,
+    }
+
+
 def score_shortlist(
-    records: list[Record], scoring: dict[str, Any], section: str
+    records: list[Record],
+    scoring: dict[str, Any],
+    section: str,
+    cache: dict[str, Any] | None = None,
 ) -> tuple[list[Record], Record]:
     if not records:
         return [], {"status": "not_needed", "section": section}
@@ -97,8 +213,7 @@ def score_shortlist(
                 "evidence": research.get("evidence", []),
             }
         )
-    prompt = json.dumps(
-        {
+    content = {
             "instruction": (
                 "Score these already deterministically eligible internship leads for "
                 "Daksh Jain's Founder’s Office/generalist target. Reward real founder "
@@ -117,13 +232,25 @@ def score_shortlist(
             ),
             "section": section,
             "records": supplied,
-        },
+        }
+    prompt = json.dumps(
+        content,
         ensure_ascii=False,
     )
     try:
-        payload, usage = _bedrock_json_with_usage(prompt, model_id, region)
+        payload, usage = cached_bedrock_json(
+            purpose=f"shortlist_rank:{section}",
+            model_id=model_id,
+            prompt_version="v1",
+            content=content,
+            prompt=prompt,
+            region=region,
+            cache=cache,
+        )
         ranked = _validate_response(payload, {record["id"] for record in records})
     except Exception as exc:
+        if cache is not None and "usage" in locals():
+            cache.pop(str(usage.get("cache_key", "")), None)
         error = f"{type(exc).__name__}: {str(exc)[:240]}"
         return _failed(records, "failed", error), {
             "status": "failed",
@@ -211,8 +338,22 @@ def judge_cross_functional(
     admitted_ids: list[str] = []
     cached_hits = 0
     pending: list[Record] = []
+    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
+    candidate_keys: dict[str, str] = {}
+    from models import llm_cache_key
+
     for record in candidates:
-        verdict = cache.get(record["id"])
+        content = {
+            "title": record.get("title"),
+            "company": record.get("company"),
+            "description": str(record.get("description", ""))[:6000],
+        }
+        key, _ = llm_cache_key(
+            "role_judgement", model_id, "v1", content
+        )
+        candidate_keys[record["id"]] = key
+        entry = cache.get(key)
+        verdict = entry.get("verdict") if isinstance(entry, dict) else None
         if isinstance(verdict, dict) and "cross_functional" in verdict:
             cached_hits += 1
             if verdict.get("cross_functional"):
@@ -226,7 +367,6 @@ def judge_cross_functional(
 
     status = "ok"
     error = ""
-    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
     region = os.getenv("AWS_REGION", "")
     usage: Any = None
     if not considered:
@@ -236,8 +376,7 @@ def judge_cross_functional(
     elif not model_id or not region:
         status = "skipped_missing_configuration"
     else:
-        prompt = json.dumps(
-            {
+        content = {
                 "instruction": ROLE_JUDGEMENT_INSTRUCTION,
                 "records": [
                     {
@@ -248,16 +387,32 @@ def judge_cross_functional(
                     }
                     for record in considered
                 ],
-            },
+            }
+        prompt = json.dumps(
+            content,
             ensure_ascii=False,
         )
         try:
-            payload, usage = _bedrock_json_with_usage(prompt, model_id, region)
+            call_cache: dict[str, Any] = {}
+            payload, usage = cached_bedrock_json(
+                purpose="role_judgement_batch",
+                model_id=model_id,
+                prompt_version="v1",
+                content=content,
+                prompt=prompt,
+                region=region,
+                cache=call_cache,
+            )
             verdicts = _validate_judgements(
                 payload, {record["id"] for record in considered}
             )
             for identifier, verdict in verdicts.items():
-                cache[identifier] = verdict
+                cache[candidate_keys[identifier]] = {
+                    "purpose": "role_judgement",
+                    "model_id": model_id,
+                    "prompt_version": "v1",
+                    "verdict": verdict,
+                }
                 if verdict["cross_functional"]:
                     admitted_ids.append(identifier)
         except Exception as exc:  # fails closed: nothing is admitted
@@ -269,8 +424,9 @@ def judge_cross_functional(
         record["rejection_reasons"] = []
         record["eligible"] = True
         record["role_fit_basis"] = "llm_cross_functional_judgement"
+        entry = cache.get(candidate_keys.get(identifier, "")) or {}
         record["role_fit_reason"] = clean_text(
-            (cache.get(identifier) or {}).get("reason")
+            (entry.get("verdict") or {}).get("reason")
         )
         output[identifier] = record
 
@@ -282,6 +438,15 @@ def judge_cross_functional(
         "skipped_over_cap": skipped_over_cap,
         "admitted": len(admitted_ids),
         "model_id": model_id,
+        "usage": usage or {
+            "calls": 0,
+            "cache_hits": cached_hits,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "elapsed_ms": 0,
+            "cost_usd": 0.0,
+        },
     }
     if error:
         meta["error"] = error
