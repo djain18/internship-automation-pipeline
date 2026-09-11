@@ -38,6 +38,8 @@ without weakening freshness, provenance, or manual-send controls.
 - 08:30 IST cron delivered 3 matches; Gmail message ID in the state ledger.
 - Manual `deliver` correctly skips when nothing new (no double-send).
 - Either Daksh alias accepted as recipient; sends From the configured address.
+- Sheet publish proven against the live tracker (52 Companies, 2 Opportunities,
+  2 Outreach rows per run; human-owned columns merge-preserved).
 
 ## Implementation slices
 
