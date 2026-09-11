@@ -351,16 +351,25 @@ def hard_exclusions(
                 datetime.fromisoformat(discovered).date()
                 - datetime.fromisoformat(posted_date).date()
             ).days
-            if age_days > int(scoring.get("max_posting_age_days", 7)):
-                reasons.append("posted_over_7_days")
+            if age_days > int(scoring.get("max_posting_age_days", 10)):
+                reasons.append("posted_over_10_days")
     except ValueError:
         reasons.append("invalid_posted_date")
     if _contains(joined, _terms(roles, "senior_reject")):
         reasons.append("senior_role")
+    cross_functional = _contains(joined, _terms(roles, "cross_functional_terms"))
     accepted = _contains(joined, _terms(roles, "accepted")) or _contains(
         title, _terms(roles, "accepted_title")
     )
-    cross_functional = _contains(joined, _terms(roles, "cross_functional_terms"))
+    broad_title = _contains(title, _terms(roles, "broad_title_requires_evidence"))
+    function_groups = roles.get("function_evidence", {})
+    function_count = sum(
+        any(clean_text(term).casefold() in description for term in terms)
+        for terms in function_groups.values()
+        if isinstance(terms, list)
+    ) if isinstance(function_groups, dict) else 0
+    if broad_title and not cross_functional and function_count < 2:
+        accepted = False
     specialist = _contains(title, _terms(roles, "specialist_reject"))
     if specialist and not cross_functional:
         reasons.append("specialist_only_role")

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from state import LocalState
+from models import llm_cache_key, usage_summary
 
 
 def test_first_seen_and_digest_delivery_are_stable(tmp_path: Path) -> None:
@@ -48,3 +49,34 @@ def test_sent_opportunity_history_survives_new_runs(tmp_path: Path) -> None:
         opportunity_ids=["opp-2", "opp-3"],
     )
     assert state.sent_opportunity_ids() == {"opp-1", "opp-2", "opp-3"}
+
+
+def test_llm_cache_persists_and_merges(tmp_path: Path) -> None:
+    state = LocalState(tmp_path / "state.json")
+    state.update_llm_cache({"key-a": {"payload": {"value": 1}}})
+    state.update_llm_cache({"key-b": {"payload": {"value": 2}}})
+    assert set(state.llm_cache()) == {"key-a", "key-b"}
+
+
+def test_llm_cache_key_normalizes_content_and_invalidates_policy() -> None:
+    first, _ = llm_cache_key("rank", "model-a", "v1", {"text": "a  b"})
+    same, _ = llm_cache_key("rank", "model-a", "v1", {"text": "a b"})
+    changed, _ = llm_cache_key("rank", "model-a", "v2", {"text": "a b"})
+    assert first == same
+    assert changed != first
+
+
+def test_usage_summary_aggregates_calls_tokens_cache_and_cost() -> None:
+    summary = usage_summary([
+        {"calls": 1, "input_tokens": 10, "total_tokens": 13, "cost_usd": 0.01},
+        {"cache_hits": 1, "output_tokens": 3, "elapsed_ms": 20},
+    ])
+    assert summary == {
+        "calls": 1,
+        "cache_hits": 1,
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "total_tokens": 13,
+        "elapsed_ms": 20,
+        "cost_usd": 0.01,
+    }

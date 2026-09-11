@@ -13,6 +13,28 @@ from state import LocalState
 
 APIFY_API = "https://api.apify.com/v2"
 
+# Daksh's own keys, in priority order. Slots are logged, never key values.
+# Discovery scans 1..MAX so adding a key is just APIFY_TOKEN_<n> in .env.
+MAX_KEY_SLOTS = 10
+
+
+def _candidate_tokens() -> list[tuple[str, str]]:
+    """Return (slot, token) pairs from APIFY_TOKEN_1..N plus the legacy single key."""
+    slots: list[tuple[str, str]] = []
+    for index in range(1, MAX_KEY_SLOTS + 1):
+        token = os.getenv(f"APIFY_TOKEN_{index}", "")
+        if token:
+            slots.append((f"key_{index}", token))
+    legacy = os.getenv("APIFY_TOKEN", "") or os.getenv("APIFY_API_TOKEN", "")
+    if legacy and all(token != legacy for _, token in slots):
+        slots.append(("key_legacy", legacy))
+    return slots
+
+
+def _auth_failed(exc: BaseException) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", 0) or 0
+    return status in {401, 403} or "401" in str(exc) or "403" in str(exc)
+
 
 def account_monthly_usage(token: str, timeout: int = 20) -> tuple[float, float]:
     """Return current account usage and provider cap; paid work fails closed."""
@@ -51,7 +73,8 @@ def _map_linkedin(items: list[Record], source: dict[str, Any]) -> list[Record]:
     for item in items:
         text = clean_text(item.get("text") or item.get("content") or item.get("postText"))
         url = item.get("linkedinUrl") or item.get("postUrl") or item.get("url")
-        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        job = item.get("job") if isinstance(item.get("job"), dict) else {}
+        hiring_company = item.get("hiringCompany") if isinstance(item.get("hiringCompany"), dict) else {}
         posted_at = item.get("postedAt")
         if isinstance(posted_at, dict):
             posted_at = posted_at.get("date") or posted_at.get("timestamp")
@@ -59,15 +82,21 @@ def _map_linkedin(items: list[Record], source: dict[str, Any]) -> list[Record]:
             {
                 "source": source["id"],
                 "id": item.get("id") or item.get("urn") or url,
+                # A post author may be a recruiter, founder, or aggregator. It is
+                # not employer evidence unless the actor exposes a hiring-company
+                # field explicitly.
                 "company": clean_text(
-                    item.get("companyName") or author.get("name") or item.get("authorName")
+                    item.get("companyName")
+                    or item.get("hiringCompanyName")
+                    or hiring_company.get("name")
+                    or job.get("companyName")
                 ),
-                "title": clean_text(item.get("title") or text[:160]),
+                "title": clean_text(item.get("jobTitle") or item.get("roleTitle") or job.get("title")),
                 "description": text,
-                "location": clean_text(item.get("location")),
+                "location": clean_text(item.get("jobLocation") or item.get("location") or job.get("location")),
                 "source_url": url,
-                "apply_url": item.get("applyUrl") or url,
-                "posted_at": posted_at or item.get("publishedAt"),
+                "apply_url": item.get("applyUrl") or job.get("applyUrl") or url,
+                "posted_at": posted_at or item.get("publishedAt") or job.get("postedAt"),
                 "source_confidence": "low",
                 "verification_status": "machine_collected_unverified",
                 "source_priority": source.get("source_priority", 99),
@@ -87,9 +116,7 @@ def _map_x(items: list[Record], source: dict[str, Any]) -> list[Record]:
             {
                 "source": source["id"],
                 "id": item.get("id_str") or item.get("id") or item.get("tweetId") or url,
-                "company": clean_text(
-                    author.get("displayname") or author.get("name") or item.get("authorName")
-                ),
+                "company": clean_text(author.get("displayname") or author.get("name") or item.get("authorName")),
                 "title": clean_text(item.get("title") or text[:160]),
                 "description": text,
                 "location": clean_text(item.get("location")),
@@ -142,9 +169,9 @@ def map_actor_items(items: list[Record], source: dict[str, Any]) -> list[Record]
 def fetch_apify_actor(
     source: dict[str, Any], apify_config: dict[str, Any], timeout: int
 ) -> tuple[list[Record], Record]:
-    token = os.getenv("APIFY_TOKEN", "") or os.getenv("APIFY_API_TOKEN", "")
-    if not token:
-        raise RuntimeError("APIFY_TOKEN is required for an enabled Apify source")
+    slots = _candidate_tokens()
+    if not slots:
+        raise RuntimeError("No Apify tokens found (set APIFY_TOKEN_1 and up, or legacy APIFY_TOKEN)")
     actor_input = source.get("input")
     if not isinstance(actor_input, dict) or not actor_input:
         raise RuntimeError("Apify actor input is empty; capped contract is not configured")
@@ -152,16 +179,53 @@ def fetch_apify_actor(
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     budget = float(apify_config.get("monthly_budget_usd", 5.0))
     warn_at = float(apify_config.get("warn_at_usd", budget))
-    run_charge_cap = float(apify_config.get("max_run_charge_usd", 0.25))
+    run_charge_cap = float(apify_config.get("max_run_charge_usd", 0.70))
     if run_charge_cap <= 0:
         raise ValueError("Apify max_run_charge_usd must be positive")
-    used, provider_cap = account_monthly_usage(token, timeout=min(timeout, 20))
-    effective_cap = min(budget, provider_cap) if provider_cap > 0 else budget
-    if used + run_charge_cap > effective_cap:
+    if state.apify_month_spend(month) + run_charge_cap > budget:
         raise RuntimeError(
-            f"Apify monthly hard stop: ${used:.2f} used; "
-            f"a ${run_charge_cap:.2f} capped run exceeds ${effective_cap:.2f}"
+            f"Apify monthly hard stop: ${state.apify_month_spend(month):.2f} spent; "
+            f"a ${run_charge_cap:.2f} capped run exceeds the ${budget:.2f} shared budget"
         )
+    failures: dict[str, str] = {}
+    for slot, token in slots:
+        try:
+            used, provider_cap = account_monthly_usage(token, timeout=min(timeout, 20))
+        except Exception as exc:
+            failures[slot] = "unauthorized" if _auth_failed(exc) else "unreachable"
+            continue
+        effective_cap = min(budget, provider_cap) if provider_cap > 0 else budget
+        if used + run_charge_cap > effective_cap:
+            failures[slot] = "account_exhausted"
+            continue
+        try:
+            return _run_actor_with_slot(
+                source, actor_input, timeout, state, month, budget, warn_at,
+                run_charge_cap, slot, token, used, effective_cap,
+            )
+        except Exception as exc:
+            failures[slot] = "unauthorized" if _auth_failed(exc) else "request_error"
+            continue
+    raise RuntimeError(
+        "All Apify keys are unusable: "
+        + "; ".join(f"{slot}={reason}" for slot, reason in failures.items())
+    )
+
+
+def _run_actor_with_slot(
+    source: dict[str, Any],
+    actor_input: dict[str, Any],
+    timeout: int,
+    state: LocalState,
+    month: str,
+    budget: float,
+    warn_at: float,
+    run_charge_cap: float,
+    slot: str,
+    token: str,
+    used: float,
+    effective_cap: float,
+) -> tuple[list[Record], Record]:
     response = requests.post(
         f"{APIFY_API}/acts/{_actor_key(source['actor_id'])}/runs",
         params={
@@ -203,15 +267,14 @@ def fetch_apify_actor(
             items = [item for item in payload if isinstance(item, dict)]
     usage = float(run.get("usageTotalUsd", 0) or 0)
     checked_at = utc_timestamp()
-    state.record_apify_run(
-        month, source["actor_id"], run_id, usage, len(items), status, checked_at
-    )
+    state.record_apify_run(month, source["actor_id"], run_id, usage, len(items), status, checked_at, slot)
     mapped = map_actor_items(items, source)
     return mapped, {
         "health_status": actor_health_status(status, len(mapped)),
         "actor_status": status.casefold(),
         "actor_id": source["actor_id"],
         "actor_run_id": run_id,
+        "apify_slot": slot,
         "usage_total_usd": usage,
         "month_spend_usd": state.apify_month_spend(month),
         "account_month_spend_usd": used + usage,

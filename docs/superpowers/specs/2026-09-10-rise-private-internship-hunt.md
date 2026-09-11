@@ -19,13 +19,14 @@ run and sends only previously unemailed Kimi-approved matches.
 
 1. Fetch the Rise live Sheet without seed fallback, then the configured FTB,
    YC, Wellfound, WWR, portfolio, human-import, and funding sources.
-2. Normalize with stable first discovery, seven-day internship freshness, and
+2. Normalize with stable first discovery, ten-day internship freshness, and
    dated 15/30-day funding windows.
 3. Apply deterministic hard exclusions, deduplication, scoring, and balanced
    Bengaluru/remote selection.
-4. If fewer than five deterministic candidates remain, optionally invoke the
-   approved public-post LinkedIn actor with a $0.25 run cap and a $5 aggregate
-   monthly hard stop. A manual token change does not reset the ledger.
+4. Invoke the approved public-post LinkedIn actor on every scheduled run with
+   a $0.70 run cap and a $25 aggregate monthly hard stop shared across rotation
+   keys. Rotate `APIFY_TOKEN_1`..`APIFY_TOKEN_7` with per-slot usage checks;
+   all-unusable fails closed. A manual token change does not reset the ledger.
 5. Require Kimi K2.5 fit >=70, relevant=true, spam=false for digest admission;
    malformed/model-failed batches fail closed for email.
 6. Validate application links. Definitive 404/410 is rejected; temporary or
@@ -39,7 +40,8 @@ run and sends only previously unemailed Kimi-approved matches.
 
 `GET /api/personal/latest` requires a Firebase bearer ID token. Missing or
 invalid tokens return 401; a verified email other than
-`dakshinjain187@gmail.com` returns 403; missing/unusable live artifacts return
+`dakshinjain187@gmail.com` or `dakshjainn02@gmail.com` returns 403;
+missing/unusable live artifacts return
 404/503. Successful responses are sanitized, use exact-origin CORS, and set
 `Cache-Control: no-store`.
 
@@ -65,4 +67,3 @@ The implementation must pass all Python tests, Ruff, compileall, frontend tests
 and production build; inspect fixture and live dry-run output; validate the
 Sheet sandbox; prove API 401/403/200 behavior; inspect desktop/mobile email;
 and complete one authorized canary before enabling the 08:00 schedule.
-

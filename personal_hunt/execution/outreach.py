@@ -12,6 +12,63 @@ FORBIDDEN_PHRASES = (
     "best-in-class",
 )
 
+STRATEGY_RULES = (
+    ("growth_funnel_teardown", ("growth", "conversion", "funnel", "acquisition", "retention")),
+    ("launch_checklist", ("launch", "go-to-market", "gtm", "rollout")),
+    ("role_process_map", ("cross-functional", "stakeholder", "coordination", "process")),
+    ("operations_workflow_audit", ("operations", "workflow", "automation", "manual", "ops")),
+)
+
+
+def choose_strategy(record: Record) -> str:
+    """Choose a reproducible strategy from cited research, never from invention."""
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    evidence = research.get("evidence") or research.get("claims") or []
+    parts = [clean_text(research.get("primary_responsibility")), clean_text(research.get("solution_concept"))]
+    for item in evidence:
+        if isinstance(item, dict) and item.get("source_url"):
+            parts.append(clean_text(item.get("claim") or item.get("observation")))
+    haystack = " ".join(parts).casefold()
+    for strategy_id, keywords in STRATEGY_RULES:
+        if any(keyword in haystack for keyword in keywords):
+            return strategy_id
+    return "role_process_map"
+
+
+def _approved_artifact(record: Record) -> str:
+    if not record.get("artifact_human_approved"):
+        return ""
+    return clean_text(record.get("artifact_public_url") or record.get("artifact_path"))
+
+
+def _followups(record: Record, company: str) -> list[Record]:
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    candidates = research.get("followup_evidence") or []
+    by_day = {item.get("day"): item for item in candidates if isinstance(item, dict)}
+    output: list[Record] = []
+    for day in (3, 8):
+        item = by_day.get(day) or {}
+        observation = clean_text(item.get("observation") or item.get("value"))
+        source_url = clean_text(item.get("source_url"))
+        if not observation or not source_url or not item.get("access_date") or not item.get("confidence"):
+            output.append({"day": day, "status": "suppressed_no_new_cited_value"})
+            continue
+        output.append({
+            "day": day,
+            "status": "draft_needs_human_review",
+            "source_url": source_url,
+            "access_date": item["access_date"],
+            "confidence": item["confidence"],
+            "body": f"One useful update since my note about {company}: {observation} Source: {source_url}",
+        })
+    output.append({
+        "day": 14,
+        "status": "draft_needs_human_review",
+        "angle": "close_loop",
+        "body": f"I'll close the loop here. If the {company} idea is relevant, I’m happy to share an outline; otherwise, no action needed.",
+    })
+    return output
+
 
 def _words(text: str) -> list[str]:
     return re.findall(r"\b[\w’'-]+\b", text)
@@ -52,6 +109,8 @@ def draft_outreach(record: Record) -> Record:
     # solution was why every draft read the same. Quote the listing when it gave
     # one, and fall back to the role's own breadth when it did not.
     problem = clean_text(research.get("primary_responsibility"))
+    strategy_id = choose_strategy(record)
+    artifact = _approved_artifact(record)
     opening = (
         f"your {title} listing in {location} asks for someone to "
         f"{_clause(problem)}"
@@ -59,13 +118,14 @@ def draft_outreach(record: Record) -> Record:
         else f"your {title} opening in {location} pairs hands-on execution with a "
         f"broad view of {company}"
     )
+    resource_phrase = f" I can share the approved resource: {artifact}." if artifact else ""
     body = (
         f"Hi {contact_name}, {opening}. I mapped the public context into a "
         f"source-linked brief and one small idea: {solution} My background spans "
         "founder's-office automation, D2C operations, growth, and internal tools "
         "while I study at Christ University in Bengaluru. I'm looking for a "
         "six-month onsite generalist internship in Bengaluru from November 2026 "
-        "where I can own work across functions. Would the brief be useful?"
+        f"where I can own work across functions.{resource_phrase} Would a short outline be useful?"
     )
     # A long company name plus a long title pushed one real draft to 303
     # characters, so the note is built short and then held under the limit.
@@ -82,34 +142,7 @@ def draft_outreach(record: Record) -> Record:
             "idea. Seeking a six-month Bengaluru internship from November 2026. "
             "Share it?"
         )[:300]
-    followups = [
-        {
-            "day": 3,
-            "angle": "new evidence",
-            "body": (
-                f"One addition since my note: I separated what is publicly observed at "
-                f"{company} from what still needs validation. I can send that one-page "
-                "evidence map if it would save you time reviewing the idea."
-            ),
-        },
-        {
-            "day": 8,
-            "angle": "implementation",
-            "body": (
-                f"I also reduced the {company} idea to a smallest-test version with a "
-                "human approval gate and no assumed outcome. Worth sending the test plan?"
-            ),
-        },
-        {
-            "day": 14,
-            "angle": "close loop",
-            "body": (
-                f"I'll close the loop after this. The most useful takeaway was that "
-                f"{research.get('uncertainty', 'the internal workflow needs validation')} "
-                "If that is relevant, I’m happy to share the brief; otherwise, no action needed."
-            ),
-        },
-    ]
+    followups = _followups(record, company)
     if not solution:
         return {
             "subject": "founder office idea",
@@ -118,6 +151,7 @@ def draft_outreach(record: Record) -> Record:
             "followups": followups,
             "send_status": "blocked_insufficient_evidence",
             "artifact_mention_allowed": False,
+            "strategy_id": strategy_id,
         }
     return {
         "subject": "founder office idea",
@@ -125,7 +159,8 @@ def draft_outreach(record: Record) -> Record:
         "linkedin_note": linkedin,
         "followups": followups,
         "send_status": "draft_needs_human_review",
-        "artifact_mention_allowed": record.get("artifact_status") == "verified",
+        "artifact_mention_allowed": bool(artifact),
+        "strategy_id": strategy_id,
     }
 
 

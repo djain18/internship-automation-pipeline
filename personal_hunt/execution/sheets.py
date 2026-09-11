@@ -22,7 +22,8 @@ TAB_SCHEMAS: dict[str, list[str]] = {
     "Outreach": [
         "id", "opportunity_id", "company", "contact_name", "contact_role",
         "contact_email", "contact_status", "subject", "email_body", "linkedin_note",
-        "send_status", "mailsuite_status", "next_action",
+        "send_status", "mailsuite_status", "next_action", "sent_at",
+        "reply_outcome", "interview_outcome", "strategy_id", "human_quality_rating",
     ],
     "Artifacts": [
         "id", "opportunity_id", "company", "artifact_status", "evidence_pack_path",
@@ -49,7 +50,10 @@ TAB_SCHEMAS: dict[str, list[str]] = {
 HUMAN_OWNED: dict[str, set[str]] = {
     "Companies": {"status", "next_action"},
     "Opportunities": {"status"},
-    "Outreach": {"send_status", "mailsuite_status", "next_action"},
+    "Outreach": {
+        "send_status", "mailsuite_status", "next_action", "sent_at",
+        "reply_outcome", "interview_outcome", "strategy_id", "human_quality_rating",
+    },
     "Artifacts": {"public_url", "human_approved", "artifact_status"},
     "Funding Signals": {"status"},
 }
@@ -269,6 +273,7 @@ def rows_from_run(run: Record) -> dict[str, list[Record]]:
                 "send_status": draft.get("send_status"),
                 "mailsuite_status": "not_sent",
                 "next_action": "human_review",
+                "strategy_id": draft.get("strategy_id"),
             }
         )
         artifacts.append(
@@ -362,4 +367,3 @@ def create_tracking_sheet(title: str) -> dict[str, str]:
         "spreadsheet_id": spreadsheet_id,
         "spreadsheet_url": str(created["spreadsheetUrl"]),
     }
-

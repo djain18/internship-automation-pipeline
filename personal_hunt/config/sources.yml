@@ -3,9 +3,11 @@ timeout_seconds: 25
 min_interval_seconds: 2
 
 apify:
-  monthly_budget_usd: 5.00
-  warn_at_usd: 5.00
-  max_run_charge_usd: 0.25
+  monthly_budget_usd: 25.00
+  warn_at_usd: 25.00
+  # Daksh 2026-09-11: per-run ceiling raised 0.25 -> 0.70. Monthly budget is
+  # shared across all rotation keys: $25 covers ~30 daily $0.70 runs.
+  max_run_charge_usd: 0.70
 
 funding_sources:
   - id: inc42_buzz_rss
@@ -79,6 +81,45 @@ sources:
     enabled: true
     adapter: human_import
     access_policy: manual
+
+  # Clone the relevant template per reviewed company, fill company/company_url/url
+  # from its official careers page, then enable it. Blank URLs are intentional:
+  # adapters reject missing, guessed, non-HTTPS, and non-vendor endpoints.
+  - id: greenhouse_reviewed_template
+    name: Reviewed Greenhouse board template
+    company: ""
+    company_url: ""
+    url: ""
+    enabled: false
+    adapter: greenhouse_ats
+    access_policy: reviewed_public_ats_api
+
+  - id: lever_reviewed_template
+    name: Reviewed Lever board template
+    company: ""
+    company_url: ""
+    url: ""
+    enabled: false
+    adapter: lever_ats
+    access_policy: reviewed_public_ats_api
+
+  - id: ashby_reviewed_template
+    name: Reviewed Ashby board template
+    company: ""
+    company_url: ""
+    url: ""
+    enabled: false
+    adapter: ashby_ats
+    access_policy: reviewed_public_ats_api
+
+  - id: workable_reviewed_template
+    name: Reviewed Workable board template
+    company: ""
+    company_url: ""
+    url: ""
+    enabled: false
+    adapter: workable_ats
+    access_policy: reviewed_public_ats_api
 
   - id: linkedin_posts_apify
     name: Public LinkedIn Posts via HarvestAPI

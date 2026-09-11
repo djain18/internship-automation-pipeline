@@ -23,6 +23,10 @@ def _write_live(tmp_path):
         "funding_extended": [],
         "source_health": [],
         "integrations": {},
+        "weekly_targets": [{"id": "target-1", "research_cache_path": "private"}],
+        "cost_summary": {"calls": 2, "credential": "private"},
+        "source_yield": {"greenhouse": {"eligible": 1}},
+        "cache_stats": {"hits": 4},
     }
     run_path.write_text(json.dumps(run), encoding="utf-8")
     (tmp_path / "latest-live.json").write_text(
@@ -99,4 +103,7 @@ def test_private_api_returns_sanitized_live_run(monkeypatch, tmp_path):
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["bengaluru"][0]["id"] == "opp-1"
     assert "artifact_path" not in response.json()["bengaluru"][0]
-
+    assert response.json()["weeklyTargets"] == [{"id": "target-1"}]
+    assert response.json()["costSummary"] == {"calls": 2}
+    assert response.json()["sourceYield"]["greenhouse"]["eligible"] == 1
+    assert response.json()["cacheStatistics"] == {"hits": 4}

@@ -3,7 +3,7 @@ from company_site import fetch_site_evidence, primary_responsibility
 from contacts import choose_contact
 from normalize import normalize_record
 from outreach import draft_outreach, validate_outreach
-from research import deterministic_research
+from research import deterministic_research, research_funding_event
 
 ABOUT_PAGE = (
     "<html><body><p>We build payroll software for small Indian teams and we "
@@ -201,3 +201,20 @@ def test_an_applicant_tracking_host_is_never_the_company_site() -> None:
         "2026-09-10",
     )
     assert record["company_url"] == ""
+
+
+def test_funding_research_does_not_call_llm_without_explicit_promotion(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    monkeypatch.setattr(
+        "research.cached_bedrock_json",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not call")),
+    )
+    result = research_funding_event(
+        {"company": "Acme", "headline": "Acme raises funding"}
+    )
+    assert result["problem_status"] == "insufficient_evidence"
+    assert "llm_status" not in result

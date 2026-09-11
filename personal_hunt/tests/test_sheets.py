@@ -52,6 +52,15 @@ def test_existing_human_owned_values_survive_machine_upsert() -> None:
     assert merged == ["outreach_1", "Updated", "sent", "opened", "follow_up_due"]
 
 
+def test_outreach_outcomes_and_human_strategy_survive_upsert() -> None:
+    headers = ["id", "sent_at", "reply_outcome", "interview_outcome", "strategy_id", "human_quality_rating"]
+    existing = ["outreach_1", "2026-09-11", "positive", "scheduled", "custom_strategy", "5"]
+    merged = merge_existing_row("Outreach", headers, existing, {
+        "id": "outreach_1", "strategy_id": "growth_funnel_teardown"
+    })
+    assert merged == existing
+
+
 def test_sheet_validator_accepts_append_only_migration_order() -> None:
     result = validate_headers(
         ["id", "company", "llm_rank", "status"],
@@ -69,4 +78,3 @@ def test_sheet_validator_rejects_missing_or_duplicate_required_headers() -> None
     assert not result["valid"]
     assert result["missing_headers"] == ["status"]
     assert result["duplicate_headers"] == ["company"]
-

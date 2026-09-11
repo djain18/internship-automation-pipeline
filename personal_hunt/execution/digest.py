@@ -123,6 +123,59 @@ def _problem_section(records: list[Record]) -> str:
     return "\n".join(lines)
 
 
+def _weekly_target_section(records: list[Record]) -> str:
+    lines = ["## Weekly founder targets (separate from internship matches)", ""]
+    if not records:
+        return "\n".join(lines + ["No company cleared the two-signal target gate.", ""])
+    for index, item in enumerate(records, 1):
+        contact = item.get("selected_contact") or {}
+        lines.extend(
+            [
+                f"### {index}. {item.get('company')}",
+                "",
+                f"- Lane: {item.get('lane')}",
+                f"- Company: {item.get('company_url')}",
+                f"- Contact: {contact.get('name') or contact.get('email') or contact.get('status', 'research required')}",
+                f"- Contact priority: {contact.get('contact_priority', 'unknown')}",
+                f"- Strategy: {(item.get('outreach') or {}).get('strategy_id', 'not drafted')}",
+                "- Signals:",
+                *[
+                    f"  - {signal.get('date')}: {signal.get('observation')} — {signal.get('url')}"
+                    for signal in item.get("signals", [])
+                ],
+                "- Human action: verify both signals and approve any artifact before sending manually",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _cost_section(run: Record) -> str:
+    usage = run.get("llm_usage", {}) or {}
+    cache = run.get("cache_statistics", {}) or {}
+    lines = ["## Run cost and source yield", ""]
+    lines.append(
+        f"- LLM: {usage.get('calls', 0)} calls, {usage.get('cache_hits', 0)} cache hits, "
+        f"{usage.get('total_tokens', 0)} tokens in {usage.get('elapsed_ms', 0)}ms. "
+        "No dollar baseline is set before seven optimized runs."
+    )
+    lines.append(
+        f"- Cache: {cache.get('entries', 0)} entries, {cache.get('hits', 0)} hits."
+    )
+    yields = run.get("source_yield", []) or []
+    if yields:
+        parts = [
+            f"{item.get('source')}: raw {item.get('raw', 0)}/eligible {item.get('eligible', 0)}"
+            f"/approved {item.get('kimi_approved', 0)}"
+            for item in yields
+        ]
+        lines.append(f"- Yield: {'; '.join(parts)}.")
+    else:
+        lines.append("- Yield: no source activity recorded.")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_digest(run: Record) -> str:
     failed = [item for item in run.get("source_health", []) if item.get("status") != "ok"]
     failure_lines = (
@@ -150,7 +203,7 @@ def render_digest(run: Record) -> str:
             f"**{label}**",
             "",
             (
-                f"Internships: prior {run.get('internship_window_days', 7)} days. "
+                f"Internships: prior {run.get('internship_window_days', 10)} days. "
                 f"Funding: primary {run.get('funding_primary_window_days', 15)} days; "
                 f"labeled extension through {run.get('funding_extension_window_days', 30)} days."
             ),
@@ -172,12 +225,14 @@ def render_digest(run: Record) -> str:
             ),
             "",
             _verification_section(run.get("needs_verification", [])),
+            _weekly_target_section(run.get("weekly_targets", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),
             _funding_section(
                 "Earlier this month (16-30 days; extension)",
                 run.get("funding_extended", []),
             ),
             _problem_section(run.get("funding_primary", []) + run.get("funding_extended", [])),
+            _cost_section(run),
             "## Source health",
             "",
             failure_lines,
@@ -269,6 +324,21 @@ def render_html_digest(run: Record) -> str:
           <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(signals)}</ul>
         </div>"""
 
+    target_items: list[str] = []
+    for item in run.get("weekly_targets", []):
+        company = html.escape(str(item.get("company") or ""))
+        url = html.escape(str(item.get("company_url") or site_url), quote=True)
+        target_items.append(
+            f'<li style="margin:0 0 10px"><a href="{url}" style="color:#2a2e33;font-weight:600;text-decoration:none">{company}</a></li>'
+        )
+    weekly_block = ""
+    if target_items:
+        weekly_block = f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#fafafa">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Weekly founder targets &middot; separate manual queue</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(target_items)}</ul>
+        </div>"""
+
     count = len(records)
     return f"""<!doctype html>
 <html><body style="margin:0;background:#f5f5f5;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2a2e33">
@@ -282,6 +352,7 @@ def render_html_digest(run: Record) -> str:
       </div>
       <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
       {unverified_block}
+      {weekly_block}
       {signal_block}
       <div style="padding:22px 28px;border-top:1px solid #e5e7eb">
         <a href="{html.escape(site_url, quote=True)}" style="display:inline-block;border-radius:999px;background:#2a2e33;color:#fff;padding:11px 18px;font-size:14px;font-weight:600;text-decoration:none">Open my hunt</a>
