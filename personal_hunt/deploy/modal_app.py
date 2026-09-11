@@ -67,6 +67,9 @@ pipeline_secrets = [
     modal.Secret.from_name("internship-hunt-secrets"),
     modal.Secret.from_name("internship-hunt-gmail"),
     modal.Secret.from_name("internship-hunt-self-digest"),
+    # Step 3b only: the public-post actor remains adaptive, low-confidence,
+    # and bounded by the account usage check plus maxTotalChargeUsd.
+    modal.Secret.from_name("apify-token"),
     # Rise's GOOGLE_SHEET_ID only, for the rise_public_sheet ingestion source
     # (spec: fetch the Rise live Sheet as upstream source 1). Deliberately
     # scoped to this one value, not the full internship-secrets bundle.
@@ -169,4 +172,3 @@ def personal_api():
 def smoke(fixtures: bool = True) -> None:
     result = fixture_pipeline.remote() if fixtures else live_render_pipeline.remote()
     print(json.dumps(result, indent=2))
-

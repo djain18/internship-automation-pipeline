@@ -153,6 +153,24 @@ def test_verification_tray_holds_only_sole_reason_leads() -> None:
     assert [item["id"] for item in tray] == ["lead-1"]
 
 
+def test_verification_tray_rejects_a_linkedin_lead_with_any_second_reason() -> None:
+    tray = select_needs_verification(
+        [
+            _linkedin_lead(id="sole-reason"),
+            _linkedin_lead(
+                id="also-stale",
+                rejection_reasons=[
+                    "linkedin_post_requires_manual_verification",
+                    "posted_over_10_days",
+                ],
+            ),
+        ],
+        {},
+    )
+
+    assert [item["id"] for item in tray] == ["sole-reason"]
+
+
 def test_verification_tray_is_capped_and_freshest_first() -> None:
     leads = [
         _linkedin_lead(id=f"lead-{index}", posted_date=f"2026-09-0{index}")
@@ -176,4 +194,21 @@ def test_verification_tray_records_stay_rejected_and_uncounted(tmp_path: Path) -
         assert item["id"] not in approved_ids
     assert run["eligible_count"] == sum(
         bool(item.get("eligible")) for item in run["all_scored"]
+    )
+
+
+def test_verification_tray_record_can_never_be_counted_as_approved(
+    tmp_path: Path,
+) -> None:
+    config = load_all()
+    records = load_json_records(
+        AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture"
+    )
+    run = run_pipeline(records, [], date(2026, 9, 8), config, tmp_path / "run")
+
+    assert all(item.get("digest_approved") is False for item in run["needs_verification"])
+    approved_count = len(run["digest_primary"]) + len(run["digest_remote_fallback"])
+    assert approved_count == sum(
+        bool(item.get("digest_approved"))
+        for item in run["primary"] + run["remote_fallback"]
     )
