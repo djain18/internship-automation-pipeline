@@ -104,6 +104,11 @@ class LocalState:
         state = self.load()
         return {str(value) for value in state.get("sent_opportunity_ids", [])}
 
+    def digest_deliveries(self) -> dict[str, Any]:
+        state = self.load()
+        value = state.get("digest_deliveries", {})
+        return dict(value) if isinstance(value, dict) else {}
+
     def record_digest_delivery(
         self,
         run_id: str,

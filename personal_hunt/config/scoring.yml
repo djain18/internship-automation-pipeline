@@ -18,6 +18,10 @@ max_role_judgements_per_run: 25
 # Unverified LinkedIn leads shown per run for manual checking. Capped so a
 # long tail of low-confidence leads cannot bury the approved matches.
 max_needs_verification: 10
+# Application throughput: how many manual sends the digest pushes per day,
+# and when an approved-but-unsent lead counts as going stale.
+daily_send_quota: 3
+stale_after_days: 3
 weekly_target_max_items: 3
 weekly_target_signal_days: 90
 weekly_target_recent_signal_days: 30

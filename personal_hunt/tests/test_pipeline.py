@@ -21,7 +21,9 @@ from pipeline import route_resume
 from state import LocalState
 
 
-def test_fixture_pipeline_enforces_gates_and_is_idempotent(tmp_path: Path) -> None:
+def test_fixture_pipeline_enforces_gates_and_is_idempotent(tmp_path: Path, monkeypatch) -> None:
+    # Deterministic gates must hold with Bedrock off, whatever the machine runs.
+    monkeypatch.setenv("ENABLE_BEDROCK", "false")
     config = load_all()
     records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
     health = fixture_health(len(records))
@@ -342,6 +344,88 @@ def test_company_url_requires_one_exact_reviewed_company_match() -> None:
 
     ambiguous = attach_company_provenance(records, companies * 2)[0]
     assert ambiguous.get("company_url", "") == ""
+
+
+def _queue_run():
+    def item(id, score):
+        return {
+            "id": id, "company": f"Co {id}", "title": "Founder's Office Intern",
+            "score": score, "resume": "Daksh-Jain-Master",
+            "apply_url": f"https://{id}.example/apply",
+            "selected_contact": {"email": f"hire@{id}.example"},
+        }
+
+    return {
+        "digest_primary": [item("a", 90), item("b", 80), item("c", 70), item("d", 60)],
+        "digest_remote_fallback": [],
+    }
+
+
+def test_send_queue_respects_quota_and_skips_sent() -> None:
+    from pipeline import attach_send_loop
+
+    run = _queue_run()
+    attach_send_loop(
+        run, run_date=date(2026, 9, 11), first_seen={}, sent_ids={"a"},
+        deliveries={}, scoring={"daily_send_quota": 2, "stale_after_days": 3},
+    )
+    assert [entry["id"] for entry in run["send_queue"]] == ["b", "c"]
+    assert run["stale_queue"] == []
+    assert run["send_streak_days"] == 0
+    assert run["daily_send_quota"] == 2
+
+
+def test_stale_queue_flags_aged_unsent_beyond_quota() -> None:
+    from pipeline import attach_send_loop
+
+    run = _queue_run()
+    attach_send_loop(
+        run, run_date=date(2026, 9, 11),
+        first_seen={"a": "2026-09-11", "b": "2026-09-01", "c": "2026-09-11", "d": "2026-09-01"},
+        sent_ids=set(), deliveries={},
+        scoring={"daily_send_quota": 1, "stale_after_days": 3},
+    )
+    assert [entry["id"] for entry in run["send_queue"]] == ["a"]
+    assert [entry["id"] for entry in run["stale_queue"]] == ["b", "d"]
+
+
+def test_send_streak_counts_consecutive_days_only() -> None:
+    from pipeline import send_streak_days
+
+    assert send_streak_days({}, date(2026, 9, 11)) == 0
+    deliveries = {
+        "r1": {"sent_at": "2026-09-11T08:30:00+00:00", "opportunity_ids": ["a"]},
+        "r2": {"sent_at": "2026-09-10T08:30:00+00:00", "opportunity_ids": ["b"]},
+        "r3": {"sent_at": "2026-09-08T08:30:00+00:00", "opportunity_ids": ["c"]},
+    }
+    assert send_streak_days(deliveries, date(2026, 9, 11)) == 2
+    assert send_streak_days(
+        {"r2": deliveries["r2"]}, date(2026, 9, 11)
+    ) == 1
+
+
+def test_digest_renders_send_queue() -> None:
+    from digest import render_digest
+    from pipeline import attach_send_loop
+
+    run = {
+        "run_id": "run_q", "run_date": "2026-09-11", "status": "complete",
+        "daily_target": 10, "daily_min_target": 5,
+        **_queue_run(),
+        "primary": [], "remote_fallback": [],
+        "needs_verification": [], "weekly_targets": [],
+        "funding_primary": [], "funding_extended": [],
+        "source_health": [], "llm_usage": {},
+        "cache_statistics": {}, "source_yield": [],
+    }
+    attach_send_loop(
+        run, run_date=date(2026, 9, 11), first_seen={}, sent_ids=set(),
+        deliveries={}, scoring={"daily_send_quota": 3, "stale_after_days": 3},
+    )
+    body = render_digest(run)
+    assert "Today's send queue" in body
+    assert "Co a" in body
+    assert "Send streak: 0 days" in body
 
 
 def test_every_run_mode_fires_topup_above_minimum(monkeypatch) -> None:

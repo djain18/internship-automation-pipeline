@@ -176,6 +176,43 @@ def _cost_section(run: Record) -> str:
     return "\n".join(lines)
 
 
+def _send_queue_section(run: Record) -> str:
+    queue = run.get("send_queue", []) or []
+    stale = run.get("stale_queue", []) or []
+    streak = int(run.get("send_streak_days", 0) or 0)
+    quota = int(run.get("daily_send_quota", 3) or 3)
+    lines = ["## Today's send queue (manual sends win internships)", ""]
+    lines.append(
+        f"Send streak: {streak} day{'s' if streak != 1 else ''} with digest sends. "
+        f"Today's quota: {quota}."
+    )
+    lines.append("")
+    if not queue:
+        lines.extend(["Queue is clear: every approved match was already emailed.", ""])
+    for index, item in enumerate(queue, 1):
+        lines.extend(
+            [
+                f"### {index}. {item.get('company')} - {item.get('title')}",
+                "",
+                f"- Score {item.get('score')}/100, waiting {item.get('age_days')}d, resume {item.get('resume')}",
+                f"- Apply: {item.get('apply_url')}",
+                f"- Contact: {item.get('contact') or 'research required'}",
+                "- Human action: send the approved draft today, then log sent_at in the Sheet",
+                "",
+            ]
+        )
+    if stale:
+        lines.append(f"Going stale (approved, unsent, {len(stale)}):")
+        lines.append("")
+        for item in stale:
+            lines.append(
+                f"- {item.get('company')} - {item.get('title')} "
+                f"(waiting {item.get('age_days')}d): send or drop it today"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_digest(run: Record) -> str:
     failed = [item for item in run.get("source_health", []) if item.get("status") != "ok"]
     failure_lines = (
@@ -225,6 +262,7 @@ def render_digest(run: Record) -> str:
             ),
             "",
             _verification_section(run.get("needs_verification", [])),
+            _send_queue_section(run),
             _weekly_target_section(run.get("weekly_targets", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),
             _funding_section(
@@ -339,6 +377,24 @@ def render_html_digest(run: Record) -> str:
           <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(target_items)}</ul>
         </div>"""
 
+    queue_items: list[str] = []
+    for item in run.get("send_queue", []) or []:
+        company = html.escape(str(item.get("company") or ""))
+        title = html.escape(str(item.get("title") or "Internship"))
+        target = html.escape(str(item.get("apply_url") or site_url), quote=True)
+        queue_items.append(
+            f'<li style="margin:0 0 10px"><a href="{target}" style="color:#2a2e33;font-weight:600;text-decoration:none">{title}</a>'
+            f'<div style="margin-top:3px;color:#6b7375">{company} · waiting {item.get("age_days", 0)}d</div></li>'
+        )
+    streak = int(run.get("send_streak_days", 0) or 0)
+    queue_block = ""
+    if queue_items:
+        queue_block = f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#f5f3ff">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Today's send queue &middot; streak {streak}d &middot; manual sends win internships</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(queue_items)}</ul>
+        </div>"""
+
     count = len(records)
     return f"""<!doctype html>
 <html><body style="margin:0;background:#f5f5f5;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2a2e33">
@@ -351,6 +407,7 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
       <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
+      {queue_block}
       {unverified_block}
       {weekly_block}
       {signal_block}
