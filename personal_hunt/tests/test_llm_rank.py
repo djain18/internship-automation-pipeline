@@ -312,3 +312,54 @@ def test_linkedin_batch_extraction_rejects_unquoted_fields(monkeypatch) -> None:
     output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
     assert meta["resolved"] == 0
     assert not output[0].get("company")
+
+
+def test_linkedin_batch_extraction_accepts_clean_subset(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = "Signal AI is hiring a Growth Intern in Bengaluru. Apply at https://signal.ai/jobs/1"
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-1",
+                        "company": "Signal AI",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "apply_url": "https://signal.ai/jobs/1",
+                        "evidence_quote": text,
+                    }
+                ]
+            },
+            {"calls": 1},
+        ),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": text,
+            "source_url": "https://linkedin.com/posts/1",
+        },
+        {
+            "id": "post-2",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": "Hiring an intern for a hybrid role, apply inside.",
+            "source_url": "https://linkedin.com/posts/2",
+        },
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["status"] == "ok"
+    assert meta["resolved"] == 1
+    assert output[0]["company"] == "Signal AI"
+    assert not output[1].get("company")

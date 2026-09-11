@@ -149,6 +149,7 @@ def cached_bedrock_json(
     prompt: str,
     region: str,
     cache: dict[str, Any] | None = None,
+    max_tokens: int = 1800,
 ) -> tuple[Record, Record]:
     """Call Bedrock once per policy/model/content tuple and expose usage metadata."""
     key, content_hash = llm_cache_key(purpose, model_id, prompt_version, content)
@@ -167,7 +168,7 @@ def cached_bedrock_json(
             "content_hash": content_hash,
         }
     started = time.perf_counter()
-    payload, usage = _bedrock_json_with_usage(prompt, model_id, region)
+    payload, usage = _bedrock_json_with_usage(prompt, model_id, region, max_tokens)
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     cache[key] = {
         "purpose": purpose,

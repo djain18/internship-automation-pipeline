@@ -9,8 +9,7 @@ from research import cached_bedrock_json
 
 
 MAX_REASON_CHARS = 180
-# 10 records fit the 1800-token output budget; 20 truncated mid-JSON twice
-# on live runs and failed closed.
+# 10 records per batch; output headroom comes from max_tokens=3500 below.
 LINKEDIN_EXTRACTION_LIMIT = 10
 
 
@@ -96,7 +95,7 @@ def extract_linkedin_hiring_fields(
             '{"records":[{"id":"...","company":"","title":"","location":"",'
             '"apply_url":"","evidence_quote":""}]}. Include every ID exactly once. '
             "evidence_quote must be an exact substring containing the employer, internship "
-            "title, and location. Leave fields empty when the post does not prove them."
+            "title, and location, no longer than 300 characters. Leave fields empty when the post does not prove them."
         ),
         "records": [
             # 3000 chars: the 2026-09-11 live run truncated a 20x6000 batch
@@ -115,13 +114,17 @@ def extract_linkedin_hiring_fields(
             prompt=prompt,
             region=region,
             cache=cache,
+            # 10 structured records need headroom past the 1800 default;
+            # truncation failed closed twice on live runs.
+            max_tokens=3500,
         )
         extracted = payload.get("records") if isinstance(payload, dict) else None
         if not isinstance(extracted, list):
             raise ValueError("response must contain a records list")
         by_id = {str(item.get("id")): item for item in extracted if isinstance(item, dict)}
-        if set(by_id) != {str(item["id"]) for item in candidates} or len(by_id) != len(extracted):
-            raise ValueError("extraction IDs must match supplied records exactly")
+        supplied_ids = {str(item["id"]) for item in candidates}
+        if not by_id or len(by_id) != len(extracted) or not set(by_id) <= supplied_ids:
+            raise ValueError("extraction IDs must be a clean subset of supplied records")
     except Exception as exc:
         return records, {
             "status": "failed",
@@ -134,10 +137,10 @@ def extract_linkedin_hiring_fields(
     resolved = 0
     for record in records:
         item = dict(record)
-        if str(record.get("id")) not in candidate_ids:
+        result = by_id.get(str(record.get("id")))
+        if str(record.get("id")) not in candidate_ids or result is None:
             output.append(item)
             continue
-        result = by_id[str(record["id"])]
         text = str(record.get("description", ""))
         quote = clean_text(result.get("evidence_quote"))
         company = clean_text(result.get("company"))
