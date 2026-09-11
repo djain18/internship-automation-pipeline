@@ -165,6 +165,8 @@ def latest(response: Response, claims: dict[str, Any] = Depends(require_daksh)) 
         "sourceHealth": _sanitize(run.get("source_health", [])),
         "integrations": _sanitize(run.get("integrations", {})),
         "weeklyTargets": _sanitize(run.get("weeklyTargets", run.get("weekly_targets", []))),
+        "sendQueue": _sanitize(run.get("send_queue", [])),
+        "sendStreakDays": int(run.get("send_streak_days", 0) or 0),
         "costSummary": _sanitize(run.get("costSummary", run.get("cost_summary", {}))),
         "sourceYield": _sanitize(run.get("sourceYield", run.get("source_yield", {}))),
         "cacheStatistics": _sanitize(

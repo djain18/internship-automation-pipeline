@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +28,11 @@ except ImportError:
 if os.getenv("AWS_BEDROCK") and not os.getenv("AWS_BEARER_TOKEN_BEDROCK"):
     os.environ["AWS_BEARER_TOKEN_BEDROCK"] = os.environ["AWS_BEDROCK"]
 if os.getenv("ENABLE_BEDROCK", "").casefold() in {"1", "true", "yes"}:
-    os.environ.setdefault("AWS_REGION", "ap-south-1")
-    os.environ.setdefault("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    # Blank .env lines must not win over defaults: setdefault keeps empties.
+    if not os.getenv("AWS_REGION", ""):
+        os.environ["AWS_REGION"] = "ap-south-1"
+    if not os.getenv("BEDROCK_RESEARCH_MODEL_ID", ""):
+        os.environ["BEDROCK_RESEARCH_MODEL_ID"] = "moonshotai.kimi-k2.5"
 
 from artifacts import create_artifacts
 from config import AUTOMATION_ROOT, load_all
@@ -106,6 +109,79 @@ def enrich_selected(
         item["outreach"] = draft
         item["strategy_id"] = draft.get("strategy_id", "")
     return output
+
+
+def _queue_age_days(first_seen: dict[str, str], run_date: date, item_id: str) -> int:
+    try:
+        seen = datetime.fromisoformat(str(first_seen.get(item_id, run_date.isoformat()))).date()
+    except ValueError:
+        return 0
+    return max(0, (run_date - seen).days)
+
+
+def send_streak_days(deliveries: dict[str, Record], run_date: date) -> int:
+    """Consecutive days with emailed digest sends, ending today or yesterday."""
+    active = {
+        str(value.get("sent_at", ""))[:10]
+        for value in deliveries.values()
+        if isinstance(value, dict)
+        and (value.get("opportunity_ids") or value.get("message_id"))
+    }
+    day, streak = run_date, 0
+    if day.isoformat() not in active:
+        day -= timedelta(days=1)
+    while day.isoformat() in active:
+        streak += 1
+        day -= timedelta(days=1)
+    return streak
+
+
+def attach_send_loop(
+    run: Record,
+    *,
+    run_date: date,
+    first_seen: dict[str, str],
+    sent_ids: set[str],
+    deliveries: dict[str, Record],
+    scoring: dict[str, Any],
+) -> Record:
+    """Push drafts out the door: quota queue, stale flags, and send streak.
+
+    Reads delivery state only; every send stays manual and human-owned."""
+
+    approved = list(run.get("digest_primary", [])) + list(run.get("digest_remote_fallback", []))
+    unsent = sorted(
+        (item for item in approved if str(item.get("id")) not in sent_ids),
+        key=lambda item: (-int(item.get("score", 0) or 0), str(item.get("id"))),
+    )
+    quota = max(1, int(scoring.get("daily_send_quota", 3)))
+    stale_after = int(scoring.get("stale_after_days", 3))
+    entries = []
+    for item in unsent:
+        contact = item.get("selected_contact") or {}
+        entries.append(
+            {
+                "id": item.get("id"),
+                "company": item.get("company"),
+                "title": item.get("title"),
+                "score": item.get("score", 0),
+                "age_days": _queue_age_days(first_seen, run_date, str(item.get("id"))),
+                "resume": item.get("resume"),
+                "apply_url": item.get("apply_url") or item.get("source_url"),
+                "contact": contact.get("email") or contact.get("name", ""),
+            }
+        )
+    queue = entries[:quota]
+    queued_ids = {entry["id"] for entry in queue}
+    stale = [
+        entry for entry in entries
+        if entry["age_days"] >= stale_after and entry["id"] not in queued_ids
+    ]
+    run["send_queue"] = queue
+    run["stale_queue"] = stale
+    run["send_streak_days"] = send_streak_days(deliveries, run_date)
+    run["daily_send_quota"] = quota
+    return run
 
 
 def _validate_selected_links(records: list[Record]) -> None:
@@ -746,6 +822,14 @@ def main() -> int:
         llm_cache=llm_cache,
     )
     run["company_candidates"] = company_candidates
+    attach_send_loop(
+        run,
+        run_date=run_date,
+        first_seen=first_seen,
+        sent_ids=set() if args.no_state or args.dry_run else state.sent_opportunity_ids(),
+        deliveries={} if args.no_state or args.dry_run else state.digest_deliveries(),
+        scoring=config["scoring"],
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     json_path = output_root / f"{run['run_id']}.json"
     digest_path = output_root / f"{run['run_id']}-digest.md"

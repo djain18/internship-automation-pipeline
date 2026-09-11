@@ -107,3 +107,5 @@ def test_private_api_returns_sanitized_live_run(monkeypatch, tmp_path):
     assert response.json()["costSummary"] == {"calls": 2}
     assert response.json()["sourceYield"]["greenhouse"]["eligible"] == 1
     assert response.json()["cacheStatistics"] == {"hits": 4}
+    assert response.json()["sendQueue"] == []
+    assert response.json()["sendStreakDays"] == 0
