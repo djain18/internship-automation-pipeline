@@ -22,6 +22,14 @@ max_needs_verification: 10
 # and when an approved-but-unsent lead counts as going stale.
 daily_send_quota: 3
 stale_after_days: 3
+# Hunter.io contact finder: fills records that have no usable email. Finder
+# only; verification costs extra credits and stays off unless enabled here.
+hunter_enabled: true
+hunter_verify: false
+hunter_min_confidence: 80
+hunter_limit_per_domain: 10
+hunter_monthly_max_searches: 25
+hunter_monthly_max_verifications: 0
 weekly_target_max_items: 3
 weekly_target_signal_days: 90
 weekly_target_recent_signal_days: 30

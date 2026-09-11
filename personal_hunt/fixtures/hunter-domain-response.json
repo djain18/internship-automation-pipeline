@@ -1,0 +1,48 @@
+{
+  "data": {
+    "domain": "fixturelabs.example",
+    "disposable": false,
+    "webmail": false,
+    "accept_all": false,
+    "pattern": "{first}",
+    "organization": "Fixture Labs",
+    "emails": [
+      {
+        "value": "aarav@fixturelabs.example",
+        "type": "personal",
+        "confidence": 95,
+        "first_name": "Aarav",
+        "last_name": "Sharma",
+        "position": "Founder",
+        "seniority": "executive",
+        "department": "executive",
+        "sources": [
+          {"domain": "fixturelabs.example", "uri": "https://fixturelabs.example/team"}
+        ],
+        "verification": {"date": "2026-09-01", "status": "valid"}
+      },
+      {
+        "value": "growth@fixturelabs.example",
+        "type": "generic",
+        "confidence": 99,
+        "first_name": "",
+        "last_name": "",
+        "position": "",
+        "sources": [
+          {"domain": "fixturelabs.example", "uri": "https://fixturelabs.example/contact"}
+        ],
+        "verification": {"date": "2026-09-01", "status": "valid"}
+      },
+      {
+        "value": "intern@fixturelabs.example",
+        "type": "personal",
+        "confidence": 40,
+        "first_name": "Ira",
+        "last_name": "Former",
+        "position": "Ex Intern",
+        "sources": [],
+        "verification": {"date": "2026-09-01", "status": "unknown"}
+      }
+    ]
+  }
+}
