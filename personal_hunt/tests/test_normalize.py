@@ -179,6 +179,32 @@ def test_anywhere_headquarters_passes_with_bangalore_posting() -> None:
     assert record["eligible"], record["rejection_reasons"]
 
 
+def test_ceo_office_title_is_accepted() -> None:
+    record = _record(title="CEO's Office Intern")
+    assert record["eligible"], record["rejection_reasons"]
+
+
+def test_right_hand_and_end_to_end_signal_cross_functional_scope() -> None:
+    record = _record(
+        title="Marketing Intern",
+        description="Work as the right-hand to the founder across launches.",
+    )
+    assert record["eligible"], record["rejection_reasons"]
+    record = _record(
+        title="Operations Intern",
+        description="Own merchant onboarding end-to-end with Excel tracking.",
+    )
+    assert record["eligible"], record["rejection_reasons"]
+
+
+def test_fundraising_and_analytics_count_as_distinct_functions() -> None:
+    record = _record(
+        title="Operations Intern",
+        description="Build Excel dashboards and support investor updates.",
+    )
+    assert record["eligible"], record["rejection_reasons"]
+
+
 def test_internship_signal_may_come_from_the_description() -> None:
     record = _record(title="Growth Associate", description="A 6 month internship.")
     assert "not_internship_or_fellowship" not in record["rejection_reasons"]

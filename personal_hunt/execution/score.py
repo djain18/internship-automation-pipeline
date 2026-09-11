@@ -81,6 +81,7 @@ def score_record(
     candidate_terms = [
         "founder", "operations", "automation", "growth", "gtm", "strategy",
         "special projects", "generalist", "d2c", "retail",
+        "chief of staff", "fundraise", "fundraising", "analytics",
     ]
     components["candidate_fit"] = (
         weights["candidate_fit"] if _contains_any(joined, candidate_terms) else 6
