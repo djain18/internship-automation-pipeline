@@ -155,6 +155,63 @@ def send_streak_days(deliveries: dict[str, Record], run_date: date) -> int:
     return streak
 
 
+GLANCE_FO_PHRASES = (
+    "founder's office",
+    "founder office",
+    "founders office",
+    "chief of staff",
+    "founder associate",
+    "ceo office",
+    "generalist",
+)
+GLANCE_HIRING_TERMS = ("hiring", "opening", "apply", "looking for")
+GLANCE_SENIORITY_EXCLUDE = (
+    "0-3 years",
+    "1+ year",
+    "2+ year",
+    "3+ year",
+    "year experience",
+    "years of experience",
+    "experienced professional",
+)
+
+
+def select_glance_queue(scored: list[Record], max_items: int = 5) -> list[Record]:
+    """LinkedIn posts worth Daksh's own 10-second glance, nothing more.
+
+    These look FO-shaped and Bengaluru-mentioned but carry no structured
+    employer, so the machine cannot qualify them. They stay ineligible,
+    uncounted, and unemailed; the human opens the link and decides.
+    """
+
+    queue: list[Record] = []
+    for item in scored:
+        if item.get("source") != "linkedin_posts_apify" or item.get("eligible"):
+            continue
+        text = f"{item.get('title', '')} {item.get('description', '')}".casefold()
+        if "intern" not in text and "fellow" not in text:
+            continue
+        if "bengaluru" not in text and "bangalore" not in text:
+            continue
+        if not any(term in text for term in GLANCE_HIRING_TERMS):
+            continue
+        if not any(phrase in text for phrase in GLANCE_FO_PHRASES):
+            continue
+        if any(pattern in text for pattern in GLANCE_SENIORITY_EXCLUDE):
+            continue
+        queue.append(
+            {
+                "id": item.get("id"),
+                "excerpt": clean_text(item.get("description"))[:300],
+                "source_url": item.get("source_url"),
+                "apply_url": item.get("apply_url"),
+            }
+        )
+        if len(queue) >= max(1, max_items):
+            break
+    return queue
+
+
 def attach_send_loop(
     run: Record,
     *,
@@ -623,6 +680,7 @@ def run_pipeline(
         "eligible_count": sum(bool(item.get("eligible")) for item in scored),
         "needs_verification": select_needs_verification(scored, config["scoring"]),
         "spotted_leads": [item for item in scored if item.get("source") == SPOTTED_SOURCE_ID],
+        "glance_queue": select_glance_queue(scored, int(config["scoring"].get("glance_max_items", 5))),
         "weekly_targets": weekly_targets,
         "primary": primary,
         "remote_fallback": remote,
