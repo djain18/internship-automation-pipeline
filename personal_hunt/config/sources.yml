@@ -78,10 +78,10 @@ sources:
     name: Wellfound Bengaluru
     kind: public_html
     url: "https://wellfound.com/location/bangalore"
-    # Retired 2026-09-11: the public page serves full-time listings only
-    # (202 records, 0 eligible, structural). Re-enable only if Wellfound
-    # ships a public internship listing contract.
-    enabled: false
+    # Daksh 2026-09-11 override: keep fetching despite zero yield so far.
+    # Measured 202 records, 0 eligible (page serves full-time listings).
+    # Records die at hard exclusions; no LLM cost. Revisit if volume appears.
+    enabled: true
     location_class: bengaluru
     adapter: wellfound
     access_policy: anonymous_public_page_no_proxy

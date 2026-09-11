@@ -176,6 +176,30 @@ def _cost_section(run: Record) -> str:
     return "\n".join(lines)
 
 
+def _spotted_section(records: list[Record]) -> str:
+    lines = ["## Your spotted leads (open and decide)", ""]
+    if not records:
+        lines.extend(
+            [
+                "Nothing spotted. Drop LinkedIn post URLs (one per line) into "
+                "personal_hunt/input/linkedin-leads.txt and they appear here.",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+    for index, item in enumerate(records, 1):
+        lines.extend(
+            [
+                f"### {index}. {item.get('source_url')}",
+                "",
+                "- Human action: open the link yourself, confirm a real Bengaluru "
+                "opening, then apply or add the company to the watchlist",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _send_queue_section(run: Record) -> str:
     queue = run.get("send_queue", []) or []
     stale = run.get("stale_queue", []) or []
@@ -262,6 +286,7 @@ def render_digest(run: Record) -> str:
             ),
             "",
             _verification_section(run.get("needs_verification", [])),
+            _spotted_section(run.get("spotted_leads", [])),
             _send_queue_section(run),
             _weekly_target_section(run.get("weekly_targets", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),

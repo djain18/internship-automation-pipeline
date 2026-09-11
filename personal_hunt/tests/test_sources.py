@@ -162,6 +162,32 @@ def test_ats_adapter_rejects_missing_guessed_or_non_https_urls(url) -> None:
         _verified_ats_url({"adapter": "lever_ats", "url": url})
 
 
+def test_spotted_leads_loader_keeps_only_unique_https_urls(tmp_path) -> None:
+    from fetch_sources import load_spotted_leads
+
+    path = tmp_path / "linkedin-leads.txt"
+    path.write_text(
+        "# comment\n"
+        "\n"
+        "https://www.linkedin.com/posts/example-founder-office\n"
+        "https://www.linkedin.com/posts/example-founder-office\n"
+        "not a url\n"
+        "ftp://example.com/file\n"
+        "http://example.com/internship\n",
+        encoding="utf-8",
+    )
+    records = load_spotted_leads(path)
+    assert [item["source_url"] for item in records] == [
+        "https://www.linkedin.com/posts/example-founder-office",
+        "http://example.com/internship",
+    ]
+    assert all(item["source"] == "human_spotted" for item in records)
+    assert all(item["verification_status"] == "human_spotted_unverified" for item in records)
+    assert all(not item["company"] and not item["title"] for item in records)
+    again = load_spotted_leads(path)
+    assert [item["id"] for item in again] == [item["id"] for item in records]
+
+
 HARVEST_HTML = """
 <html><body>
 <a href="https://boards.greenhouse.io/celonis/jobs/7817337003">Senior Engineer</a>

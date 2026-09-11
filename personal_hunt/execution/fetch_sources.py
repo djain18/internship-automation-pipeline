@@ -646,6 +646,54 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
     return all_records, health
 
 
+SPOTTED_SOURCE_ID = "human_spotted"
+SPOTTED_FILE = "linkedin-leads.txt"
+
+
+def load_spotted_leads(path: Path) -> list[Record]:
+    """Daksh's own finds: one URL per line, `#` comments and blanks ignored.
+
+    The pipeline may not open LinkedIn links, so these stay human tasks with
+    provenance: tracked, deduplicated across runs, and surfaced in the digest.
+    They can never become eligible on a bare URL alone.
+    """
+    from models import stable_id
+
+    output: list[Record] = []
+    seen: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        url = clean_text(line)
+        if not url or url.startswith("#"):
+            continue
+        parts = urlsplit(url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            continue
+        url = parts.geturl()
+        if url in seen:
+            continue
+        seen.add(url)
+        output.append(
+            {
+                "_source_id": SPOTTED_SOURCE_ID,
+                "_source_url": url,
+                "source": SPOTTED_SOURCE_ID,
+                "id": stable_id("spotted", url, prefix="spotted"),
+                "company": "",
+                "title": "",
+                "description": "",
+                "location": "",
+                "link": url,
+                "source_url": url,
+                "apply_url": url,
+                "posted_at": "",
+                "source_confidence": "low",
+                "verification_status": "human_spotted_unverified",
+                "source_priority": 1,
+            }
+        )
+    return output
+
+
 def load_json_records(path: Path, source_id: str = "human_import") -> list[Record]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
