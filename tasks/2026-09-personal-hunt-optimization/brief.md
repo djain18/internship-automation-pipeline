@@ -47,10 +47,25 @@ without weakening freshness, provenance, or manual-send controls.
 2. Repair LinkedIn-post normalization and add a paid-source CLI gate.
 3. Move Kimi/research behind cheap gates and cache by content/prompt/model.
 4. Add public Greenhouse, Lever, Ashby, and Workable watchlist adapters.
+   Harvest vendor board links embedded in jobs.accel.com into reviewed ATS
+   API sources each run (slugs from discovered links only, capped at 8).
 5. Add company provenance, weekly targets, outreach strategies, outcomes, and
    source/cost reporting.
 6. Verify fixtures, both Python suites, frontend tests/build, and safe dry runs.
 7. Add Hunter.io contact finder (free tier) behind monthly caps and cache.
+8. Expand supply where it is policy-clean; retire structural zeros with cause.
+
+## Amendment 2026-09-11 (Daksh Jain): supply diagnosis
+
+- Measured yield: YC Bengaluru carries, FTB contributes, Rise sheet is mostly
+  stale, LinkedIn posts are low-precision, WWR is out of scope by design.
+- Wellfound retired: its public page serves full-time listings only.
+- ATS harvester added: vendor board links embedded in jobs.accel.com convert
+  to the vendors' public board APIs (slugs from discovered links only).
+- Probed dead ends (no build): YC role facets (ignored server-side), PeakXV
+  careers and Cutshort listings (JS shells), Getro anchors (empty).
+- Open policy calls for Daksh: revisit the Internshala exclusion (biggest
+  India internship volume), and nothing else. LinkedIn Jobs stays prohibited.
 
 ## Amendment 2026-09-11 (Daksh Jain): Hunter.io contact finder
 

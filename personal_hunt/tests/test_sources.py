@@ -14,6 +14,8 @@ from fetch_sources import (
     _workable,
     _wwr,
     _yc,
+    fetch_harvested_boards,
+    harvest_ats_boards,
 )
 
 
@@ -158,3 +160,113 @@ def test_official_ats_contract_fixtures(vendor, adapter, url, expected_title) ->
 def test_ats_adapter_rejects_missing_guessed_or_non_https_urls(url) -> None:
     with pytest.raises(ValueError, match="explicit reviewed"):
         _verified_ats_url({"adapter": "lever_ats", "url": url})
+
+
+HARVEST_HTML = """
+<html><body>
+<a href="https://boards.greenhouse.io/celonis/jobs/7817337003">Senior Engineer</a>
+<a href="https://boards.greenhouse.io/celonis/jobs/7991442003">Engineer II</a>
+<a href="https://jobs.ashbyhq.com/deliveroo/0ae399e2-1">Ops Associate</a>
+<a href="https://acme.lever.co/abc-123">Growth Intern</a>
+<a href="https://apply.workable.com/acme/j/xyz">Skipped vendor</a>
+<a href="https://example.com/jobs">Not a board</a>
+<a href="/relative/path">Relative</a>
+</body></html>
+"""
+
+
+def test_harvest_converts_only_known_vendor_links() -> None:
+    boards = harvest_ats_boards(HARVEST_HTML, 8)
+    by_id = {item["id"]: item for item in boards}
+    assert set(by_id) == {
+        "ats_harvested_greenhouse_celonis",
+        "ats_harvested_ashby_deliveroo",
+        "ats_harvested_lever_acme",
+    }
+    assert by_id["ats_harvested_greenhouse_celonis"]["url"] == (
+        "https://boards-api.greenhouse.io/v1/boards/celonis/jobs"
+    )
+    assert by_id["ats_harvested_ashby_deliveroo"]["url"] == (
+        "https://api.ashbyhq.com/posting-api/job-board/deliveroo"
+    )
+    assert by_id["ats_harvested_lever_acme"]["url"] == (
+        "https://api.lever.co/v0/postings/acme?mode=json"
+    )
+    assert all(item["adapter"].endswith("_ats") for item in boards)
+    assert by_id["ats_harvested_greenhouse_celonis"]["company"] == "Celonis"
+
+
+def test_harvest_dedupes_and_caps_boards() -> None:
+    html = HARVEST_HTML + '<a href="https://boards.greenhouse.io/zeta/j/1">Z</a>'
+    boards = harvest_ats_boards(html, 2)
+    assert len(boards) == 2
+    assert len({item["id"] for item in boards}) == 2
+
+
+def test_harvest_rejects_malformed_slugs() -> None:
+    html = '<a href="https://boards.greenhouse.io//jobs/1">Empty</a>'
+    assert harvest_ats_boards(html, 8) == []
+
+
+class _HarvestResponse:
+    status_code = 200
+
+    def __init__(self, text="", payload=None):
+        self.text = text
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _HarvestSession:
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    def get(self, url, timeout=0):
+        self.calls.append(url)
+        if url not in self.routes:
+            raise RuntimeError("unexpected " + url)
+        return self.routes[url]
+
+
+def test_fetch_harvested_boards_flows_records_and_health() -> None:
+    greenhouse_payload = json.loads(
+        (FIXTURES / "ats-responses.json").read_text(encoding="utf-8")
+    )["greenhouse"]
+    session = _HarvestSession(
+        {
+            "https://jobs.accel.com/jobs": _HarvestResponse(text=HARVEST_HTML),
+            "https://boards-api.greenhouse.io/v1/boards/celonis/jobs": _HarvestResponse(
+                payload=greenhouse_payload
+            ),
+            "https://api.ashbyhq.com/posting-api/job-board/deliveroo": _HarvestResponse(
+                payload={"jobs": []}
+            ),
+            "https://api.lever.co/v0/postings/acme?mode=json": _HarvestResponse(payload=[]),
+        }
+    )
+    records, health = fetch_harvested_boards(
+        session,
+        {"enabled": True, "pages": ["https://jobs.accel.com/jobs"], "max_boards": 8},
+        25,
+        0,
+    )
+    by_source = {item["source"] for item in records}
+    assert "ats_harvested_greenhouse_celonis" in by_source
+    assert len(records) == 1
+    assert records[0]["title"] == "Strategy Intern"
+    statuses = {item["source_id"]: item["status"] for item in health}
+    assert statuses["ats_harvested_greenhouse_celonis"] == "ok"
+    assert statuses["ats_harvested_ashby_deliveroo"] == "zero_results"
+
+
+def test_fetch_harvested_boards_respects_disabled_flag() -> None:
+    session = _HarvestSession({})
+    records, health = fetch_harvested_boards(session, {"enabled": False}, 25, 0)
+    assert records == [] and health == []
+    assert session.calls == []

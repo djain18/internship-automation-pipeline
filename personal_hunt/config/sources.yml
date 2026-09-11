@@ -9,6 +9,15 @@ apify:
   # shared across all rotation keys: $25 covers ~30 daily $0.70 runs.
   max_run_charge_usd: 0.70
 
+# Vendor ATS boards discovered on aggregator pages (jobs.accel.com embeds
+# Greenhouse/Ashby links). Slugs come only from discovered links, never from
+# company names. Replaces the retired Wellfound page below.
+ats_harvest:
+  enabled: true
+  pages:
+    - "https://jobs.accel.com/jobs"
+  max_boards: 8
+
 funding_sources:
   - id: inc42_buzz_rss
     name: Inc42 Buzz
@@ -69,7 +78,10 @@ sources:
     name: Wellfound Bengaluru
     kind: public_html
     url: "https://wellfound.com/location/bangalore"
-    enabled: true
+    # Retired 2026-09-11: the public page serves full-time listings only
+    # (202 records, 0 eligible, structural). Re-enable only if Wellfound
+    # ships a public internship listing contract.
+    enabled: false
     location_class: bengaluru
     adapter: wellfound
     access_policy: anonymous_public_page_no_proxy
