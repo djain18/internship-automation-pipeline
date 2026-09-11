@@ -200,6 +200,31 @@ def _spotted_section(records: list[Record]) -> str:
     return "\n".join(lines)
 
 
+def _glance_section(records: list[Record]) -> str:
+    lines = ["## Worth a glance (unverified, machine cannot qualify these)", ""]
+    if not records:
+        lines.extend(
+            [
+                "No FO-shaped unverified posts today.",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+    for index, item in enumerate(records, 1):
+        lines.extend(
+            [
+                f"### {index}. {item.get('source_url')}",
+                "",
+                f"- Says: {item.get('excerpt')}",
+                "- Human action: 10-second look. If it names a real Bengaluru "
+                "internship with an employer, apply directly or drop the company "
+                "in the watchlist; otherwise ignore",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _send_queue_section(run: Record) -> str:
     queue = run.get("send_queue", []) or []
     stale = run.get("stale_queue", []) or []
@@ -287,6 +312,7 @@ def render_digest(run: Record) -> str:
             "",
             _verification_section(run.get("needs_verification", [])),
             _spotted_section(run.get("spotted_leads", [])),
+            _glance_section(run.get("glance_queue", [])),
             _send_queue_section(run),
             _weekly_target_section(run.get("weekly_targets", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),

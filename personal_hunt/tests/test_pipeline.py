@@ -544,3 +544,77 @@ def test_adaptive_mode_still_skips_topup_above_minimum(monkeypatch) -> None:
 
     topup(raw, health, date(2026, 9, 11), config, {}, True)
     assert raw == [] and health == []
+
+
+def _glance_post(id, description, eligible=False, source="linkedin_posts_apify"):
+    return {
+        "id": id,
+        "source": source,
+        "eligible": eligible,
+        "title": "",
+        "description": description,
+        "source_url": "https://linkedin.com/posts/" + id,
+        "apply_url": "https://linkedin.com/posts/" + id,
+    }
+
+
+def test_glance_queue_keeps_only_fo_shaped_bengaluru_posts() -> None:
+    from pipeline import select_glance_queue
+
+    scored = [
+        _glance_post("good", "Hiring Sales and Founder's Office Interns in Bengaluru, apply inside"),
+        _glance_post("no-city", "Hiring Founder's Office Interns, remote worldwide, apply now"),
+        _glance_post("no-fo", "Hiring Social Media Interns in Bengaluru, work from home"),
+        _glance_post("senior", "Hiring Founder's Office Interns in Bengaluru with 0-3 years experience"),
+        _glance_post("eligible", "Hiring Founder's Office Interns in Bengaluru", eligible=True),
+        _glance_post("other-src", "Hiring Founder's Office Interns in Bengaluru", source="ftb_internships"),
+    ]
+    queue = select_glance_queue(scored, 5)
+    assert [item["id"] for item in queue] == ["good"]
+    assert queue[0]["excerpt"]
+    assert queue[0]["source_url"].endswith("/good")
+
+
+def test_glance_queue_is_capped() -> None:
+    from pipeline import select_glance_queue
+
+    scored = [
+        _glance_post(f"p{i}", "Hiring Founder's Office Interns in Bengaluru, apply now")
+        for i in range(8)
+    ]
+    assert len(select_glance_queue(scored, 5)) == 5
+
+
+def test_digest_renders_glance_queue() -> None:
+    from digest import render_digest
+
+    run = {
+        "run_id": "run_g",
+        "run_date": "2026-09-11",
+        "status": "complete",
+        "daily_target": 10,
+        "daily_min_target": 5,
+        "digest_primary": [],
+        "digest_remote_fallback": [],
+        "primary": [],
+        "remote_fallback": [],
+        "needs_verification": [],
+        "spotted_leads": [],
+        "glance_queue": [
+            {"id": "g1", "excerpt": "Hiring Founder's Office Interns", "source_url": "https://x.example/1"}
+        ],
+        "weekly_targets": [],
+        "funding_primary": [],
+        "funding_extended": [],
+        "source_health": [],
+        "llm_usage": {},
+        "cache_statistics": {},
+        "source_yield": [],
+        "send_queue": [],
+        "stale_queue": [],
+        "send_streak_days": 0,
+        "daily_send_quota": 3,
+    }
+    body = render_digest(run)
+    assert "Worth a glance" in body
+    assert "Hiring Founder's Office Interns" in body
