@@ -140,7 +140,7 @@ sources:
     adaptive_enabled: true
     adapter: apify_linkedin_posts
     actor_id: harvestapi/linkedin-post-search
-    max_items: 80
+    max_items: 150
     source_priority: 1
     access_policy: approved_public_posts_low_confidence
     input:
@@ -151,7 +151,31 @@ sources:
         - "growth operations intern Bengaluru"
         - "chief of staff intern Bengaluru"
         - "founder office intern Bangalore"
-      maxPosts: 20
+        - "chief of staff intern Bangalore"
+        - "startup intern Bengaluru hiring"
+        - "founder's office intern Bangalore"
+        - "founder associate intern Bengaluru"
+        - "generalist intern Bangalore startup"
+        - "growth operations intern Bangalore"
+        - "chief of staff intern Bengaluru startup"
+        - "operations intern Bengaluru founder"
+        - "founder's office associate Bengaluru"
+        - "ceo office intern Bengaluru"
+        - "chief of staff associate Bengaluru"
+        - "business operations intern Bengaluru"
+        - "strategy operations intern Bengaluru"
+        - "founder's office fellow Bengaluru"
+        - "chief of staff fellow Bangalore"
+        - "generalist associate Bengaluru startup"
+        - "growth intern Bengaluru founder"
+        - "operations associate intern Bengaluru"
+        - "business development intern Bengaluru startup"
+        - "strategy intern Bengaluru founder"
+        - "product operations intern Bengaluru"
+        - "gtm intern Bengaluru startup"
+      # Volume knob: actuals ran <$0.12 against the $0.70 run cap, so the
+      # cap (not this number) is the binding constraint. 2026-09-11.
+      maxPosts: 150
       postedLimit: week
       sortBy: date
       profileScraperMode: short
