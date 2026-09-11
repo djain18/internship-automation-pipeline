@@ -97,7 +97,9 @@ def extract_linkedin_hiring_fields(
             "title, and location. Leave fields empty when the post does not prove them."
         ),
         "records": [
-            {"id": item["id"], "text": str(item.get("description", ""))[:6000]}
+            # 3000 chars: the 2026-09-11 live run truncated a 20x6000 batch
+            # mid-JSON and failed closed. Hiring facts sit in the first lines.
+            {"id": item["id"], "text": str(item.get("description", ""))[:3000]}
             for item in candidates
         ],
     }
