@@ -88,8 +88,11 @@ def _run(*arguments: str) -> dict[str, object]:
     environment["AWS_REGION"] = "ap-south-1"
     environment["BEDROCK_RESEARCH_MODEL_ID"] = "moonshotai.kimi-k2.5"
     result = subprocess.run(
-        command, check=True, capture_output=True, text=True, env=environment
+        command, capture_output=True, text=True, env=environment
     )
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip()[-1500:]
+        raise RuntimeError(f"pipeline {' '.join(arguments)} failed: {tail}")
     return json.loads(result.stdout)
 
 
