@@ -441,6 +441,129 @@ def _fetch_ats(session: requests.Session, source: dict[str, Any], timeout: int) 
     return parser(response.json(), source)
 
 
+# Vendor board links embedded in aggregator pages convert to the vendors' own
+# public board APIs, which the adapters above already speak. Slugs come only
+# from discovered links; nothing is derived from company names or guessed.
+def _harvested_ats_source(vendor: str, slug: str) -> Record | None:
+    slug = clean_text(slug).strip("/")
+    if not slug or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", slug):
+        return None
+    urls = {
+        "greenhouse": f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
+        "ashby": f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
+        "lever": f"https://api.lever.co/v0/postings/{slug}?mode=json",
+    }
+    url = urls.get(vendor)
+    if not url:
+        return None
+    # The board slug is the employer's own identifier on the vendor platform
+    # (e.g. celonis runs boards.greenhouse.io/celonis), so it doubles as the
+    # provisional company name. Traceable via the source id, never guessed
+    # from a person name or free text.
+    company = slug.replace("-", " ").replace("_", " ").title()
+    return {
+        "id": f"ats_harvested_{vendor}_{slug}",
+        "name": f"Harvested {vendor} board {slug}",
+        "company": company,
+        "company_url": "",
+        "url": url,
+        "enabled": True,
+        "adapter": f"{vendor}_ats",
+        "access_policy": "harvested_public_ats_api",
+        "source_priority": 2,
+    }
+
+
+ATS_LINK_PATTERNS = (
+    ("greenhouse", re.compile(r"https://boards\.greenhouse\.io/([A-Za-z0-9][A-Za-z0-9_.-]*)", re.I)),
+    ("ashby", re.compile(r"https://jobs\.ashbyhq\.com/([A-Za-z0-9][A-Za-z0-9_.-]*)", re.I)),
+    ("lever", re.compile(r"https://([A-Za-z0-9][A-Za-z0-9_-]*)\.lever\.co/", re.I)),
+)
+
+
+def harvest_ats_boards(text: str, max_boards: int) -> list[Record]:
+    """Collect vendor board sources from links embedded in an aggregator page."""
+    found: dict[str, Record] = {}
+    for vendor, pattern in ATS_LINK_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            source = _harvested_ats_source(vendor, match.group(1))
+            if source is not None:
+                found.setdefault(source["id"], source)
+            if len(found) >= max(1, max_boards):
+                return sorted(found.values(), key=lambda item: item["id"])
+    return sorted(found.values(), key=lambda item: item["id"])
+
+
+def fetch_harvested_boards(
+    session: requests.Session, harvest_cfg: dict[str, Any], timeout: int, interval: float
+) -> tuple[list[Record], list[Record]]:
+    """Fetch aggregator pages, convert embedded vendor links, fetch each board."""
+    records: list[Record] = []
+    health: list[Record] = []
+    if not harvest_cfg.get("enabled", False):
+        return records, health
+    max_boards = int(harvest_cfg.get("max_boards", 8))
+    for page_url in harvest_cfg.get("pages", []):
+        page_url = clean_text(page_url)
+        if not page_url:
+            continue
+        started = time.perf_counter()
+        try:
+            response = _request(session, page_url, timeout)
+            boards = harvest_ats_boards(response.text, max_boards)
+            if not boards:
+                health.append(
+                    SourceHealth(
+                        source_id=f"ats_harvest_page:{urlsplit(page_url).netloc}",
+                        status="zero_results",
+                        record_count=0,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        human_action="Aggregator page embeds no vendor board links.",
+                    ).to_dict()
+                )
+                continue
+            for board in boards:
+                board_started = time.perf_counter()
+                try:
+                    board_records = _fetch_ats(session, board, timeout)
+                    records.extend(board_records)
+                    health.append(
+                        SourceHealth(
+                            source_id=board["id"],
+                            status="ok" if board_records else "zero_results",
+                            record_count=len(board_records),
+                            latency_ms=int((time.perf_counter() - board_started) * 1000),
+                        ).to_dict()
+                    )
+                except Exception as exc:
+                    health.append(
+                        SourceHealth(
+                            source_id=board["id"],
+                            status="failed",
+                            record_count=0,
+                            latency_ms=int((time.perf_counter() - board_started) * 1000),
+                            error_type=type(exc).__name__,
+                            error_message=str(exc)[:300],
+                            human_action="Drop the board if its public API contract changed.",
+                        ).to_dict()
+                    )
+                time.sleep(interval)
+        except Exception as exc:
+            health.append(
+                SourceHealth(
+                    source_id=f"ats_harvest_page:{urlsplit(page_url).netloc}",
+                    status="failed",
+                    record_count=0,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc)[:300],
+                    human_action="Review public access; do not bypass.",
+                ).to_dict()
+            )
+        time.sleep(interval)
+    return records, health
+
+
 def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
     session = requests.Session()
     session.headers["User-Agent"] = config.get("user_agent", "InternshipResearch/0.1")
@@ -512,6 +635,14 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
                 ).to_dict()
             )
         time.sleep(float(config.get("min_interval_seconds", 2)))
+    harvested, harvest_health = fetch_harvested_boards(
+        session,
+        config.get("ats_harvest", {}),
+        timeout,
+        float(config.get("min_interval_seconds", 2)),
+    )
+    all_records.extend(harvested)
+    health.extend(harvest_health)
     return all_records, health
 
 
