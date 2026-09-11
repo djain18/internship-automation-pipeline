@@ -219,7 +219,9 @@ def score_shortlist(
             "instruction": (
                 "Score these already deterministically eligible internship leads for "
                 "Daksh Jain's Founder’s Office/generalist target. Reward real founder "
-                "exposure, cross-functional ownership, business, operations, growth, "
+                "exposure, right-hand-to-founder/CEO scope, 0-to-1 end-to-end "
+                "ownership across GTM, fundraising, operations, or product, "
+                "business, operations, growth, "
                 "strategy breadth, Bengaluru or supported India-remote fit, and evidence "
                 "quality. Mark spam when promotional, scraped noise, a course/training "
                 "pitch, deceptive, duplicated content, not a real opening, or missing "
@@ -297,7 +299,9 @@ def score_shortlist(
 ROLE_JUDGEMENT_INSTRUCTION = (
     "Daksh Jain wants a Founder's Office or generalist internship: broad, "
     "cross-functional ownership across business, operations, growth or strategy, "
-    "with real founder or leadership exposure. Each record below already passed "
+    "with real founder or leadership exposure: right-hand to the founder/CEO, "
+    "0-to-1 end-to-end execution, GTM, fundraising, or ops with no fixed "
+    "single-track scope. Each record below already passed "
     "every other filter and failed only a keyword test for cross-functional "
     "scope. Read the description, not the title. Answer cross_functional true "
     "ONLY when the described work genuinely spans more than one business "
