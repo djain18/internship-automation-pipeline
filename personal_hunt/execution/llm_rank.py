@@ -9,7 +9,9 @@ from research import cached_bedrock_json
 
 
 MAX_REASON_CHARS = 180
-LINKEDIN_EXTRACTION_LIMIT = 20
+# 10 records fit the 1800-token output budget; 20 truncated mid-JSON twice
+# on live runs and failed closed.
+LINKEDIN_EXTRACTION_LIMIT = 10
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
