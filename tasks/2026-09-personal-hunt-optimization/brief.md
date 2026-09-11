@@ -54,6 +54,17 @@ without weakening freshness, provenance, or manual-send controls.
 6. Verify fixtures, both Python suites, frontend tests/build, and safe dry runs.
 7. Add Hunter.io contact finder (free tier) behind monthly caps and cache.
 8. Expand supply where it is policy-clean; retire structural zeros with cause.
+9. Track Daksh's own spotted LinkedIn finds as human-provenance leads.
+
+## Amendment 2026-09-11 (Daksh Jain): volume and Wellfound
+
+- Daily target reaffirmed: 5-10 approved internships. No padding rule holds.
+- Wellfound re-enabled per Daksh's override despite measured zero yield; its
+  records die at hard exclusions with no LLM cost.
+- Spotted leads: URLs Daksh drops in personal_hunt/input/linkedin-leads.txt
+  enter as human-spotted unverified records, deduplicated across runs and
+  listed in the digest. Never eligible on a bare URL; the pipeline may not
+  open LinkedIn links.
 
 ## Amendment 2026-09-11 (Daksh Jain): supply diagnosis
 

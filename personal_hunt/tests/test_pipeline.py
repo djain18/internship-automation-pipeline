@@ -434,6 +434,31 @@ def test_digest_renders_send_queue() -> None:
     assert "Send streak: 0 days" in body
 
 
+def test_spotted_leads_are_tracked_but_never_eligible(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "false")
+    config = load_all()
+    raw = [
+        {
+            "source": "human_spotted",
+            "source_url": "https://www.linkedin.com/posts/example",
+            "apply_url": "https://www.linkedin.com/posts/example",
+            "company": "",
+            "title": "",
+            "description": "",
+            "location": "",
+            "posted_at": "",
+            "source_confidence": "low",
+            "verification_status": "human_spotted_unverified",
+        }
+    ]
+    run = run_pipeline(raw, [], date(2026, 9, 11), config, tmp_path / "run")
+    assert [item["source_url"] for item in run["spotted_leads"]] == [
+        "https://www.linkedin.com/posts/example"
+    ]
+    assert run["eligible_count"] == 0
+    assert run["digest_primary"] == [] and run["digest_remote_fallback"] == []
+
+
 def test_every_run_mode_fires_topup_above_minimum(monkeypatch) -> None:
     import apify_sources
 

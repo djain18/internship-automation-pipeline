@@ -18,9 +18,9 @@ run and sends only previously unemailed Kimi-approved matches.
 ## Processing contract
 
 1. Fetch the Rise live Sheet without seed fallback, then the configured FTB,
-   YC, WWR, harvested ATS boards, portfolio, human-import, and funding
-   sources. The Wellfound location page is retired: it serves full-time
-   listings only (202 records, zero eligible).
+   YC, Wellfound, WWR, harvested ATS boards, portfolio, human-import,
+   Daksh-spotted, and funding sources. Wellfound stays enabled per Daksh's
+   override despite zero yield so far; its records die before any LLM cost.
 2. Normalize with stable first discovery, ten-day internship freshness, and
    dated 15/30-day funding windows.
 3. Apply deterministic hard exclusions, deduplication, scoring, and balanced

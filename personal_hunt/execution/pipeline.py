@@ -40,7 +40,14 @@ from contacts import choose_contact
 from dedupe import deduplicate
 from digest import render_digest, render_html_digest, send_self_digest, write_digest
 from discover_companies import fetch_registries
-from fetch_sources import fetch_live, fixture_health, load_json_records
+from fetch_sources import (
+    SPOTTED_FILE,
+    SPOTTED_SOURCE_ID,
+    fetch_live,
+    fixture_health,
+    load_json_records,
+    load_spotted_leads,
+)
 from funding import fetch_funding_live, select_funding_events
 from hunter import find_company_contact
 from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
@@ -602,6 +609,7 @@ def run_pipeline(
         "duplicate_count": len(duplicates),
         "eligible_count": sum(bool(item.get("eligible")) for item in scored),
         "needs_verification": select_needs_verification(scored, config["scoring"]),
+        "spotted_leads": [item for item in scored if item.get("source") == SPOTTED_SOURCE_ID],
         "weekly_targets": weekly_targets,
         "primary": primary,
         "remote_fallback": remote,
@@ -795,6 +803,19 @@ def main() -> int:
             preview_first_seen,
             allow_paid_sources=args.allow_paid_sources,
         )
+        spotted_path = AUTOMATION_ROOT / "input" / SPOTTED_FILE
+        if spotted_path.is_file():
+            spotted = load_spotted_leads(spotted_path)
+            raw.extend(spotted)
+            health.append(
+                {
+                    "source_id": SPOTTED_SOURCE_ID,
+                    "status": "ok" if spotted else "zero_results",
+                    "record_count": len(spotted),
+                    "checked_at": utc_timestamp(),
+                    "human_action": "Open each link yourself; the pipeline may not open LinkedIn.",
+                }
+            )
         raw, extraction = extract_linkedin_hiring_fields(raw, cache=llm_cache)
         if extraction.get("status") != "not_needed":
             health.append(
