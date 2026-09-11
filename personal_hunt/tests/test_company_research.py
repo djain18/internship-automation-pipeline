@@ -218,3 +218,39 @@ def test_funding_research_does_not_call_llm_without_explicit_promotion(
     )
     assert result["problem_status"] == "insufficient_evidence"
     assert "llm_status" not in result
+
+
+OFFICE_PAGE = (
+    "<html><body><p>We build payroll software for small Indian teams.</p>"
+    "<p>Our Bengaluru office hosts product, sales, and support under one roof.</p>"
+    "</body></html>"
+)
+
+
+def test_office_evidence_requires_city_and_office_in_one_sentence() -> None:
+    from company_site import find_office_evidence
+
+    found = find_office_evidence(OFFICE_PAGE, "https://acme.com/about")
+    assert found is not None
+    assert "Bengaluru office" in found["observation"]
+    assert found["url"] == "https://acme.com/about"
+    assert found["basis"] == "company_site_office"
+    assert find_office_evidence(
+        "<html><body><p>We serve customers in Bengaluru and Mumbai.</p></body></html>",
+        "https://acme.com",
+    ) is None
+    assert find_office_evidence(
+        "<html><body><p>Our Berlin office hosts product and sales teams.</p></body></html>",
+        "https://acme.com",
+    ) is None
+
+
+def test_office_fetch_respects_robots_and_never_raises(monkeypatch) -> None:
+    from company_site import fetch_office_evidence
+
+    _fake_session(monkeypatch, "User-agent: *\nAllow: /", page=OFFICE_PAGE)
+    found = fetch_office_evidence("https://acme.com")
+    assert found is not None and "Bengaluru" in found["observation"]
+    _fake_session(monkeypatch, "User-agent: *\nDisallow: /")
+    assert fetch_office_evidence("https://acme.com") is None
+    assert fetch_office_evidence("not a url") is None

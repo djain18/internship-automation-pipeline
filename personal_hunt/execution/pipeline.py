@@ -36,6 +36,7 @@ if os.getenv("ENABLE_BEDROCK", "").casefold() in {"1", "true", "yes"}:
 
 from artifacts import create_artifacts
 from config import AUTOMATION_ROOT, load_all
+from company_site import fetch_office_evidence
 from contacts import choose_contact
 from dedupe import deduplicate
 from digest import render_digest, render_html_digest, send_self_digest, write_digest
@@ -301,12 +302,22 @@ def select_weekly_targets(
     candidates: list[Record] = []
     current_days = int(scoring.get("weekly_target_signal_days", 90))
     recent_days = int(scoring.get("weekly_target_recent_signal_days", 30))
+    office_budget = int(scoring.get("weekly_office_check_max", 12))
+    office_checks = 0
     for company in companies:
         location_text = clean_text(
             company.get("location") or company.get("bengaluru_presence")
         ).casefold()
+        office_evidence: Record | None = None
         if "bengaluru" not in location_text and "bangalore" not in location_text:
-            continue
+            # HQ may be anywhere; a verified Bengaluru office also qualifies.
+            # Bounded: at most office_budget live site checks per run.
+            if office_checks >= office_budget or not clean_text(company.get("company_url")):
+                continue
+            office_checks += 1
+            office_evidence = fetch_office_evidence(clean_text(company.get("company_url")))
+            if office_evidence is None:
+                continue
         count = company.get("employee_count")
         if isinstance(count, int) and count > int(scoring.get("max_employees", 400)):
             continue
@@ -338,6 +349,8 @@ def select_weekly_targets(
                 "target_status": "manual_review_required",
             }
         )
+        if office_evidence is not None:
+            item["office_evidence"] = office_evidence
         candidates.append(item)
     candidates.sort(
         key=lambda item: max(clean_text(signal.get("date")) for signal in item["signals"]),

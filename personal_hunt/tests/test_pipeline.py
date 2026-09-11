@@ -352,6 +352,51 @@ def test_company_url_requires_one_exact_reviewed_company_match() -> None:
     assert ambiguous.get("company_url", "") == ""
 
 
+def _target_company(**overrides):
+    company = {
+        "id": "company-9",
+        "company": "Faraway AI",
+        "company_url": "https://faraway.example",
+        "lane": "ai",
+        "employee_count": 50,
+        "signals": [
+            {"date": "2026-09-01", "url": "https://faraway.example/launch", "observation": "Launch"},
+            {"date": "2026-08-01", "url": "https://faraway.example/hiring", "observation": "Hiring"},
+        ],
+    }
+    company.update(overrides)
+    return company
+
+
+def test_weekly_lane_accepts_verified_bengaluru_office_for_remote_hq(monkeypatch) -> None:
+    import pipeline as pipeline_module
+
+    evidence = {"observation": "Our Bengaluru office hosts...", "url": "https://faraway.example/about"}
+    monkeypatch.setattr(pipeline_module, "fetch_office_evidence", lambda _url: evidence)
+    scoring = load_all()["scoring"]
+    targets = select_weekly_targets(
+        [_target_company(location="Remote, worldwide")], [], date(2026, 9, 14), scoring
+    )
+    assert len(targets) == 1
+    assert targets[0]["office_evidence"] == evidence
+
+
+def test_weekly_lane_skips_unverifiable_office_and_respects_budget(monkeypatch) -> None:
+    import pipeline as pipeline_module
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "fetch_office_evidence",
+        lambda _url: (calls.append(1), None)[1],
+    )
+    scoring = dict(load_all()["scoring"])
+    scoring["weekly_office_check_max"] = 1
+    companies = [_target_company(id="c1"), _target_company(id="c2", company_url="")]
+    targets = select_weekly_targets(companies, [], date(2026, 9, 14), scoring)
+    assert targets == []
+    assert len(calls) == 1
+
+
 def _queue_run():
     def item(id, score):
         return {
