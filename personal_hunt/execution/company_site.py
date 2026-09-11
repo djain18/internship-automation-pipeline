@@ -180,3 +180,77 @@ def primary_responsibility(description: str) -> str:
     # The longest qualifying sentence is the one that actually describes the
     # work; the first is often a header that happens to contain a verb.
     return max(candidates, key=len)
+
+OFFICE_PATHS = ("", "/about", "/about-us", "/contact", "/contact-us", "/careers")
+
+OFFICE_TERMS = (
+    "office", "offices", "headquarter", "headquarters", "located",
+    "based", "address", "work from", "onsite", "hybrid", "workplace",
+)
+
+CITY_TERMS = ("bengaluru", "bangalore")
+
+
+def find_office_evidence(html_text: str, page_url: str) -> Record | None:
+    """A quoted sentence placing an office in Bengaluru, or None.
+
+    Both a city term and an office term must share one sentence, so "we serve
+    customers in Bengaluru" does not qualify. Quote only, never inference.
+    """
+
+    for sentence in _sentences(str(html_text or "")):
+        lowered = sentence.casefold()
+        if any(city in lowered for city in CITY_TERMS) and any(
+            term in lowered for term in OFFICE_TERMS
+        ):
+            return {
+                "observation": sentence[:240],
+                "url": canonical_url(page_url),
+                "access_date": _utc_date(),
+                "confidence": "medium",
+                "basis": "company_site_office",
+            }
+    return None
+
+
+def fetch_office_evidence(
+    company_url: str,
+    user_agent: str = "InternshipResearch/0.1",
+    timeout: int = 10,
+    max_pages: int = 3,
+) -> Record | None:
+    """First Bengaluru-office sentence on the company site, or None.
+
+    Robots-respecting and never raising: a dead site is just no evidence.
+    """
+
+    base = canonical_url(company_url)
+    if not base.startswith("http"):
+        return None
+    origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
+    session = requests.Session()
+    session.headers["User-Agent"] = user_agent
+    robots = _robots(session, origin, timeout)
+    fetched = 0
+    try:
+        for path in OFFICE_PATHS:
+            if fetched >= max_pages:
+                break
+            url = urljoin(origin + "/", path.lstrip("/"))
+            if not robots.can_fetch(user_agent, url):
+                continue
+            try:
+                response = session.get(url, timeout=timeout)
+            except requests.RequestException:
+                continue
+            if response.status_code >= 400 or "html" not in response.headers.get(
+                "Content-Type", ""
+            ):
+                continue
+            fetched += 1
+            found = find_office_evidence(response.text, response.url)
+            if found:
+                return found
+    except Exception:
+        return None
+    return None

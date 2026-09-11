@@ -31,6 +31,9 @@ hunter_limit_per_domain: 10
 hunter_monthly_max_searches: 25
 hunter_monthly_max_verifications: 0
 weekly_target_max_items: 3
+# Live office checks for weekly-lane companies without Bengaluru location
+# text. Bounded fetches per Monday run; HQ may be anywhere.
+weekly_office_check_max: 12
 weekly_target_signal_days: 90
 weekly_target_recent_signal_days: 30
 funding_primary_age_days: 15

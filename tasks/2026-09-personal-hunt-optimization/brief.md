@@ -66,6 +66,16 @@ without weakening freshness, provenance, or manual-send controls.
   listed in the digest. Never eligible on a bare URL; the pipeline may not
   open LinkedIn links.
 
+## Amendment 2026-09-11 (Daksh Jain): Bengaluru offices, Internshala verdict
+
+- HQ city is not a filter and never was (regression-tested). Posting location
+  still decides eligibility; a verified Bengaluru office additionally admits
+  companies to the weekly founder lane (bounded live site checks, quoted
+  sentence evidence, robots respected).
+- Internshala stays excluded: robots.txt disallows search, detail, and API
+  paths, so no compliant adapter exists. Daksh browsing it himself and
+  pasting URLs into spotted leads is the approved path instead.
+
 ## Amendment 2026-09-11 (Daksh Jain): supply diagnosis
 
 - Measured yield: YC Bengaluru carries, FTB contributes, Rise sheet is mostly

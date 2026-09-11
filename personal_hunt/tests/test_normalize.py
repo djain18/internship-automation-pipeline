@@ -167,6 +167,18 @@ def test_tier_one_role_family_is_not_matched_from_the_description() -> None:
     assert "role_not_cross_functional" in record["rejection_reasons"]
 
 
+def test_anywhere_headquarters_passes_with_bangalore_posting() -> None:
+    """HQ city is never a filter; only the internship location matters."""
+    record = _record(
+        company="GlobalCorp",
+        title="Founder's Office Intern",
+        description="Work with founders across growth and operations.",
+        location="Bangalore onsite",
+    )
+    assert "location_out_of_scope" not in record["rejection_reasons"]
+    assert record["eligible"], record["rejection_reasons"]
+
+
 def test_internship_signal_may_come_from_the_description() -> None:
     record = _record(title="Growth Associate", description="A 6 month internship.")
     assert "not_internship_or_fellowship" not in record["rejection_reasons"]
