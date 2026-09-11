@@ -80,3 +80,14 @@ def test_usage_summary_aggregates_calls_tokens_cache_and_cost() -> None:
         "elapsed_ms": 20,
         "cost_usd": 0.01,
     }
+
+
+def test_hunter_spend_and_domain_cache_are_month_scoped(tmp_path: Path) -> None:
+    state = LocalState(tmp_path / "state.json")
+    assert state.hunter_month_use("2026-09") == {"searches": 0, "verifications": 0}
+    assert state.hunter_domain_cache("2026-09", "example.com") is None
+    state.record_hunter_use("2026-09", "searches")
+    state.cache_hunter_domain("2026-09", "Example.COM ", {"found": True, "email": "a@example.com"})
+    assert state.hunter_month_use("2026-09") == {"searches": 1, "verifications": 0}
+    assert state.hunter_domain_cache("2026-09", "example.com") == {"found": True, "email": "a@example.com"}
+    assert state.hunter_domain_cache("2026-10", "example.com") is None

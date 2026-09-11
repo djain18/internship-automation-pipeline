@@ -42,6 +42,7 @@ from digest import render_digest, render_html_digest, send_self_digest, write_di
 from discover_companies import fetch_registries
 from fetch_sources import fetch_live, fixture_health, load_json_records
 from funding import fetch_funding_live, select_funding_events
+from hunter import find_company_contact
 from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
 from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
 from normalize import normalize_many
@@ -78,12 +79,22 @@ def enrich_selected(
     output_root: Path,
     max_artifacts: int,
     llm_cache: dict[str, Any] | None = None,
+    hunter_ctx: dict[str, Any] | None = None,
 ) -> list[Record]:
     output = deepcopy(records)
     research_results = research_records(output, cache=llm_cache)
     for item, research in zip(output, research_results, strict=True):
         item["research"] = research
         item["selected_contact"] = choose_contact(item)
+        if hunter_ctx and not (item["selected_contact"] or {}).get("email"):
+            found = find_company_contact(
+                item,
+                hunter_ctx["scoring"],
+                hunter_ctx["state"],
+                hunter_ctx["month"],
+            )
+            if found and found.get("email"):
+                item["selected_contact"] = found
         item["resume"] = route_resume(item)
         item["content_hash"] = normalized_content_hash(
             {
@@ -474,6 +485,7 @@ def run_pipeline(
     role_judgements: dict[str, Any] | None = None,
     company_candidates: list[Record] | None = None,
     llm_cache: dict[str, Any] | None = None,
+    hunter_state: Any | None = None,
 ) -> Record:
     llm_cache = llm_cache if llm_cache is not None else dict(role_judgements or {})
     raw_records = attach_company_provenance(raw_records, company_candidates or [])
@@ -525,6 +537,15 @@ def run_pipeline(
         output_root,
         int(config["scoring"]["max_artifacts"]),
         llm_cache,
+        hunter_ctx=(
+            {
+                "scoring": config["scoring"],
+                "state": hunter_state,
+                "month": run_date.strftime("%Y-%m"),
+            }
+            if hunter_state is not None
+            else None
+        ),
     )
     enriched_by_id = {item["id"]: item for item in enriched}
     primary = [enriched_by_id.get(item["id"], item) for item in primary]
@@ -826,6 +847,8 @@ def main() -> int:
         role_judgements={} if args.no_state else state.role_judgements(),
         company_candidates=company_candidates,
         llm_cache=llm_cache,
+        # Hunter spends free-tier credits, so dry and stateless runs skip it.
+        hunter_state=None if args.no_state or args.dry_run else state,
     )
     run["company_candidates"] = company_candidates
     attach_send_loop(

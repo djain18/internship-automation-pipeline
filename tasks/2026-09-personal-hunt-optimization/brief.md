@@ -50,6 +50,21 @@ without weakening freshness, provenance, or manual-send controls.
 5. Add company provenance, weekly targets, outreach strategies, outcomes, and
    source/cost reporting.
 6. Verify fixtures, both Python suites, frontend tests/build, and safe dry runs.
+7. Add Hunter.io contact finder (free tier) behind monthly caps and cache.
+
+## Amendment 2026-09-11 (Daksh Jain): Hunter.io contact finder
+
+- Finder runs only when a record has no usable contact and a real company
+  domain; verifier stays OFF unless Daksh explicitly enables it.
+- Hunter results are found leads, never verified: confidence high requires a
+  deliverable verification plus score >= 90, and guessed/pattern emails are
+  never exposed. Generic and excluded mailboxes reuse the existing filters.
+- Monthly search/verification caps plus per-domain monthly cache bound the free
+  tier; quota is cross-checked against Hunter's free /account endpoint.
+- Key lives in `HUNTER_API_KEY` (local .env, Modal hunt secrets). No key means
+  the finder quietly skips; contacts stay manual.
+- Provider seam is ready for Apollo/Snov trials, which need Daksh's keys plus
+  a separate approval each. Not built now.
 
 ## Activation boundaries
 

@@ -161,3 +161,35 @@ class LocalState:
             "slot": slot,
         }
         self.save(state)
+
+    def hunter_month_use(self, month: str) -> dict[str, int]:
+        state = self.load()
+        bucket = state.get("hunter", {}).get(month, {})
+        return {
+            "searches": int(bucket.get("searches", 0) or 0),
+            "verifications": int(bucket.get("verifications", 0) or 0),
+        }
+
+    def record_hunter_use(self, month: str, kind: str) -> None:
+        state = self.load()
+        bucket = state.setdefault("hunter", {}).setdefault(month, {"searches": 0, "verifications": 0})
+        bucket[kind] = int(bucket.get(kind, 0) or 0) + 1
+        self.save(state)
+
+    def hunter_domain_cache(self, month: str, domain: str) -> dict | None:
+        state = self.load()
+        entry = state.get("hunter", {}).get(month, {}).get("domains", {}).get(
+            str(domain).casefold().strip()
+        )
+        if not isinstance(entry, dict):
+            return None
+        result = entry.get("result")
+        return dict(result) if isinstance(result, dict) else None
+
+    def cache_hunter_domain(self, month: str, domain: str, result: dict) -> None:
+        key = str(domain).casefold().strip()
+        state = self.load()
+        bucket = state.setdefault("hunter", {}).setdefault(month, {"searches": 0, "verifications": 0})
+        domains = bucket.setdefault("domains", {})
+        domains[key] = {"month": month, "result": result}
+        self.save(state)
