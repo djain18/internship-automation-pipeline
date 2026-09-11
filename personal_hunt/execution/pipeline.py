@@ -675,6 +675,12 @@ def _self_digest_enabled() -> bool:
     return os.getenv("ENABLE_SELF_DIGEST", "false").casefold() in {"1", "true", "yes"}
 
 
+# Both addresses land in Daksh's inbox (alias setup); either may receive digests.
+APPROVED_DIGEST_RECIPIENTS = frozenset(
+    {"dakshinjain187@gmail.com", "dakshjainn02@gmail.com"}
+)
+
+
 def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
     existing = state.digest_delivery(str(run["run_id"]))
     if existing.get("message_id"):
@@ -686,8 +692,8 @@ def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
     if os.getenv("BEDROCK_RESEARCH_MODEL_ID", "") != "moonshotai.kimi-k2.5":
         raise RuntimeError("Kimi K2.5 is not the pinned Bedrock research/scoring model")
     recipient = os.getenv("GMAIL_DIGEST_TO", "").strip().casefold()
-    if recipient != "dakshinjain187@gmail.com":
-        raise RuntimeError("Self-digest recipient is not the approved Daksh address")
+    if recipient not in APPROVED_DIGEST_RECIPIENTS:
+        raise RuntimeError("Self-digest recipient is not an approved Daksh address")
     sent_ids = state.sent_opportunity_ids()
     delivery_run = deepcopy(run)
     delivery_run["digest_primary"] = [

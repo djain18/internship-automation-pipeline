@@ -154,6 +154,12 @@ def test_self_digest_is_sent_once_per_live_run(monkeypatch, tmp_path: Path) -> N
     assert sent_subjects == ["1 new internship match - Rise"]
 
 
+def test_self_digest_accepts_either_daksh_alias_and_rejects_other() -> None:
+    assert "dakshinjain187@gmail.com" in pipeline.APPROVED_DIGEST_RECIPIENTS
+    assert "dakshjainn02@gmail.com" in pipeline.APPROVED_DIGEST_RECIPIENTS
+    assert "someone@example.com" not in pipeline.APPROVED_DIGEST_RECIPIENTS
+
+
 def test_latest_digest_pointer_survives_newer_fixture_and_integration_failure(
     tmp_path: Path,
 ) -> None:
