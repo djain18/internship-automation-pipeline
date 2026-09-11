@@ -33,6 +33,12 @@ without weakening freshness, provenance, or manual-send controls.
   eligible, so every-time spend is on unproven precision. Re-measure yield over
   the next scheduled runs before any further cap change.
 
+## Delivery proof 2026-09-11 (Daksh confirmed receipt)
+
+- 08:30 IST cron delivered 3 matches; Gmail message ID in the state ledger.
+- Manual `deliver` correctly skips when nothing new (no double-send).
+- Either Daksh alias accepted as recipient; sends From the configured address.
+
 ## Implementation slices
 
 1. Stabilize Rise ownership and record the externally initiated HarvestAPI run.
