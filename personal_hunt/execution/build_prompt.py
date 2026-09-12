@@ -125,7 +125,19 @@ def build_prototype_prompt(
                 "(5) screen-recordable acceptance criteria, (6) explicit warning not to invent facts. "
                 "Return ONLY a JSON object with: what_to_build (paragraph), stack_constraint (paragraph), "
                 "acceptance_criteria (list), scope_hours (number). "
-                "Do not invent company tech stack; mark assumptions as assumptions."
+                "Do not invent company tech stack; mark assumptions as assumptions.\n\n"
+                "Critical constraint: the prototype must NEVER be a clone, competitor, or "
+                "reimplementation of the company's own core commercial product or anything on "
+                "its pricing page -- a candidate showing up with a cut-rate copy of the thing "
+                "the company sells for money is not a pitch, it is an insult. Build something "
+                "ADJACENT that would plausibly help the company's own internal team do their "
+                "job better: an internal ops dashboard, a support/onboarding workflow tool, a "
+                "monitoring or triage aid, a process automation -- grounded in the stated "
+                "problem_hypothesis, which is itself already constrained to be an internal "
+                "operational problem, not a product complaint. If what_to_build would end up "
+                "re-describing the company's own product or pricing tiers, that is a sign the "
+                "hypothesis was not actually internal -- build something narrower and internal "
+                "instead, even a small one."
             ),
             "observed_problem": observed_problem[:1000],
         }

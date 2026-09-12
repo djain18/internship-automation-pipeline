@@ -283,7 +283,19 @@ def research_deep_problem(
                 "confidence (low/medium/high), "
                 "supported (true if multiple evidence items support the hypothesis). "
                 "If a signal quote is NOT an exact substring of any evidence text, drop it. "
-                "No invented facts. Return ONLY valid JSON."
+                "No invented facts. Return ONLY valid JSON.\n\n"
+                "Critical constraint: the hypothesis must be an INTERNAL operational problem "
+                "this company itself likely has -- team workflow friction, support/onboarding "
+                "load implied by hiring, internal tooling gaps, process bottlenecks -- never a "
+                "complaint about their own core commercial product, its pricing, or its "
+                "features. Marketing copy, a pricing page, or product-feature descriptions are "
+                "NOT evidence of an internal problem; a company describing what it sells is not "
+                "a company confessing a weakness in that product. If the only evidence is "
+                "marketing/pricing copy with no signal about how the company itself operates "
+                "(open roles, support/ops complaints, engineering blog posts about internal "
+                "pain, community posts about using their tools internally), set supported=false "
+                "and leave problem_hypothesis empty rather than inventing an internal-sounding "
+                "problem from external-facing copy."
             ),
         }
 
