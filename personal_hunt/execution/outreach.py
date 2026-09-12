@@ -190,13 +190,25 @@ def draft_problem_led_email(record: Record) -> Record:
     # required 80-110 word range regardless of how long the real quote is.
     signal_words = _words(clean_text(observed_signals[0].get("text", "")))
 
+    # 2026-09-13: say what the prototype actually does, not just that one
+    # exists -- the draft previously never mentioned the prototype's
+    # content. First ~10 words of what_to_build only (never the full
+    # LLM paragraph), so the fixed word budget below stays predictable
+    # instead of the 80-110 range depending on how verbose that call was.
+    what_to_build_words = _words(clean_text(prompt_gen.get("what_to_build") or ""))
+    what_to_build_phrase = " ".join(what_to_build_words[:10])
+    # An appositive works regardless of whether what_to_build's own first
+    # words happen to be a verb phrase or a noun phrase -- the LLM output
+    # isn't constrained to either shape.
+    prototype_clause = f" ({what_to_build_phrase})" if what_to_build_phrase else ""
+
     intro = f"Hi {contact_name}, I've been researching {company} and found a concrete operational gap worth flagging:"
     ask = (
-        "I put together a small working prototype instead of just describing the idea, "
-        "since a runnable demo says more than a pitch. I'm looking for a six-month onsite "
-        "generalist internship in Bengaluru starting November 2026, where I can pick up "
-        "real cross-functional work like this. Would it be useful to walk through the "
-        "prototype together sometime this week?"
+        f"I put together a small working prototype{prototype_clause} instead of just "
+        "describing the idea, since a runnable demo says more than a pitch. I'm looking "
+        "for a six-month onsite generalist internship in Bengaluru starting November "
+        "2026, where I can pick up real cross-functional work like this. Would it be "
+        "useful to walk through the prototype together sometime this week?"
     )
     fixed_word_count = len(_words(intro)) + len(_words(ask))
 

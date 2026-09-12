@@ -75,6 +75,11 @@ pipeline_secrets = [
     # (spec: fetch the Rise live Sheet as upstream source 1). Deliberately
     # scoped to this one value, not the full internship-secrets bundle.
     modal.Secret.from_name("rise-sheet-id"),
+    # 2026-09-13: switches on the already-credentialed firecrawl_research.py
+    # (FIRECRAWL_API_KEY + ENABLE_FIRECRAWL_RESEARCH already live in
+    # internship-hunt-secrets). A dedicated secret so this doesn't require
+    # rewriting the bundle above, whose current contents can't be read back.
+    modal.Secret.from_name("research-provider"),
 ]
 
 

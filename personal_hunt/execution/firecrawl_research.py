@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -15,6 +16,22 @@ GENERIC_COMPANY_TOKENS = {
     "limited", "india",
 }
 EXCLUDED_DOMAINS = {"internshala.com", "naukri.com", "linkedin.com"}
+
+# Aggregators and news outlets never ARE the company's own website, even when
+# a search result about the company points at one. Rejecting these outright
+# keeps resolve_company_url_via_search from ever "resolving" a company to a
+# news article about it.
+AGGREGATOR_DOMAINS = {
+    "inc42.com", "yourstory.com", "entrackr.com", "crunchbase.com",
+    "tracxn.com", "medium.com", "wikipedia.org", "x.com", "twitter.com",
+    "facebook.com", "linkedin.com", "glassdoor.com", "youtube.com",
+    "instagram.com", "reddit.com",
+}
+
+
+def _registrable_domain(url: str) -> str:
+    host = urlsplit(url).netloc.casefold()
+    return host[4:] if host.startswith("www.") else host
 
 
 def _results(payload: Any) -> list[Record]:
@@ -90,6 +107,107 @@ def search_public_evidence(
                 },
             )
     return list(evidence.values())[:5]
+
+
+def _company_name_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def resolve_company_url_via_search(
+    company: str,
+    api_key: str,
+    timeout: int = 45,
+) -> Record | None:
+    """Resolve a funded company's real website with provenance, or return None.
+
+    Never guesses a domain from a name. A domain is only ever accepted from a
+    live Firecrawl search result AND only after fetching that exact candidate
+    page and confirming the company's own name actually appears on it --
+    company_resolve.py's existing exact-name-match pools stay the only other
+    source of a company_url; this is a third pool, not a replacement, and it
+    still requires the company's name to physically be on the resolved page.
+    """
+    from company_site import fetch_site_evidence
+
+    company = clean_text(company)
+    if not company:
+        return None
+    name_key = _company_name_key(company)
+    if not name_key:
+        return None
+
+    queries = [f'"{company}" official website', f'"{company}" funding Bengaluru']
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    candidates: dict[str, dict[str, Any]] = {}
+    for query in queries:
+        response = requests.post(
+            SEARCH_ENDPOINT,
+            headers=headers,
+            json={"query": query, "limit": 3},
+            timeout=timeout,
+        )
+        if response.status_code in {401, 403, 429}:
+            raise RuntimeError(
+                f"Firecrawl search unavailable with HTTP {response.status_code}; "
+                "do not bypass or retry aggressively"
+            )
+        response.raise_for_status()
+        for item in _results(response.json()):
+            url = canonical_url(item.get("url"))
+            if not url:
+                continue
+            domain = _registrable_domain(url)
+            if not domain or domain in EXCLUDED_DOMAINS or domain in AGGREGATOR_DOMAINS:
+                continue
+            if any(domain.endswith(f".{agg}") for agg in AGGREGATOR_DOMAINS):
+                continue
+            title = clean_text(item.get("title") or url)
+            if not _relevant_to_company(company, title, "", url):
+                continue
+            entry = candidates.setdefault(
+                domain, {"url": url, "query": query, "title": title, "queries": set()}
+            )
+            entry["queries"].add(query)
+
+    if not candidates:
+        return None
+
+    # Verify each candidate live before accepting any of them -- a search
+    # result naming the company is not proof the domain IS the company's
+    # site; the candidate's own page must actually say so.
+    for domain, info in candidates.items():
+        candidate_url = f"https://{domain}"
+        try:
+            evidence, _emails, _linkedin, status = fetch_site_evidence(candidate_url)
+        except Exception:
+            continue
+        if status != "ok":
+            continue
+        joined = _company_name_key(
+            " ".join(item.get("observation", "") for item in evidence)
+        )
+        if name_key not in joined:
+            continue
+        agreeing = len(info["queries"])
+        return {
+            "company_url": candidate_url,
+            "company_url_basis": "firecrawl_search_verified_onpage_name",
+            "company_url_evidence": {
+                "search_query": info["query"],
+                "result_url": info["url"],
+                "matched_text": next(
+                    (
+                        item.get("observation", "")
+                        for item in evidence
+                        if name_key in _company_name_key(item.get("observation", ""))
+                    ),
+                    "",
+                ),
+                "access_date": iso_date(),
+                "confidence": "high" if agreeing > 1 else "medium",
+            },
+        }
+    return None
 
 
 def maybe_add_firecrawl_evidence(record: Record) -> tuple[Record, str]:

@@ -97,7 +97,12 @@ def _fetch_site_and_roles(company_url: str) -> tuple[list[Record], list[str], li
     Returns (evidence, emails, linkedin_urls).
     """
     try:
-        evidence, emails, linkedin_urls, _status = fetch_site_evidence(company_url, max_pages=3)
+        # 2026-09-13: raised 3 -> 5. CANDIDATE_PATHS was reordered
+        # operational-first (careers/jobs/blog/changelog/engineering before
+        # about/company/homepage); 5 lets both an operational page and a
+        # descriptive fallback page land instead of stopping after 3 mostly
+        # non-operational hits.
+        evidence, emails, linkedin_urls, _status = fetch_site_evidence(company_url, max_pages=5)
         return evidence, emails, linkedin_urls
     except Exception:
         return [], [], []
@@ -295,7 +300,10 @@ def research_deep_problem(
                 "(open roles, support/ops complaints, engineering blog posts about internal "
                 "pain, community posts about using their tools internally), set supported=false "
                 "and leave problem_hypothesis empty rather than inventing an internal-sounding "
-                "problem from external-facing copy."
+                "problem from external-facing copy. Each evidence item's basis field tells you "
+                "which kind it is: company_site_descriptive is marketing/about copy and, alone, "
+                "is NOT sufficient to support a hypothesis; company_site_operational, "
+                "hacker_news_algolia, and public_company_research are eligible on their own."
             ),
         }
 

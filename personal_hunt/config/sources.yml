@@ -3,10 +3,12 @@ timeout_seconds: 25
 min_interval_seconds: 2
 
 apify:
-  monthly_budget_usd: 25.00
-  warn_at_usd: 25.00
-  # Daksh 2026-09-11: per-run ceiling raised 0.25 -> 0.70. Monthly budget is
-  # shared across all rotation keys: $25 covers ~30 daily $0.70 runs.
+  # 2026-09-13: raised 25 -> 33 after Daksh added 7 rotating free-tier tokens
+  # (apify_sources.py already rotates across APIFY_TOKEN_1..7 on exhaustion/
+  # auth failure). Per-run ceiling stays at 0.70 as the real backstop: worst
+  # case 30 daily runs x 0.70 = $21, comfortably under the new $33 ceiling.
+  monthly_budget_usd: 33.00
+  warn_at_usd: 30.00
   max_run_charge_usd: 0.70
 
 # Vendor ATS boards discovered on aggregator pages (jobs.accel.com embeds
@@ -140,7 +142,12 @@ sources:
     adaptive_enabled: true
     adapter: apify_linkedin_posts
     actor_id: harvestapi/linkedin-post-search
-    max_items: 150
+    # 2026-09-13: raised 150 -> 300. run_6e74f84cd7c98afb measured this
+    # source at 105 raw / 9 of 10 eligible (8.6% yield) against 0.2% for
+    # every other source combined -- it is starved, not exhausted. Cost
+    # scales sub-linearly (measured <$0.12 at 150), stays well under the
+    # $0.70 run cap. max_linkedin_extractions_per_run must move with this.
+    max_items: 300
     source_priority: 1
     access_policy: approved_public_posts_low_confidence
     input:
@@ -175,7 +182,8 @@ sources:
         - "gtm intern Bengaluru startup"
       # Volume knob: actuals ran <$0.12 against the $0.70 run cap, so the
       # cap (not this number) is the binding constraint. 2026-09-11.
-      maxPosts: 150
+      # 2026-09-13: raised 150 -> 300, see max_items above.
+      maxPosts: 300
       postedLimit: week
       sortBy: date
       profileScraperMode: short

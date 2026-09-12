@@ -193,7 +193,12 @@ def select_balanced(records: list[Record], scoring: dict[str, Any]) -> dict[str,
             item["id"],
         ),
     )
-    target = int(scoring["daily_target"])
+    # llm_shortlist_size is how many eligible records reach the Kimi gate;
+    # daily_target stays a separate, smaller number used only for the
+    # digest's "X of target Y" reporting text (digest.py), never for
+    # slicing the actual candidate pool. Falls back to daily_target when
+    # unset so older configs/tests keep working.
+    target = int(scoring.get("llm_shortlist_size", scoring["daily_target"]))
     quotas = scoring.get("lane_quota", {"ai": 3, "consumer": 3})
     selected: list[Record] = []
     used: set[str] = set()
