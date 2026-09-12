@@ -1,0 +1,30 @@
+# {company_name}: prototype
+
+Problem: {problem_brief}
+
+## Observed signals
+
+{observed_problem}
+
+Evidence URLs:
+{evidence_urls}
+
+## Build the prototype
+
+A single runnable system, {scope_hours} hours of work.
+
+{what_to_build}
+
+## Stack
+
+{stack_constraint}
+
+Mark every assumption in the README.
+
+## Acceptance criteria
+
+{acceptance_criteria}
+
+## Non-negotiable
+
+Do not invent facts about {company_name}. Do not call external APIs beyond reading this brief. Mark assumptions.

@@ -48,6 +48,10 @@ funding_primary_age_days: 15
 funding_extension_age_days: 30
 funding_primary_min_items: 3
 funding_max_items: 5
+# Phase 2: Deep problem research on funded companies
+max_deep_research_per_run: 8
+deep_research_min_evidence: 2
+deep_research_sector_bonus: 3.0
 
 weights:
   location: 20

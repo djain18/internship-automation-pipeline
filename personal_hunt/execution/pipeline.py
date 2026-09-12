@@ -38,6 +38,7 @@ if os.getenv("ENABLE_BEDROCK", "").casefold() in {"1", "true", "yes"}:
         os.environ["BEDROCK_RESEARCH_MODEL_ID"] = "moonshotai.kimi-k2.5"
 
 from artifacts import create_artifacts
+from build_prompt import build_prompts_for_companies
 from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
 from company_site import fetch_office_evidence
@@ -59,6 +60,7 @@ from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, sco
 from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
 from normalize import normalize_many
 from outreach import draft_outreach, validate_outreach
+from problem_research import research_deep_problem, select_discovered_for_research
 from research import research_funding_event, research_records
 from score import score_many, select_balanced
 from sheets import publish_run
@@ -646,6 +648,34 @@ def run_pipeline(
         # was null on every one of them.
         event["research"] = event["problem_research"]
         event["selected_contact"] = choose_contact(event)
+
+    # Phase 2: Deep problem research for discovered companies
+    # Select funded companies with resolved URLs for deep research
+    discovered_for_research = select_discovered_for_research(
+        funding_primary + funding_extended,
+        config=config["scoring"],
+        run_date=run_date,
+    )
+    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
+    region = os.getenv("AWS_REGION", "")
+    for company in discovered_for_research:
+        if company.get("company_url"):
+            company["deep_problem_research"] = research_deep_problem(
+                company,
+                llm_cache=llm_cache,
+                config=config["scoring"],
+                model_id=model_id,
+                region=region,
+            )
+
+    # Phase 3: Generate prototype prompts for researched companies
+    discovered_for_research = build_prompts_for_companies(
+        discovered_for_research,
+        llm_cache=llm_cache,
+        model_id=model_id,
+        region=region,
+    )
+
     weekly_targets = select_weekly_targets(
         company_candidates or [], funding_primary + funding_extended, run_date, config["scoring"]
     )
