@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from models import Record, canonical_url, clean_text
 
 # A published address is only as good as where it was published. These two are
@@ -57,12 +59,32 @@ def _site_email(record: Record) -> tuple[str, str]:
     return "", ""
 
 
+def _profile_belongs_to(url: str, name: str) -> bool:
+    """True when a published /in/ profile URL is demonstrably this person's.
+
+    company_site.fetch_site_evidence scrapes every linkedin.com/in/ link on a
+    team or about page, so the list is "some humans at this company", not
+    "the contact". Stamping the first one onto whichever contact was chosen
+    attributes a real person's profile to someone else, which is inventing a
+    contact. Require every meaningful token of the contact's name to appear
+    in the profile slug; anything less stays empty.
+    """
+    slug = url.casefold().rsplit("/in/", 1)[-1]
+    tokens = [
+        token
+        for token in re.split(r"[^a-z0-9]+", clean_text(name).casefold())
+        if len(token) > 2
+    ]
+    return bool(slug) and bool(tokens) and all(token in slug for token in tokens)
+
+
 def _extract_provenanced_linkedin(record: Record) -> str:
     """Extract a LinkedIn profile URL from provenanced sources only.
 
     Allowed sources:
     1. Explicitly in the contact record (Hunter result)
-    2. Published on the company's own site (team/about pages)
+    2. Published on the company's own site (team/about pages), and only when
+       the profile slug matches the contact's own name
     3. Apify public-post author field (if implemented)
 
     Never construct or guess from name/email.
@@ -74,17 +96,22 @@ def _extract_provenanced_linkedin(record: Record) -> str:
         if url and "linkedin.com" in url.casefold():
             return url
 
-    # 2. Check research field for published LinkedIn URLs from company site
+    # 2/3. Scraped site profiles, from the opportunity's own research or from
+    # deep problem research. Only a name match makes one of these this
+    # contact's profile rather than a colleague's.
+    name = clean_text(raw.get("name"))
+    if not name:
+        return ""
     research = record.get("research") if isinstance(record.get("research"), dict) else {}
-    published_urls = research.get("published_linkedin_urls") or []
-    if published_urls:
-        return canonical_url(published_urls[0])
-
-    # 3. Check deep_problem_research for company site LinkedIn URLs
     deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
-    deep_linkedin_urls = deep_research.get("published_linkedin_urls") or []
-    if deep_linkedin_urls:
-        return canonical_url(deep_linkedin_urls[0])
+    published_urls = [
+        *(research.get("published_linkedin_urls") or []),
+        *(deep_research.get("published_linkedin_urls") or []),
+    ]
+    for candidate in published_urls:
+        url = canonical_url(candidate)
+        if url and _profile_belongs_to(url, name):
+            return url
 
     return ""
 
@@ -159,11 +186,11 @@ def choose_contact(record: Record) -> Record:
 
     # Determine contact priority: role-based scores, then fallback to mailbox kind
     if mailbox_kind == "named" and raw.get("name"):
-        # Named contact: score by role seniority
-        if role_score <= 3:  # Founder, CoS, Head of Ops
-            priority = "preferred_named"
-        else:
-            priority = "preferred_named"
+        # Named contact: score by role seniority. Founder / chief of staff /
+        # head of ops rank above a named person with a generic role, which is
+        # the ladder Phase 4 asked for; collapsing both into "preferred_named"
+        # made _role_priority decorative.
+        priority = "preferred_named_senior" if role_score <= 3 else "preferred_named"
     elif mailbox_kind == "generic_fallback":
         priority = "fallback_generic"
     else:

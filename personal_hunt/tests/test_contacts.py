@@ -83,5 +83,32 @@ def test_role_priority_in_contact_choice() -> None:
         "source_url": "https://example.com/job",
         "contact": {"name": "Aarav", "email": "aarav@example.com", "role": "Founder", "verification_status": "published_by_source"},
     })
-    assert contact_founder["contact_priority"] == "preferred_named"
+    assert contact_founder["contact_priority"] == "preferred_named_senior"
     assert "Founder" in contact_founder["role"]
+    generic = choose_contact({
+        "source_url": "https://example.com/job",
+        "contact": {"name": "Aarav", "email": "aarav@example.com", "role": "Recruiter", "verification_status": "published_by_source"},
+    })
+    assert generic["contact_priority"] == "preferred_named"
+
+
+def test_site_linkedin_url_is_not_attached_to_a_different_person() -> None:
+    """Team-page profiles belong to whoever they name, not to the contact."""
+    contact = choose_contact({
+        "source_url": "https://example.com/job",
+        "contact": {"name": "Aarav Sharma", "email": "aarav@example.com"},
+        "research": {"published_linkedin_urls": [
+            "https://www.linkedin.com/in/priya-nair",
+            "https://www.linkedin.com/in/aarav-sharma",
+        ]},
+    })
+    assert contact["linkedin"] == "https://www.linkedin.com/in/aarav-sharma"
+
+
+def test_site_linkedin_url_alone_never_manufactures_a_contact() -> None:
+    """No name, no email: a scraped profile must not become "available"."""
+    contact = choose_contact({
+        "source_url": "https://example.com/job",
+        "research": {"published_linkedin_urls": ["https://www.linkedin.com/in/priya-nair"]},
+    })
+    assert contact["status"] == "contact_research_required"

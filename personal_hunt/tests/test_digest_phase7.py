@@ -91,7 +91,9 @@ def test_problem_brief_block_includes_all_sections():
             "name": "Jane Smith",
             "email": "jane@testcorp.com",
             "linkedin": "https://linkedin.com/in/janesmith",
-            "source": "company_team_page",
+            # The keys choose_contact actually emits.
+            "source_url": "https://testcorp.com/team",
+            "access_date": "2026-09-13",
         },
         "outreach": {
             "email_body": "Hi Jane, I noticed...",
@@ -117,6 +119,9 @@ def test_problem_brief_block_includes_all_sections():
     assert "Jane Smith" in text
     assert "jane@testcorp.com" in text
     assert "https://linkedin.com/in/janesmith" in text
+    # Provenance is mandatory on a contact, so the digest must print it.
+    assert "https://testcorp.com/team" in text
+    assert "2026-09-13" in text
     assert "**Outreach drafts:**" in text
     assert "Hi Jane, I noticed..." in text
     assert "I'm interested in TestCorp's automation challenges." in text

@@ -133,8 +133,12 @@ def _extract_linkedin_url(pick: Record) -> str:
     Only set if explicitly present in Hunter's response. Never construct
     or guess a LinkedIn URL from name/email.
     """
-    # Hunter.io may include social profiles in the response
-    social_profiles = pick.get("linkedin_url") or pick.get("linked_in_url") or ""
+    # Hunter.io's domain-search email objects carry the profile under
+    # "linkedin"; the "_url" spellings appear in other Hunter endpoints.
+    # Reading only the latter meant this always returned "".
+    social_profiles = (
+        pick.get("linkedin") or pick.get("linkedin_url") or pick.get("linked_in_url") or ""
+    )
     if social_profiles and isinstance(social_profiles, str):
         url = canonical_url(social_profiles)
         if url and "linkedin.com" in url.casefold():

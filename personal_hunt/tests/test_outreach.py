@@ -14,7 +14,9 @@ def test_outreach_is_short_human_and_never_send_ready() -> None:
         "artifact_status": "generated_unverified",
     }
     draft = draft_outreach(record)
-    # Just verify it has the required fields and status
+    # The generic path is what every internship match uses; it has to satisfy
+    # its own validator, not merely produce keys.
+    assert validate_outreach(draft) == []
     assert draft["send_status"] == "draft_needs_human_review"
     assert not draft["artifact_mention_allowed"]
     assert [item["day"] for item in draft["followups"]] == [3, 8, 14]
@@ -78,16 +80,26 @@ def test_validator_blocks_em_dash() -> None:
 
 
 def test_validator_blocks_emoji() -> None:
-    """Drafts with emoji fail validation."""
+    """Drafts with emoji fail validation, not only the hand-listed smileys."""
+    for emoji in ("😊", "🚀", "✨", "✅", "⚡"):
+        draft = {
+            "email_subject": "founder office idea",
+            "email_body": f"Great opportunity {emoji} check this out. " + "content " * 20,
+            "linkedin_note": "Short note",
+            "send_status": "draft_needs_human_review",
+        }
+        assert "punctuation:emoji" in validate_outreach(draft), emoji
+
+
+def test_validator_catches_inline_header_bullets() -> None:
+    """The bullet-header check runs on the raw body, which keeps its newlines."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "Great opportunity! 😊 Check this out. " + "content " * 20,
+        "email_body": "Some intro text here.\n- Scope: one prototype\nClosing line.",
         "linkedin_note": "Short note",
         "send_status": "draft_needs_human_review",
     }
-    errors = validate_outreach(draft)
-    # Emoji check might not catch all emojis, so we just validate it doesn't crash
-    assert isinstance(errors, list)
+    assert "inline_header_bullets" in validate_outreach(draft)
 
 
 def test_validator_blocks_forbidden_word_delve() -> None:
@@ -172,5 +184,49 @@ def test_outreach_produces_three_artifacts() -> None:
     assert "linkedin_note" in draft
     assert "linkedin_message" in draft
     assert len(draft["linkedin_note"]) <= 300
-    assert "thanks" in draft["linkedin_message"].casefold() or draft["linkedin_message"]
+    assert "thanks" in draft["linkedin_message"].casefold()
+
+
+def test_linkedin_note_never_truncates_mid_sentence() -> None:
+    """A long company/title must shorten the note, not slice it mid-word."""
+    record = {
+        "company": "Bharat Agritech and Rural Supply Chain Technologies Private Limited",
+        "title": "Founder Office and Strategic Operations Generalist Intern (Bengaluru, Hybrid)",
+        "location": "Bengaluru",
+        "selected_contact": {"name": "Aarav"},
+        "research": {"solution_concept": "a workflow audit."},
+    }
+    note = draft_outreach(record)["linkedin_note"]
+    assert len(note) <= 300
+    assert note.rstrip()[-1] in ".?!"
+
+
+def test_quoted_evidence_does_not_trip_forbidden_words() -> None:
+    """A company's own word choice inside a quote is evidence, not AI tone."""
+    record = {
+        "company": "Lyzr AI",
+        "selected_contact": {"name": "Aarav"},
+        "deep_problem_research": {
+            "observed_signals": [
+                {"text": "We build robust enterprise agents for regulated buyers.", "url": "https://lyzr.ai"}
+            ],
+            "problem_hypothesis": "Delivery load sits with solution consultants.",
+        },
+        "prompt_generation": {"prompt_text": "Build a delivery-load tracker."},
+    }
+    draft = draft_outreach(record)
+    assert "robust" in draft["email_body"]
+    assert validate_outreach(draft) == []
+
+
+def test_daksh_own_prose_still_fails_on_forbidden_word() -> None:
+    """The quoted-span carve-out must not disable the check everywhere."""
+    draft = {
+        "email_subject": "founder office idea",
+        "email_body": "I want to leverage this. " + "content " * 20,
+        "linkedin_note": "Short note",
+        "quoted_span": "We build enterprise agents",
+        "send_status": "draft_needs_human_review",
+    }
+    assert any("leverage" in error for error in validate_outreach(draft))
 
