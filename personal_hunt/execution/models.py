@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import date, datetime, timezone
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+
+Record = dict[str, Any]
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def iso_date(value: date | None = None) -> str:
+    return (value or datetime.now(timezone.utc).date()).isoformat()
+
+
+def clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", str(value))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def canonical_url(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    query = [
+        (key, item)
+        for key, item in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+        and key.lower() not in {"ref", "source", "trk", "tracking"}
+    ]
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(query), ""))
+
+
+def stable_id(*parts: Any, prefix: str = "opp") -> str:
+    normalized = "|".join(clean_text(part).casefold() for part in parts)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}_{digest}"
+
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def normalized_content_hash(value: Any) -> str:
+    """Hash semantic JSON content with stable key ordering and whitespace."""
+    def normalize(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {str(key): normalize(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [normalize(child) for child in item]
+        if isinstance(item, str):
+            return clean_text(item)
+        return item
+
+    normalized = json_dumps(normalize(value))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def llm_cache_key(
+    purpose: str, model_id: str, prompt_version: str, content: Any
+) -> tuple[str, str]:
+    """Return a policy-aware cache key and the underlying content hash."""
+    content_hash = normalized_content_hash(content)
+    key_material = {
+        "purpose": clean_text(purpose),
+        "model_id": clean_text(model_id),
+        "prompt_version": clean_text(prompt_version),
+        "content_hash": content_hash,
+    }
+    return f"llm_{normalized_content_hash(key_material)}", content_hash
+
+
+def usage_summary(items: list[Record]) -> Record:
+    """Aggregate provider usage and cache activity for one run."""
+    return {
+        "calls": sum(int(item.get("calls", 0) or 0) for item in items),
+        "cache_hits": sum(int(item.get("cache_hits", 0) or 0) for item in items),
+        "input_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in items),
+        "output_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in items),
+        "total_tokens": sum(int(item.get("total_tokens", 0) or 0) for item in items),
+        "elapsed_ms": sum(int(item.get("elapsed_ms", 0) or 0) for item in items),
+        "cost_usd": round(
+            sum(float(item.get("cost_usd", 0) or 0) for item in items), 8
+        ),
+    }

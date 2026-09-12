@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -8,6 +8,8 @@ import InternshipDetail from "./components/InternshipDetail";
 import Home from "./pages/Home";
 import Internships from "./pages/Internships";
 import { fetchListings, fetchStats } from "./lib/api";
+
+const MyHunt = lazy(() => import("./pages/MyHunt"));
 
 // On route change: scroll to top, or to the hashed section if a #hash is present.
 function ScrollManager({ ready }) {
@@ -71,6 +73,14 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home {...shared} />} />
           <Route path="/internships" element={<Internships {...shared} />} />
+          <Route
+            path="/my-hunt"
+            element={
+              <Suspense fallback={<div className="min-h-[60vh] bg-secondary/30" />}>
+                <MyHunt />
+              </Suspense>
+            }
+          />
           {/* How-it-works and FAQ are sections on Home now, not standalone pages —
               old links still work by redirecting to the anchor. */}
           <Route path="/how-it-works" element={<Navigate to="/#how-it-works" replace />} />

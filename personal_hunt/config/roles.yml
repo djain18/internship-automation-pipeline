@@ -1,0 +1,133 @@
+accepted:
+  - founders office
+  - founder's office
+  - founder’s office
+  - founders associate
+  - founder's associate
+  - founder’s associate
+  - founder office
+  - founder associate
+  - chief of staff intern
+  - special projects
+  - business generalist
+  - generalist intern
+  - business operations intern
+  - operations intern
+  - strategy intern
+  - strategy and operations
+  - strategy & operations
+  - growth intern
+  - growth marketing intern
+  - gtm intern
+  - product operations
+  - launch operations
+  - brand operations
+  - growth operations
+  - venture builder intern
+  - ceo's office
+  - ceo’s office
+  - ceo office
+  - office of the founder
+
+# Tier 1 role families Daksh named. Matched against the TITLE only: these are
+# broad words that appear incidentally in almost any description ("our growth",
+# "the operations team"), so description-wide matching would admit unrelated
+# roles. Description-level judgement is Tier 2 (llm_rank.judge_cross_functional).
+accepted_title:
+  - generalist
+  - growth
+  - operations
+  - ops
+  - strategy
+  - chief of staff
+  - business development
+  - business operations
+  - biz ops
+  - bizops
+  - revenue operations
+  - partnerships
+
+# Broad titles need evidence of founder/leadership exposure or work spanning at
+# least two functions. Otherwise they go to the bounded Tier 2 description read.
+broad_title_requires_evidence:
+  - growth
+  - operations
+  - ops
+  - strategy
+  - business development
+  - business operations
+  - biz ops
+  - bizops
+  - revenue operations
+  - partnerships
+
+function_evidence:
+  growth: [growth, marketing, acquisition, conversion, retention, campaign]
+  operations: [operations, workflow, process, supply chain, inventory, logistics]
+  strategy: [strategy, research, analysis, market, planning, business review]
+  product: [product, roadmap, user research, launch, feature]
+  customer: [customer, onboarding, support, success, community]
+  sales: [sales, partnership, business development, pipeline, revenue]
+  fundraising: [fundraise, fundraising, investor, investors, pitch deck, venture capital]
+  analytics: [data analytics, excel, sheets, dashboard, sql, data analysis]
+
+cross_functional_terms:
+  - work with founders
+  - directly with the founder
+  - cross-functional
+  - cross functional
+  - wear multiple hats
+  - zero to one
+  - 0 to 1
+  - strategy and execution
+  - special projects
+  - work with leadership
+  - directly with leadership
+  - right-hand
+  - right hand
+  - end-to-end
+  - end to end
+
+specialist_reject:
+  - software engineer
+  - data scientist
+  - ui designer
+  - graphic designer
+  - accountant
+  - legal counsel
+  - campus ambassador
+  - commission only
+
+senior_reject:
+  - vice president
+  - director
+  - head of
+  - senior manager
+  - staff engineer
+  - principal
+  - 8+ years
+  - 10+ years
+
+ai_terms:
+  - ai
+  - artificial intelligence
+  - generative ai
+  - genai
+  - ai agent
+  - llm
+  - machine learning
+  - automation
+
+consumer_terms:
+  - consumer
+  - d2c
+  - retail
+  - ecommerce
+  - e-commerce
+  - home
+  - electrical
+  - physical product
+  - brand
+  - commerce
+  - supply chain
+

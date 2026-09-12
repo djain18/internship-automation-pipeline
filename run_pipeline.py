@@ -61,7 +61,11 @@ def run_script(script_path, desc, timeout=3400):
 # target — we stop early once reached, and we NEVER pad with low-quality posts to
 # hit it. Topup passes exist only to gather genuine posts we may have missed; a
 # pass that yields few net-new means the genuine supply is exhausted, so we stop.
-TARGET_NEW = 35    # soft target; publishing fewer genuine ones is acceptable
+# 45, not 35: role_taxonomy.balance now spreads output across 12 role tracks
+# (quota 5 each), so the ceiling a healthy night can reach is much higher than
+# when one oversupplied field was doing all the work. Still SOFT — balance
+# never pads, so a thin night simply publishes fewer.
+TARGET_NEW = 45    # soft target; publishing fewer genuine ones is acceptable
 MAX_RETRIES = 1    # at most one topup pass; quality over volume
 MIN_MARGINAL_YIELD = 8  # stop topup if a pass adds fewer than this (supply dry)
 
@@ -164,6 +168,7 @@ def main():
 
     print("\n" + "="*60)
     print("PIPELINE EXECUTION COMPLETE")
+    print(f"LinkedIn: {total_appended} published")
     print("="*60)
 
 if __name__ == "__main__":
