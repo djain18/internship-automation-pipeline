@@ -514,3 +514,37 @@ Verified: 244 personal_hunt tests, 200 Rise tests (separate commands), Ruff clea
 Committed `83ec1e9` (Firecrawl scoping) and `d2cd7f6` (key wiring), pushed to `origin/main`,
 redeployed twice. One real digest sent for the new run, message `1a09783b537a4647` — the second
 send today (2026-09-13), both explicitly requested by Daksh in this session.
+
+## 2026-09-13 (continued) — Funded-company chain works end to end for the first time
+
+Daksh's own question ("so is the whole pipeline working now") exposed the real remaining gap:
+resolution worked, but `research_deep_problem` had exactly two evidence sources — the company's
+own site and Hacker News — which was consistently too thin for a young, recently-funded company
+to ever produce a supported hypothesis. Correct behavior on thin evidence (refuse rather than
+invent), but useless in practice: every funded company came back `insufficient_evidence`, every
+day, with no path to ever change that.
+
+**Fix:** wired a third real evidence source into `research_deep_problem` — Firecrawl search for
+third-party mentions of the company (news, community posts), via the existing
+`search_public_evidence` function. Two bugs fixed in that function before it was usable: it
+emitted `type`, not the `basis` field the Kimi instruction actually checks (a mismatch that would
+have made this evidence silently invisible to the model even once wired in), and it was cut from
+2 queries + `scrapeOptions` to 1 query with no scrape to fit the free plan's 1,000 monthly credits
+now that it runs as a real, scoped pipeline stage rather than sitting unused.
+
+**Scoped to skip the 3 watchlist companies** (Emergent/Lyzr/AEOS) — same fixed names every run, so
+a fresh daily search for them is pure waste. Real funded companies (new each day, capped at
+`max_deep_research_per_run`) are the only case worth paying credits for.
+
+**Verified against a real cloud run** (`run_44cb9526ef7b738e`): Graph AI's evidence count went
+2 (site only) -> 8 (site + HN + Firecrawl), `supported: false -> true`, and produced a real,
+validated, non-clone prototype — an internal "Handoff Protocol" dashboard for cross-team
+coordination friction, grounded in verbatim quotes from `graphsafety.ai/careers` and `/company`,
+plus an honest `contact_research_required` status sourced to the real YourStory funding article.
+**This is the first time the full chain — resolve -> evidence -> hypothesis -> validated prompt ->
+contact — has been observed succeeding end to end on a real company.** Watchlist companies'
+evidence counts were unchanged from the prior run, confirming the skip guard held (no wasted
+credits on them).
+
+Verified: 250 personal_hunt tests (up from 244), 200 Rise tests (separate commands), Ruff clean.
+Committed `7726c2d`, pushed to `origin/main`, redeployed, verified live before pushing.
