@@ -167,6 +167,142 @@ def test_sector_bonus_applied_correctly() -> None:
     assert unknown_with_terms == 0.5
 
 
+def _mock_evidence():
+    return (
+        [
+            {
+                "url": "https://acme.com/about",
+                "observation": "We help support teams scale onboarding for enterprise customers.",
+                "access_date": "2026-09-12",
+                "confidence": "medium",
+                "basis": "company_site",
+            },
+            {
+                "url": "https://news.ycombinator.com/item?id=1",
+                "observation": "Acme is hiring five support engineers this quarter.",
+                "access_date": "2026-09-12",
+                "confidence": "low",
+                "basis": "hacker_news_algolia",
+            },
+        ],
+        [],
+    )
+
+
+def test_llm_signal_dropped_when_url_was_never_fetched(monkeypatch) -> None:
+    """Fail-closed: a quote that's a real substring but paired with a URL we
+    never fetched must be dropped -- text-only checking would let the model
+    pair a genuine quote with a fabricated or mismatched source."""
+    company = {"company": "Acme", "company_url": "https://acme.com", "lane": "ai"}
+    config = {"deep_research_min_evidence": 1}
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: _mock_evidence())
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setattr(
+        problem_research,
+        "cached_bedrock_json",
+        lambda **kwargs: (
+            {
+                "observed_signals": [
+                    {
+                        "text": "We help support teams scale onboarding for enterprise customers.",
+                        "url": "https://fabricated-source.example/never-fetched",
+                    }
+                ],
+                "problem_hypothesis": "Support onboarding is a bottleneck.",
+                "why_now": "Recent funding will accelerate hiring.",
+                "confidence": "medium",
+                "supported": True,
+            },
+            {"input_tokens": 10, "output_tokens": 10},
+        ),
+    )
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="model-a", region="ap-south-1"
+    )
+
+    assert result["llm_status"] == "ok"
+    assert result["observed_signals"] == []
+
+
+def test_llm_signal_dropped_when_url_and_text_are_mismatched(monkeypatch) -> None:
+    """A known URL paired with text that isn't actually from that source
+    must also be dropped, not just an unknown URL."""
+    company = {"company": "Acme", "company_url": "https://acme.com", "lane": "ai"}
+    config = {"deep_research_min_evidence": 1}
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: _mock_evidence())
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setattr(
+        problem_research,
+        "cached_bedrock_json",
+        lambda **kwargs: (
+            {
+                # Real HN url, but the quoted text actually came from the
+                # site evidence item, not the HN one -- mismatched pairing.
+                "observed_signals": [
+                    {
+                        "text": "We help support teams scale onboarding for enterprise customers.",
+                        "url": "https://news.ycombinator.com/item?id=1",
+                    }
+                ],
+                "problem_hypothesis": "Support onboarding is a bottleneck.",
+                "why_now": "Recent funding will accelerate hiring.",
+                "confidence": "medium",
+                "supported": True,
+            },
+            {"input_tokens": 10, "output_tokens": 10},
+        ),
+    )
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="model-a", region="ap-south-1"
+    )
+
+    assert result["observed_signals"] == []
+
+
+def test_llm_signal_kept_when_url_and_text_match(monkeypatch) -> None:
+    """The positive case: a quote that really is a substring of the text
+    fetched from its own claimed URL survives the gate."""
+    company = {"company": "Acme", "company_url": "https://acme.com", "lane": "ai"}
+    config = {"deep_research_min_evidence": 1}
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: _mock_evidence())
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setattr(
+        problem_research,
+        "cached_bedrock_json",
+        lambda **kwargs: (
+            {
+                "observed_signals": [
+                    {
+                        "text": "We help support teams scale onboarding for enterprise customers.",
+                        "url": "https://acme.com/about",
+                    }
+                ],
+                "problem_hypothesis": "Support onboarding is a bottleneck.",
+                "why_now": "Recent funding will accelerate hiring.",
+                "confidence": "medium",
+                "supported": True,
+            },
+            {"input_tokens": 10, "output_tokens": 10},
+        ),
+    )
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="model-a", region="ap-south-1"
+    )
+
+    assert result["problem_status"] == "inference_needs_validation"
+    assert len(result["observed_signals"]) == 1
+    assert result["observed_signals"][0]["url"] == "https://acme.com/about"
+
+
 def test_evidence_scoring_by_volume_and_recency() -> None:
     """Evidence score increases with volume and recent dates."""
     today = date.today()

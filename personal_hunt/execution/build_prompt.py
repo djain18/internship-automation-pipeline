@@ -201,7 +201,12 @@ def build_prompts_for_companies(
     """
     output = []
     for company in companies:
-        problem_research = company.get("problem_research", {})
+        # Phase 2 writes its result to "deep_problem_research". Funding
+        # events also carry a "problem_research" key from Phase 1's
+        # research_funding_event, which is a different, unrelated shape
+        # (no observed_signals list) -- reading it here would silently
+        # never find evidence.
+        problem_research = company.get("deep_problem_research", {})
         prompt_result = build_prototype_prompt(
             company,
             problem_research,
