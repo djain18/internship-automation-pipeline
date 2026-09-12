@@ -131,8 +131,31 @@ def score_record(
 
     record["score_components"] = components
     record["score"] = sum(components.values())
+    threshold = int(scoring["publish_threshold"])
+    # An exactly-named target role in Bengaluru publishes on title and location
+    # alone. Without this floor it structurally cannot: 46 of the 100 points
+    # (lane_fit 15, company_size 10, funding_growth 10, learning 5, source
+    # contact 5) measure company metadata that is unverifiable for the small
+    # unknown startups Daksh is actually hunting, so a perfect match maxing
+    # location (20), role_breadth (20) and candidate_fit (15) tops out at 64
+    # against a threshold of 70. Two real Bengaluru internships on
+    # run_f9ae04eb99b98d0e — Shobitam "Partnerships Growth Intern" (Jayanagar,
+    # posted 2026-09-10) and Vatsenix "Business Development Intern"
+    # (Whitefield) — both scored exactly 64 and were dropped as
+    # below_publish_threshold. Daksh 2026-09-13: "I just want a founder's
+    # office internship, or a growth internship — such generalist roles... I
+    # will take care of the JD myself." The floor never invents a fact: it
+    # applies only where the title already matched a curated role phrase or
+    # title family AND the location is a verified Bengaluru class. Kimi's
+    # independent llm_fit_threshold read still gates what reaches the digest.
+    if (accepted or title_family) and location_class in {
+        "bengaluru_onsite",
+        "bengaluru_hybrid",
+    }:
+        record["score"] = max(record["score"], threshold)
+        reasons.append("floor:named_role_in_bengaluru")
     record["score_reasons"] = reasons
-    record["eligible"] = record["score"] >= int(scoring["publish_threshold"])
+    record["eligible"] = record["score"] >= threshold
     if not record["eligible"]:
         record["rejection_reasons"] = sorted(
             set(record.get("rejection_reasons", []) + ["below_publish_threshold"])

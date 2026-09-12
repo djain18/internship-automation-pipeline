@@ -192,9 +192,14 @@ def extract_linkedin_hiring_fields(
                 prompt=prompt,
                 region=region,
                 cache=cache,
-                # 10 structured records need headroom past the 1800 default;
-                # truncation failed closed twice on live runs.
-                max_tokens=3500,
+                # 2026-09-13: halving the batch to 5 did NOT stop the
+                # `Unterminated string` truncations (run_21ae706418041f9a still
+                # lost 3 of 22 batches at ~13k output chars) because the model
+                # sometimes ignores the 300-char evidence_quote instruction and
+                # echoes the whole 3000-char post back. 5 x 3000 chars of echo
+                # needs ~6000 tokens of headroom. Unused ceiling costs nothing:
+                # billing is on tokens actually emitted.
+                max_tokens=6000,
             )
             extracted = payload.get("records") if isinstance(payload, dict) else None
             if not isinstance(extracted, list):
