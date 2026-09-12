@@ -387,6 +387,80 @@ def test_funding_event_research_only_allows_llm_when_company_url_resolved(
     assert sorted(calls) == [False, True]
 
 
+def test_discovered_for_research_reaches_the_run_dict_with_prompts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Regression for a live-cloud-verification finding: Phase 2/3 results
+    were computed but the final discovered_for_research list (carrying
+    prompt_generation) was never written into run_pipeline's return dict,
+    and deep_problem_research only survived by an unintended shared-object
+    side effect that a copy anywhere in the chain would silently break."""
+    config = load_all()
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+
+    monkeypatch.setattr(
+        pipeline, "research_funding_event",
+        lambda event, allow_llm=False, cache=None: {
+            "status": "provisional", "problem_status": "insufficient_evidence", "problem_hypothesis": "",
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "research_deep_problem",
+        lambda company, **kwargs: {
+            "problem_status": "inference_needs_validation",
+            "observed_signals": [{"text": "real quote", "url": "https://resolvable.example/about"}],
+            "evidence_count": 2,
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "build_prompts_for_companies",
+        lambda companies, **kwargs: [
+            {**company, "prompt_generation": {"prompt_text": "fake prompt", "llm_status": "ok"}}
+            for company in companies
+        ],
+    )
+
+    funding_records = [
+        {
+            "funding_event_id": "funding_resolved",
+            "company": "Resolvable Co",
+            "event_date": "2026-09-08",
+            "headline": "Resolvable Co raises $5 Mn",
+            "source_url": "https://example.com/resolvable",
+            "corroborating_urls": ["https://example.com/resolvable"],
+        },
+    ]
+    company_candidates = [
+        {
+            "company": "Resolvable Co",
+            "company_url": "https://resolvable.example",
+            "registry_url": "https://kalaari.com/portfolio",
+        }
+    ]
+    result = run_pipeline(
+        records,
+        [],
+        date(2026, 9, 8),
+        config,
+        tmp_path / "run",
+        funding_records=funding_records,
+        company_candidates=company_candidates,
+    )
+
+    assert "discovered_for_research" in result
+    discovered = result["discovered_for_research"]
+    assert len(discovered) == 1
+    assert discovered[0]["prompt_generation"]["prompt_text"] == "fake prompt"
+
+    # And it must also have merged back into funding_primary, not only into
+    # the standalone discovered_for_research list.
+    resolved_event = next(
+        item for item in result["funding_primary"] if item["funding_event_id"] == "funding_resolved"
+    )
+    assert resolved_event["prompt_generation"]["prompt_text"] == "fake prompt"
+    assert resolved_event["deep_problem_research"]["problem_status"] == "inference_needs_validation"
+
+
 def _linkedin_lead(**overrides) -> dict:
     record = {
         "id": "lead-1",

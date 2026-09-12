@@ -675,6 +675,21 @@ def run_pipeline(
         model_id=model_id,
         region=region,
     )
+    # build_prompts_for_companies returns copies, not the same objects
+    # select_discovered_for_research handed it -- merge deep_problem_research
+    # and prompt_generation back into funding_primary/funding_extended
+    # explicitly by funding_event_id rather than relying on the earlier loop's
+    # in-place mutation to have leaked through (it happened to, but a copy
+    # anywhere in that chain would silently drop the result with no error).
+    discovered_by_id = {
+        item["funding_event_id"]: item for item in discovered_for_research
+    }
+    funding_primary = [
+        discovered_by_id.get(item["funding_event_id"], item) for item in funding_primary
+    ]
+    funding_extended = [
+        discovered_by_id.get(item["funding_event_id"], item) for item in funding_extended
+    ]
 
     weekly_targets = select_weekly_targets(
         company_candidates or [], funding_primary + funding_extended, run_date, config["scoring"]
@@ -780,6 +795,7 @@ def run_pipeline(
         "funding_primary": funding_primary,
         "funding_extended": funding_extended,
         "funding_excluded": funding_excluded,
+        "discovered_for_research": discovered_for_research,
         "all_scored": scored,
         "duplicates": duplicates,
         "source_health": source_health,
