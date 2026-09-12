@@ -17,6 +17,7 @@ from fetch_sources import (
     _yc,
     fetch_harvested_boards,
     harvest_ats_boards,
+    watchlist_board_sources,
 )
 
 
@@ -75,6 +76,44 @@ def test_teamtailor_rss_parser_extracts_bengaluru_roles() -> None:
     # Check record structure
     assert all(r["source_confidence"] == "official" for r in records)
     assert all(r["source"] == "lyzr_teamtailor" for r in records)
+
+
+def test_watchlist_board_sources_reads_configured_boards_only() -> None:
+    """Watchlist companies with a board_url+board_adapter become fetchable
+    source dicts; a company with no board (AEOS, bootstrapped, no ATS) is
+    skipped rather than guessed at."""
+    watchlist_config = {
+        "companies": [
+            {
+                "name": "Emergent",
+                "board_url": "https://boards-api.greenhouse.io/v1/boards/emergentlabsinc/jobs",
+                "board_adapter": "greenhouse_ats",
+                "site_url": "https://emergent.sh",
+            },
+            {
+                "name": "Lyzr AI",
+                "board_url": "https://careers.lyzr.ai/jobs.rss",
+                "board_adapter": "teamtailor_ats",
+                "site_url": "https://lyzr.ai",
+            },
+            {
+                "name": "AEOS",
+                "board_url": "",
+                "board_adapter": "",
+                "site_url": "https://www.aeoscompany.com",
+            },
+        ]
+    }
+
+    sources = watchlist_board_sources(watchlist_config)
+
+    assert len(sources) == 2
+    by_company = {s["company"]: s for s in sources}
+    assert "AEOS" not in by_company
+    assert by_company["Emergent"]["adapter"] == "greenhouse_ats"
+    assert by_company["Emergent"]["url"] == watchlist_config["companies"][0]["board_url"]
+    assert by_company["Lyzr AI"]["adapter"] == "teamtailor_ats"
+    assert all(s["enabled"] for s in sources)
 
 
 def test_yc_parser_ignores_navigation_and_extracts_company() -> None:
