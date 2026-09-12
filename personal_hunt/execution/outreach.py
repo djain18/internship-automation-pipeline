@@ -6,9 +6,11 @@ from models import Record, clean_text
 # Humanizer rules - hard-fail checks for outreach quality
 FORBIDDEN_PUNCTUATION = {
     "—": "em-dash",  # No em dashes
-    """: "curly-quote-open",  # No curly quotes
-    """: "curly-quote-close",
-    "'": "curly-quote-single",
+    "“": "curly-quote-open",  # No curly quotes
+    "”": "curly-quote-close",
+    "’": "curly-quote-single",  # Not the plain ASCII apostrophe (') --
+    # that's what every real contraction ("I've", "don't") uses, and
+    # flagging it would hard-fail nearly every natural-sounding draft.
 }
 
 FORBIDDEN_WORDS = (
@@ -154,17 +156,34 @@ def draft_problem_led_email(record: Record) -> Record:
             "draft_source": "problem_led",
         }
 
-    # Build problem statement from first signal
-    signal_quote = clean_text(observed_signals[0].get("text", ""))[:150]
+    # Build problem statement from first signal, truncated by word count (not
+    # characters) so the final body can be steered into validate_outreach's
+    # required 80-110 word range regardless of how long the real quote is.
+    signal_words = _words(clean_text(observed_signals[0].get("text", "")))
 
-    # Email: problem first, prototype offered
-    body = (
-        f"Hi {contact_name}, I've researched {company} and found a real operational gap. "
-        f"{signal_quote} I built a small prototype to explore how this could improve, "
-        f"and I'd like to share it. I'm seeking a six-month onsite generalist internship "
-        f"in Bengaluru from November 2026 where I can own work across functions. "
-        f"Would the prototype be worth seeing?"
+    intro = f"Hi {contact_name}, I've been researching {company} and found a concrete operational gap worth flagging:"
+    ask = (
+        "I put together a small working prototype instead of just describing the idea, "
+        "since a runnable demo says more than a pitch. I'm looking for a six-month onsite "
+        "generalist internship in Bengaluru starting November 2026, where I can pick up "
+        "real cross-functional work like this. Would it be useful to walk through the "
+        "prototype together sometime this week?"
     )
+    fixed_word_count = len(_words(intro)) + len(_words(ask))
+
+    quote_budget = max(6, min(len(signal_words), 108 - fixed_word_count))
+    signal_quote = " ".join(signal_words[:quote_budget])
+    if len(signal_words) > quote_budget:
+        signal_quote += "..."
+
+    body = f"{intro} {signal_quote}. {ask}"
+
+    # If the real quote was short, the body can still land under 80 words;
+    # top up with a grounded, non-invented closing line rather than padding
+    # with filler that would trip the humanizer's own rules.
+    padding = " I focused on what's publicly visible rather than guessing at internals."
+    if len(_words(body)) < 80:
+        body = f"{body}{padding}"
 
     # LinkedIn connection note
     linkedin_note = (

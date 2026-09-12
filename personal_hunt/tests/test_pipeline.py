@@ -459,6 +459,13 @@ def test_discovered_for_research_reaches_the_run_dict_with_prompts(
     assert "Emergent" in company_names  # From watchlist
     assert "Lyzr AI" in company_names  # From watchlist
     assert "AEOS" in company_names  # From watchlist
+    # Every discovered company must have gone through outreach drafting --
+    # draft_problem_led_email existed but was never called on this list
+    # until this was fixed; watchlist companies in particular never went
+    # through choose_contact anywhere else, so selected_contact must also
+    # exist here rather than being missing.
+    assert all("outreach" in item for item in discovered)
+    assert all(item.get("selected_contact") for item in discovered)
 
     # And it must also have merged back into funding_primary, not only into
     # the standalone discovered_for_research list.
@@ -467,6 +474,72 @@ def test_discovered_for_research_reaches_the_run_dict_with_prompts(
     )
     assert resolved_event["prompt_generation"]["prompt_text"] == "fake prompt"
     assert resolved_event["deep_problem_research"]["problem_status"] == "inference_needs_validation"
+
+
+def test_discovered_company_gets_a_real_problem_led_draft(monkeypatch, tmp_path: Path) -> None:
+    """With real-shaped evidence (a problem_hypothesis plus observed_signals),
+    the discovered company's draft must actually be the problem-led email,
+    not blocked_insufficient_evidence, and must reference the real signal
+    text -- proving draft_problem_led_email's output, not just its presence,
+    reaches the pipeline output."""
+    config = load_all()
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+
+    monkeypatch.setattr(
+        pipeline, "research_funding_event",
+        lambda event, allow_llm=False, cache=None: {
+            "status": "provisional", "problem_status": "insufficient_evidence", "problem_hypothesis": "",
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "research_deep_problem",
+        lambda company, **kwargs: {
+            "problem_status": "inference_needs_validation",
+            "problem_hypothesis": "Support onboarding strains after fresh funding.",
+            "observed_signals": [
+                {"text": "We are hiring five support engineers this quarter.", "url": "https://resolvable.example/careers"}
+            ],
+            "evidence_count": 2,
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "build_prompts_for_companies",
+        lambda companies, **kwargs: [
+            {**company, "prompt_generation": {"prompt_text": "fake prompt", "llm_status": "ok"}}
+            for company in companies
+        ],
+    )
+
+    funding_records = [
+        {
+            "funding_event_id": "funding_resolved",
+            "company": "Resolvable Co",
+            "event_date": "2026-09-08",
+            "headline": "Resolvable Co raises $5 Mn",
+            "source_url": "https://example.com/resolvable",
+            "corroborating_urls": ["https://example.com/resolvable"],
+        },
+    ]
+    company_candidates = [
+        {
+            "company": "Resolvable Co",
+            "company_url": "https://resolvable.example",
+            "registry_url": "https://kalaari.com/portfolio",
+        }
+    ]
+    result = run_pipeline(
+        records, [], date(2026, 9, 8), config, tmp_path / "run",
+        funding_records=funding_records, company_candidates=company_candidates,
+    )
+
+    resolvable = next(
+        item for item in result["discovered_for_research"] if item["company"] == "Resolvable Co"
+    )
+    draft = resolvable["outreach"]
+    assert draft["draft_source"] == "problem_led"
+    assert draft["send_status"] == "draft_needs_human_review"
+    assert "support engineers" in draft["email_body"]
+    assert not draft["validation_errors"]
 
 
 def _linkedin_lead(**overrides) -> dict:
