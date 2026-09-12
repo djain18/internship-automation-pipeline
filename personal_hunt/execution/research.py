@@ -190,18 +190,21 @@ def cached_bedrock_json(
     }
 
 
-def _add_site_evidence(record: Record) -> tuple[Record, str, list[str]]:
-    """Attach evidence from the company's own site. Free, robots-respecting."""
+def _add_site_evidence(record: Record) -> tuple[Record, str, list[str], list[str]]:
+    """Attach evidence from the company's own site. Free, robots-respecting.
+
+    Returns (record, status, emails, linkedin_urls).
+    """
 
     if os.getenv("ENABLE_COMPANY_SITE_RESEARCH", "true").casefold() not in {
         "1", "true", "yes",
     }:
-        return record, "disabled", []
-    evidence, emails, status = fetch_site_evidence(
+        return record, "disabled", [], []
+    evidence, emails, linkedin_urls, status = fetch_site_evidence(
         str(record.get("company_url") or "")
     )
     if not evidence:
-        return record, status, emails
+        return record, status, emails, linkedin_urls
     copy = dict(record)
     existing = list(record.get("evidence") or [])
     seen = {
@@ -212,7 +215,7 @@ def _add_site_evidence(record: Record) -> tuple[Record, str, list[str]]:
     copy["evidence"] = existing + [
         item for item in evidence if canonical_url(item["url"]) not in seen
     ]
-    return copy, status, emails
+    return copy, status, emails, linkedin_urls
 
 
 def research_record(
@@ -221,12 +224,13 @@ def research_record(
     allow_llm: bool = True,
 ) -> Record:
     enriched, fetch_status = maybe_add_firecrawl_evidence(record)
-    enriched, site_status, published_emails = _add_site_evidence(enriched)
+    enriched, site_status, published_emails, published_linkedin_urls = _add_site_evidence(enriched)
     base = {
         **deterministic_research(enriched),
         "public_research_fetch_status": fetch_status,
         "site_evidence_status": site_status,
         "published_emails": published_emails,
+        "published_linkedin_urls": published_linkedin_urls,
     }
     if not allow_llm or os.getenv("ENABLE_BEDROCK", "").casefold() not in {
         "1", "true", "yes"
@@ -383,10 +387,11 @@ def research_funding_event(
     # their own. This runs anyway rather than guessing a domain: when a feed
     # starts supplying company_url the event gets the same evidence an
     # opportunity gets, and until then the status says plainly that it has none.
-    event, site_status, published_emails = _add_site_evidence(event)
+    event, site_status, published_emails, published_linkedin_urls = _add_site_evidence(event)
     base: Record = {
         "site_evidence_status": site_status,
         "published_emails": published_emails,
+        "published_linkedin_urls": published_linkedin_urls,
         "status": "provisional",
         "observed_signal": headline,
         "problem_hypothesis": "",

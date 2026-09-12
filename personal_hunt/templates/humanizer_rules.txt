@@ -1,0 +1,68 @@
+# Humanizer validation rules for outreach drafts
+# Hard-fail checks that must all pass for a draft to be acceptable.
+# These rules prevent marketing-speak, AI-generated tone, and overly formal language.
+
+[Punctuation]
+# No em dashes (—) or curly quotes (" ") - use regular hyphens and straight quotes
+no_em_dashes: true
+no_curly_quotes: true
+no_emoji: true
+
+[Forbidden words and phrases]
+# These words signal AI-generated or marketing tone
+forbidden_words:
+  - delve
+  - leverage
+  - robust
+  - testament
+  - underscore
+  - showcase
+  - landscape
+  - pivotal
+  - crucial
+  - vibrant
+
+# These patterns signal canned/marketing language
+forbidden_phrases:
+  - "i hope this helps"
+  - "let me know"
+  - "i hope this email finds you"
+  - "looking forward to"
+  - "synergy"
+  - "best-in-class"
+  - "world-class"
+  - "cutting-edge"
+
+[Grammar and style]
+# No -ing significance tails (highlighting, underscoring, reflecting)
+no_ing_significance_tails: true
+
+# No "not just X but Y" parallelism structures
+no_not_just_but: true
+
+# No three-item lists (too marketing-like)
+max_list_items: 2
+
+# No inline header bullets
+no_inline_headers: true
+
+# No excessive sycophancy
+# (qualifiers like "clearly", "obviously", "amazing", "incredible")
+sycophancy_check: true
+
+[LinkedIn-specific]
+# Connection notes must be under 300 characters
+linkedin_note_max_chars: 300
+
+# Messages after connection should be conversational
+linkedin_message_check: true
+
+[Email-specific]
+# Email body should be 80-110 words
+email_word_count_min: 80
+email_word_count_max: 110
+
+# Subject should be 2-4 words, all lowercase
+subject_min_words: 2
+subject_max_words: 4
+subject_lowercase_only: true

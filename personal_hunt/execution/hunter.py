@@ -127,6 +127,21 @@ def verify_email(key: str, email: str) -> Record:
     return response.json().get("data") or {}
 
 
+def _extract_linkedin_url(pick: Record) -> str:
+    """Extract a LinkedIn profile URL from Hunter result, if available.
+
+    Only set if explicitly present in Hunter's response. Never construct
+    or guess a LinkedIn URL from name/email.
+    """
+    # Hunter.io may include social profiles in the response
+    social_profiles = pick.get("linkedin_url") or pick.get("linked_in_url") or ""
+    if social_profiles and isinstance(social_profiles, str):
+        url = canonical_url(social_profiles)
+        if url and "linkedin.com" in url.casefold():
+            return url
+    return ""
+
+
 def _contact_from_pick(
     pick: Record, record: Record, accept_all: bool, verified: Record | None
 ) -> Record:
@@ -157,7 +172,7 @@ def _contact_from_pick(
         "name": name,
         "role": clean_text(pick.get("position") or "hiring contact"),
         "email": email,
-        "linkedin": "",
+        "linkedin": _extract_linkedin_url(pick),
         "source_url": sources[0] if sources else canonical_source(record),
         "access_date": record.get("discovered_at") or record.get("access_date"),
         "verification_status": status,
@@ -228,6 +243,7 @@ def _find_company_contact(
             "email": contact["email"],
             "name": contact["name"],
             "role": contact["role"],
+            "linkedin": contact["linkedin"],
             "sources": contact["hunter_sources"],
             "hunter_confidence": contact["hunter_confidence"],
             "verification_status": contact["verification_status"],
@@ -243,7 +259,7 @@ def _contact_from_cached(cached: Record, record: Record) -> Record:
         "name": cached.get("name", ""),
         "role": cached.get("role", "hiring contact"),
         "email": cached.get("email", ""),
-        "linkedin": "",
+        "linkedin": cached.get("linkedin", ""),
         "source_url": (cached.get("sources") or [canonical_source(record)])[0],
         "access_date": record.get("discovered_at") or record.get("access_date"),
         "verification_status": cached.get("verification_status", "hunter_found_unverified"),

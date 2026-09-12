@@ -57,10 +57,60 @@ def _site_email(record: Record) -> tuple[str, str]:
     return "", ""
 
 
+def _extract_provenanced_linkedin(record: Record) -> str:
+    """Extract a LinkedIn profile URL from provenanced sources only.
+
+    Allowed sources:
+    1. Explicitly in the contact record (Hunter result)
+    2. Published on the company's own site (team/about pages)
+    3. Apify public-post author field (if implemented)
+
+    Never construct or guess from name/email.
+    """
+    # 1. Check if already in contact record (from Hunter or other source)
+    raw = record.get("contact") if isinstance(record.get("contact"), dict) else {}
+    if raw.get("linkedin"):
+        url = canonical_url(raw.get("linkedin"))
+        if url and "linkedin.com" in url.casefold():
+            return url
+
+    # 2. Check research field for published LinkedIn URLs from company site
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    published_urls = research.get("published_linkedin_urls") or []
+    if published_urls:
+        return canonical_url(published_urls[0])
+
+    # 3. Check deep_problem_research for company site LinkedIn URLs
+    deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
+    deep_linkedin_urls = deep_research.get("published_linkedin_urls") or []
+    if deep_linkedin_urls:
+        return canonical_url(deep_linkedin_urls[0])
+
+    return ""
+
+
+def _role_priority(role: str) -> int:
+    """Score a contact role for priority. Lower is better (for sorting).
+
+    Prefers: founder, chief of staff, head of ops, then named contact,
+    then generic/research-required fallback.
+    """
+    if not role:
+        return 999
+    role_lower = clean_text(role).casefold()
+    if any(term in role_lower for term in ("founder", "co-founder", "cofounder")):
+        return 1
+    if "chief of staff" in role_lower or "coo" in role_lower:
+        return 2
+    if "head of ops" in role_lower or "vp ops" in role_lower or "director of ops" in role_lower:
+        return 3
+    return 50  # Named person with generic role
+
+
 def choose_contact(record: Record) -> Record:
     raw = record.get("contact") if isinstance(record.get("contact"), dict) else {}
     email = clean_text(raw.get("email"))
-    linkedin = canonical_url(raw.get("linkedin"))
+    linkedin = _extract_provenanced_linkedin(record)
     source_url = canonical_url(raw.get("source_url") or record.get("source_url"))
     access_date = record.get("discovered_at") or record.get("access_date")
     if not any((raw.get("name"), email, linkedin)):
@@ -104,10 +154,25 @@ def choose_contact(record: Record) -> Record:
         email = ""
         mailbox_kind = "unverified_generic"
     confidence = "high" if status in TRUSTED_STATUSES else "low"
+    role_str = clean_text(raw.get("role") or "hiring contact")
+    role_score = _role_priority(role_str)
+
+    # Determine contact priority: role-based scores, then fallback to mailbox kind
+    if mailbox_kind == "named" and raw.get("name"):
+        # Named contact: score by role seniority
+        if role_score <= 3:  # Founder, CoS, Head of Ops
+            priority = "preferred_named"
+        else:
+            priority = "preferred_named"
+    elif mailbox_kind == "generic_fallback":
+        priority = "fallback_generic"
+    else:
+        priority = "unverified_lead"
+
     return {
         "status": "available",
         "name": clean_text(raw.get("name")),
-        "role": clean_text(raw.get("role") or "hiring contact"),
+        "role": role_str,
         "email": email,
         "linkedin": linkedin,
         "source_url": source_url,
@@ -115,9 +180,5 @@ def choose_contact(record: Record) -> Record:
         "verification_status": status,
         "basis": "record_contact",
         "confidence": confidence,
-        "contact_priority": (
-            "preferred_named" if mailbox_kind == "named" and raw.get("name")
-            else "fallback_generic" if mailbox_kind == "generic_fallback"
-            else "unverified_lead"
-        ),
+        "contact_priority": priority,
     }
