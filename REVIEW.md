@@ -385,3 +385,88 @@ acceptable steady state or needs a further look (e.g. persisting withhold
 reasons to actually see Kimi's judgment) is Daksh's call, not assumed here.
 
 No third digest sent today. `deliver` intentionally not run.
+
+## 2026-09-13 — Volume optimization (2->4/day) and funded-company chain unlocked, two more real bugs found live
+
+Plan: `C:\Users\daksh\.claude\plans\wait-i-have-provided-shiny-kazoo.md` (approved by Daksh after
+brainstorming/exploration/plan-mode process; not "add anything to hit 5" but "optimize the
+workflow" using real funnel data).
+
+**Real diagnosis before any change:** run_6e74f84cd7c98afb showed `linkedin_posts_apify` at
+105 raw / 9 of 10 eligible (8.6% yield) against 0.2% for every other source combined. The Kimi
+gate was already correct (6 of 8 withheld that day were genuine junk). The bottleneck was source
+starvation, not the admission bar — confirmed by checking the two levers that looked attractive
+and weren't: only 8 records hit `role_not_cross_functional` solely (cap was 25, not binding), and
+only 1 hit `below_publish_threshold` solely.
+
+**Shipped:**
+- 7 Apify tokens wired via existing `APIFY_TOKEN_1..7` rotation (zero code). Shared cap 25 -> 33.
+- LinkedIn actor + extraction cap tripled 150 -> 300 together (extraction must move with the
+  actor cap or paid posts get silently discarded, `skipped_over_cap`).
+- New `llm_shortlist_size` (30) split out of `daily_target` (10), which was doing double duty as
+  both the pre-LLM shortlist size and the digest's report-text target — eligible records past #10
+  never reached Kimi before this.
+- `score_shortlist`'s Bedrock call given an explicit `max_tokens=5000` (was the 1800 default,
+  which sits right on the truncation edge for a 30-record batch and fails the WHOLE section
+  closed on overflow, not just the tail).
+- `max_artifacts` 2 -> 6 so the deep-research/prototype chain can cover a 5-admitted day.
+- New `resolve_company_url_via_search()` in `firecrawl_research.py`: a third domain-resolution
+  pool for funded companies, alongside `company_resolve.py`'s two existing exact-match pools —
+  live search, filtered against aggregators/news, then MANDATORY on-page verification (fetches
+  the candidate and requires the company's own name to appear on it) before accepting a domain.
+  Never guesses. Wired into `pipeline.py` right after the existing `resolve_company_urls` call.
+- `company_site.py`'s `CANDIDATE_PATHS` reordered careers/jobs/blog/changelog/engineering before
+  about/company/homepage — marketing copy can never support an internal-problem hypothesis per
+  the existing Kimi instruction, so operational pages are tried first.
+- New `validate_prototype_prompt` in `build_prompt.py` (structural + clone-check validation,
+  `build_prompt.py` previously had none, unlike outreach's `validate_outreach`).
+- New "Worth a look" digest section (fit 60-69, text + HTML), never counted toward the daily five.
+- Outreach's problem-led email now says what the prototype does (`what_to_build` line), not just
+  that one exists.
+
+**Real cloud verification, three collect runs:**
+- `run_6e74f84cd7c98afb` -> `run_c5e40cce7b37aeed`: admitted 2 -> 4 after the volume fixes.
+- Immediately surfaced a real regression: reusing `primary_responsibility()` (built for job-listing
+  sentences like "You will own X") on raw company-webpage HTML misclassified a cookie-consent
+  banner and Emergent's own product tagline ("Build production-ready apps through conversation")
+  as "operational" evidence — worse than the plain SIGNAL_TERMS match it replaced, because ordinary
+  marketing copy uses the same ownership verbs. Fixed: basis is now decided by WHICH PAGE the
+  evidence came from (careers/jobs/blog/changelog/engineering vs about/company/homepage), not by
+  sentence content.
+- `validate_prototype_prompt` was checked against `build_prompt.py`'s embedded `PROMPT_TEMPLATE`
+  fallback headings ("## Problem", "## What to build"), not the real on-disk
+  `templates/prototype_prompt.txt` that `_load_prompt_template()` actually uses ("## Observed
+  signals", "## Build the prototype") — would have blocked every real prompt this pipeline
+  generates. Fixed, with a regression test built from the real template.
+- **Most serious finding**, read from real output, not caught by any test:
+  `build_prototype_prompt` never checked `problem_research["supported"]`, only that
+  `evidence_urls` was non-empty. A real cloud run showed it generating "Build an internal vendor
+  cookie audit dashboard for Lyzr AI's marketing/ops team" from evidence that was literally
+  "Vendors Teamtailor Analytics These cookies collect information..." — a cookie-consent banner,
+  correctly flagged `supported=false` upstream but never checked downstream. Fixed with a
+  fail-closed gate (`llm_status: skipped_unsupported_hypothesis`) matching
+  `research_funding_event`'s existing `allow_llm` pattern. Verified against the exact real
+  cookie-banner text in a monkeypatched regression test that asserts the LLM is never called.
+- Final verification run `run_86a248255b91d32f`: 4 admitted (Kplor 92, Sarvam AI 78, Ressl AI 75,
+  Nilo 72), one "worth a look" entry (Sarvam 68), all three watchlist companies correctly
+  `skipped_unsupported_hypothesis` — zero hallucinated prototypes.
+
+**Known external blocker, not a code bug, flagged for Daksh:** Firecrawl's `/v1/search` returns
+`402 Payment Required` on the current account/plan. `resolve_company_url_via_search` is built,
+tested, and fails closed correctly (captured as `company_url_resolution_error` on the funding
+event, no crash) — but the funded-company domain-resolution chain cannot exercise live until the
+Firecrawl plan is sorted. Both real funding events today (Graph AI, Paris Panini Parent Popo
+Global) stayed `unresolved` for this reason, not a matching failure.
+
+Second Opus-model subagent pass (dispatched mid-session per Daksh's request to use Opus for code
+fixes) independently audited the `build_prototype_prompt` gate change: confirmed placement and
+logic, fixed two existing tests that asserted the old (buggy) behavior, audited every caller of
+`prompt_generation["llm_status"]` for a fixed-value assumption (none found), and added the
+cookie-banner regression test.
+
+**Verified:** 244 personal_hunt tests (up from 233), 200 Rise tests (separate commands), Ruff
+clean. Committed `d2e32ae`, pushed to `origin/main`. Redeployed to `daksh-internship-hunt` three
+times across this session (once per real bug found and fixed). One real digest sent, message
+`1a096e9228b368fc`, checked against `state.json`'s `digest_deliveries` ledger first (two other
+sends already existed for 2026-09-12; Daksh explicitly approved this third one in this session's
+plan approval).
