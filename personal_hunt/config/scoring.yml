@@ -22,7 +22,12 @@ max_role_judgements_per_run: 25
 # parse. Set above the actor's own max_items:150 ceiling, chunked into
 # batches per call (see MAX_LINKEDIN_EXTRACTION_BATCH in llm_rank.py) so a
 # single oversized prompt cannot truncate and lose the tail.
-max_linkedin_extractions_per_run: 100
+# 2026-09-13: raised 100 -> 150 (the actor's own max_items ceiling).
+# run_f9ae04eb99b98d0e reported 112 candidates and skipped_over_cap: 12, and
+# extraction is the only step that turns a raw LinkedIn post into an eligible
+# record, so a skipped candidate is a lost match. Measured cost of 4 extraction
+# calls that run: $0.00 against a $0.70 per-run ceiling.
+max_linkedin_extractions_per_run: 150
 # Unverified LinkedIn leads shown per run for manual checking. Capped so a
 # long tail of low-confidence leads cannot bury the approved matches.
 max_needs_verification: 10

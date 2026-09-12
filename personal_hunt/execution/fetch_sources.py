@@ -16,6 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from models import Record, clean_text, utc_timestamp
+from normalize import classify_location
 from source_health import SourceHealth, classify_http_failure
 
 
@@ -564,6 +565,28 @@ def harvest_ats_boards(text: str, max_boards: int) -> list[Record]:
     return sorted(found.values(), key=lambda item: item["id"])
 
 
+def _in_scope_only(records: list[Record]) -> list[Record]:
+    """Drop harvested-board rows whose location is out of scope.
+
+    A harvested board is an entire company's job board, so one global employer
+    (Feverup, Socure, Illumio) can contribute hundreds of rows. On
+    run_f9ae04eb99b98d0e, 955 of 1,447 deduplicated records — 66% of the whole
+    pool — came from harvested boards and *every single one* was rejected for
+    location_out_of_scope. Location is a hard exclusion that no later tier can
+    reverse (the Tier 2 LLM read only clears role_not_cross_functional), so
+    dropping it here can never discard an admissible record; it only stops the
+    noise from being normalized, deduplicated, scored and reported.
+    """
+    return [
+        record
+        for record in records
+        if classify_location(
+            clean_text(record.get("location", "")), clean_text(record.get("work_mode", ""))
+        )[0]
+        != "other"
+    ]
+
+
 def fetch_harvested_boards(
     session: requests.Session, harvest_cfg: dict[str, Any], timeout: int, interval: float
 ) -> tuple[list[Record], list[Record]]:
@@ -595,7 +618,7 @@ def fetch_harvested_boards(
             for board in boards:
                 board_started = time.perf_counter()
                 try:
-                    board_records = _fetch_ats(session, board, timeout)
+                    board_records = _in_scope_only(_fetch_ats(session, board, timeout))
                     records.extend(board_records)
                     health.append(
                         SourceHealth(
