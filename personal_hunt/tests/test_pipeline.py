@@ -334,6 +334,59 @@ def test_latest_digest_pointer_survives_newer_fixture_and_integration_failure(
     ] == "run_live"
 
 
+def test_funding_event_research_only_allows_llm_when_company_url_resolved(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = load_all()
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+    calls: list[bool] = []
+
+    def fake_research_funding_event(event, allow_llm=False, cache=None):
+        calls.append(allow_llm)
+        return {
+            "status": "provisional",
+            "problem_status": "insufficient_evidence",
+            "problem_hypothesis": "",
+        }
+
+    monkeypatch.setattr(pipeline, "research_funding_event", fake_research_funding_event)
+    funding_records = [
+        {
+            "funding_event_id": "funding_resolved",
+            "company": "Resolvable Co",
+            "event_date": "2026-09-08",
+            "headline": "Resolvable Co raises $5 Mn",
+            "source_url": "https://example.com/resolvable",
+            "corroborating_urls": ["https://example.com/resolvable"],
+        },
+        {
+            "funding_event_id": "funding_unresolved",
+            "company": "Unresolvable Co",
+            "event_date": "2026-09-08",
+            "headline": "Unresolvable Co raises $5 Mn",
+            "source_url": "https://example.com/unresolvable",
+            "corroborating_urls": ["https://example.com/unresolvable"],
+        },
+    ]
+    company_candidates = [
+        {
+            "company": "Resolvable Co",
+            "company_url": "https://resolvable.example",
+            "registry_url": "https://kalaari.com/portfolio",
+        }
+    ]
+    run_pipeline(
+        records,
+        [],
+        date(2026, 9, 8),
+        config,
+        tmp_path / "run",
+        funding_records=funding_records,
+        company_candidates=company_candidates,
+    )
+    assert sorted(calls) == [False, True]
+
+
 def _linkedin_lead(**overrides) -> dict:
     record = {
         "id": "lead-1",

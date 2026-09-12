@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from models import Record, clean_text, utc_timestamp
+from models import Record, clean_text, repair_mojibake, utc_timestamp
 from state import LocalState
 
 
@@ -68,20 +68,9 @@ def _actor_key(actor_id: str) -> str:
     return actor_id.replace("/", "~")
 
 
-def _repair_mojibake(text: str) -> str:
-    """Undo UTF-8 bytes that were decoded as cp1252 upstream (e.g. an
-    apostrophe arriving as "Founderâ€™s Office"). The extraction
-    validator in llm_rank.py needs an exact quote match, so mangled
-    punctuation silently loses otherwise-good posts. Only applied when the
-    round trip succeeds cleanly; genuinely correct text that happens to
-    contain cp1252-range characters is left untouched."""
-    if not text or "Â" not in text and "â€" not in text:
-        return text
-    try:
-        repaired = text.encode("cp1252").decode("utf-8")
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return text
-    return repaired
+# Moved to models.py (2026-09-13) so funding.py can reuse the same fix;
+# kept as an alias since this module's tests reference the old name.
+_repair_mojibake = repair_mojibake
 
 
 def _map_linkedin(items: list[Record], source: dict[str, Any]) -> list[Record]:

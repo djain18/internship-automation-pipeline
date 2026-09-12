@@ -26,6 +26,23 @@ def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def repair_mojibake(text: str) -> str:
+    """Undo UTF-8 bytes that were decoded as cp1252 upstream (e.g. an
+    apostrophe arriving as "Founderâ€™s Office"). Downstream exact-quote
+    validators (llm_rank.py's LinkedIn extraction, this module's own
+    consumers) need a literal substring match against the original text,
+    so mangled punctuation silently loses otherwise-good records. Only
+    applied when the round trip succeeds cleanly; genuinely correct text
+    that happens to contain cp1252-range characters is left untouched."""
+    if not text or ("Â" not in text and "â€" not in text):
+        return text
+    try:
+        repaired = text.encode("cp1252").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+    return repaired
+
+
 def canonical_url(value: Any) -> str:
     text = clean_text(value)
     if not text:
