@@ -94,3 +94,29 @@ commands — both suites expose a top-level `sheets` module), Ruff clean.
   `max_tokens` if `unresolved` stays high on future runs.
 - The next real 08:30 IST cron (2026-09-13) has not yet been observed;
   confirm it delivers unaided and record that run's numbers here.
+
+## 2026-09-12 — personal-hunt-migration merged to main, /my-hunt deployed
+
+`personal-hunt-migration` (24 commits, the full private-hunt migration
+plus the 2026-09-12 digest/funnel fix) merged into `main` with
+`--no-ff` and pushed: `main` is now `082b9b5`. Verified before merging:
+163 personal_hunt tests, 200 Rise tests, 4 rise-web node tests, Ruff
+clean, and a clean local production build.
+
+No GitHub-to-Vercel auto-deploy hook exists (confirmed: the newest
+deployment via `vercel ls` was 50 days old immediately after the push).
+Deployed manually: `vercel --prod` from `rise-web/`, aliased to
+`https://rise-web-kappa.vercel.app`, deployment `dpl_GikevKYJNWbq7rTKjFmgDzkJEYa1`.
+`/my-hunt` and its JS chunk both return HTTP 200. The page itself needs
+a signed-in approved account (`dakshinjain187@gmail.com` or
+`dakshjainn02@gmail.com`) to render past the Firebase auth gate, which
+cannot be verified from an unauthenticated fetch — Daksh should confirm
+in his own browser.
+
+Vercel CLI needs `node --use-system-ca` on this network (same TLS gotcha
+as the Modal CLI); the global install lives at
+`C:\Users\daksh\AppData\Roaming\npm\node_modules\vercel\dist\index.js`.
+`npm run build` locally fails on a broken `node_modules\.bin\vite.cmd`
+shim (resolves to a nonexistent `E:\Projects\vite\bin\vite.js`); run
+`node node_modules/vite/bin/vite.js build` directly instead. Does not
+affect Vercel's own container build, which succeeds normally.
