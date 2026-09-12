@@ -324,3 +324,64 @@ end-to-end proof.
 
 234 personal_hunt tests, 200 Rise tests, Ruff clean. Pushed to
 `origin/main` (`8dc3868`). Redeployed to `daksh-internship-hunt`.
+
+## 2026-09-13 — Funnel fix committed, deployed, verified against a real collect
+
+Opus subagent investigation (dispatched after Daksh's "1,447 scored, 0
+admitted, I want >=5/day" complaint) landed three fixes, found already
+sitting uncommitted in the working tree when this session picked up the
+handoff. Reviewed, tested, committed as `cdf4235`, pushed, redeployed.
+
+1. `fetch_sources.py`: harvested ATS boards (whole company job boards,
+   e.g. `ats_harvested_greenhouse_feverup`) were contributing hundreds of
+   `location_out_of_scope` rows per run — 955 of 1,447 records (66%) on
+   `run_f9ae04eb99b98d0e`. Now filtered to in-scope locations at harvest
+   time. Location is a hard exclusion no later tier reverses, so this
+   drops pure noise only.
+2. `llm_rank.py` / `scoring.yml`: LinkedIn extraction still truncated
+   (`Unterminated string`) after an earlier batch-size cut, because the
+   model sometimes echoes the full ~3000-char post instead of the
+   instructed 300-char quote. `max_tokens` 3500->6000, per-run extraction
+   cap 100->150 (the actor's own ceiling). Real run showed
+   `skipped_over_cap: 12` lost matches; measured added cost $0.00.
+3. `score.py`: an exactly-titled Bengaluru role (curated `accepted`
+   phrase or title family) can top out at 64/100 because 46 of the 100
+   scoring points measure company metadata that's unverifiable for small
+   unknown startups, against a 70 threshold. Added a floor to threshold
+   only when title already matched AND location is verified Bengaluru —
+   invents nothing; Kimi's independent fit-score gate still decides what
+   reaches the digest.
+
+233 personal_hunt tests, 200 Rise tests, Ruff clean. Deployed to
+`daksh-internship-hunt`.
+
+**Verified against a real `collect`** (not `deliver` — two sends already
+happened today, see `state.json`'s `digest_deliveries`):
+`run_6e74f84cd7c98afb`, completed 2026-09-12T16:40:07Z.
+
+- raw 604 (down from 1,447 — the location pre-filter working as designed)
+- deterministically eligible 10 (up from 1)
+- Kimi (`llm_scoring.primary`): `admitted: 2, withheld: 8, status: ok`
+- Admitted: Auraaison "Founder's Office Intern" (fit 95, "Explicit
+  Founder's Office title with direct founder exposure, 0-to-1 building,
+  end-to-end ownership") and Ressl AI "GTM Intern" (fit unchanged from
+  prior runs).
+- Withheld 8 included Vatsenix "Business Development Intern", Nilo
+  "School Outreach & Partnerships Intern", Eli Lilly "GOSO Intern",
+  Google "Application Engineering Intern" and others — Kimi's per-record
+  withhold reasons are not persisted to the run artifact (a real gap, not
+  investigated further this session; `llm_scoring` only carries the
+  aggregate admitted/withheld counts, not why each of the 8 was cut).
+
+**Honest read: still below the 5/day target, and this is a real quality
+gate, not a leftover bug.** The deterministic layer now correctly surfaces
+10 candidates a day instead of 1 — the funnel fix worked as designed. Kimi
+then holds 8 of them back because they generically title-match ("Business
+Development Intern", "HR Operations Intern") without founder's-office-style
+signal in the JD, which is exactly what Daksh's two 2026-09-13 policy
+clarifications intended to *stop* penalizing only for thin/ambiguous JDs —
+not to admit generic BD/HR/ops titles wholesale. Whether 2/day is an
+acceptable steady state or needs a further look (e.g. persisting withhold
+reasons to actually see Kimi's judgment) is Daksh's call, not assumed here.
+
+No third digest sent today. `deliver` intentionally not run.
