@@ -80,6 +80,15 @@ pipeline_secrets = [
     # internship-hunt-secrets). A dedicated secret so this doesn't require
     # rewriting the bundle above, whose current contents can't be read back.
     modal.Secret.from_name("research-provider"),
+    # 2026-09-13: internship-hunt-secrets' own FIRECRAWL_API_KEY started
+    # returning 402 Payment Required on /v1/search (exhausted/dead, not a
+    # tier restriction -- the free plan does include /search). Daksh
+    # supplied a fresh free-tier key. Placed AFTER internship-hunt-secrets
+    # in this list so its FIRECRAWL_API_KEY wins -- Modal secrets apply in
+    # list order, later entries override earlier ones for the same env var.
+    # Firecrawl is scoped to the funded-company resolution path only
+    # (resolve_company_url_via_search); internship research stays free.
+    modal.Secret.from_name("firecrawl-key"),
 ]
 
 
