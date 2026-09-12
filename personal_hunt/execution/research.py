@@ -6,7 +6,6 @@ import time
 from typing import Any
 
 from company_site import fetch_site_evidence, primary_responsibility
-from firecrawl_research import maybe_add_firecrawl_evidence
 from models import Record, canonical_url, clean_text, llm_cache_key
 
 
@@ -223,11 +222,17 @@ def research_record(
     cache: dict[str, Any] | None = None,
     allow_llm: bool = True,
 ) -> Record:
-    enriched, fetch_status = maybe_add_firecrawl_evidence(record)
-    enriched, site_status, published_emails, published_linkedin_urls = _add_site_evidence(enriched)
+    # 2026-09-13: Firecrawl is scoped to the funded-company chain only
+    # (resolve_company_url_via_search in pipeline.py). Internship research
+    # runs on free evidence only (company_site.py + Hacker News) --
+    # research_record was calling maybe_add_firecrawl_evidence on every
+    # admitted internship (~7/run via research_queue), which alone burns
+    # ~70 of the free plan's 1,000 monthly search credits per run and was
+    # never what this was for.
+    enriched, site_status, published_emails, published_linkedin_urls = _add_site_evidence(record)
     base = {
         **deterministic_research(enriched),
-        "public_research_fetch_status": fetch_status,
+        "public_research_fetch_status": "not_used_internships_free_evidence_only",
         "site_evidence_status": site_status,
         "published_emails": published_emails,
         "published_linkedin_urls": published_linkedin_urls,
