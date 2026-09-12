@@ -39,6 +39,69 @@ def test_deep_research_requires_minimum_evidence(monkeypatch) -> None:
     assert result["problem_hypothesis"] == ""
 
 
+def test_firecrawl_evidence_feeds_in_for_a_real_funded_company(monkeypatch) -> None:
+    """2026-09-13: company-site + HN alone were consistently too thin for a
+    young funded company. _fetch_firecrawl_evidence must be called (and its
+    result merged in) when company_url_basis is anything other than
+    'watchlist' -- this is the actual fix for funded companies staying
+    permanently insufficient_evidence."""
+    company = {
+        "company": "Graph AI",
+        "company_url": "https://graphsafety.ai",
+        "company_url_basis": "firecrawl_search_verified_onpage_name",
+        "lane": "ai",
+    }
+    config = {"deep_research_min_evidence": 1}
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: ([], [], []))
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setattr(
+        problem_research,
+        "_fetch_firecrawl_evidence",
+        lambda name: [
+            {
+                "basis": "public_company_research",
+                "url": "https://techcrunch.com/graph-ai",
+                "observation": "Graph AI is scaling its safety review team.",
+                "confidence": "low",
+            }
+        ],
+    )
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="", region=""
+    )
+
+    assert result["evidence_count"] == 1
+    assert result["problem_status"] != "insufficient_evidence" or result["evidence_score"] > 0
+
+
+def test_firecrawl_evidence_skipped_for_watchlist_companies(monkeypatch) -> None:
+    """Watchlist companies are the same 3 fixed names every run -- paying
+    for a fresh Firecrawl search on them daily is pure waste. Must not be
+    called at all when company_url_basis == 'watchlist'."""
+    company = {
+        "company": "Emergent",
+        "company_url": "https://emergent.sh",
+        "company_url_basis": "watchlist",
+        "lane": "ai",
+    }
+    config = {"deep_research_min_evidence": 1}
+
+    def _explode(name):
+        raise AssertionError("_fetch_firecrawl_evidence must not be called for watchlist companies")
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: ([], [], []))
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setattr(problem_research, "_fetch_firecrawl_evidence", _explode)
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="", region=""
+    )
+
+    assert result["evidence_count"] == 0
+
+
 def test_deep_research_with_company_url_only() -> None:
     """Company with unresolved URL skips deep research."""
     company = {

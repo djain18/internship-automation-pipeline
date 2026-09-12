@@ -62,21 +62,22 @@ def search_public_evidence(
     timeout: int = 45,
     limit_per_query: int = 3,
 ) -> list[Record]:
-    queries = [
-        f'"{company}" customer reviews complaints product',
-        f'"{company}" operations growth launch interview',
-    ]
+    # 2026-09-13: cut to one query and dropped scrapeOptions (each scraped
+    # page adds ~1 credit on top of the 2-credit search itself) -- this now
+    # feeds research_deep_problem for a small, capped set of companies
+    # (max_deep_research_per_run) rather than every admitted internship, so
+    # cost needs to stay tight against the free plan's 1,000 monthly
+    # credits. "operations growth launch interview" targets how a company
+    # runs, not review/pricing copy, which the Kimi instruction downstream
+    # already can't use to support a hypothesis anyway.
+    queries = [f'"{company}" operations growth launch interview']
     evidence: dict[str, Record] = {}
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     for query in queries:
         response = requests.post(
             SEARCH_ENDPOINT,
             headers=headers,
-            json={
-                "query": query,
-                "limit": limit_per_query,
-                "scrapeOptions": {"formats": ["markdown"]},
-            },
+            json={"query": query, "limit": limit_per_query},
             timeout=timeout,
         )
         if response.status_code in {401, 403, 429}:
@@ -99,6 +100,11 @@ def search_public_evidence(
                 url,
                 {
                     "type": "public_company_research",
+                    # Must match the vocabulary problem_research.py's Kimi
+                    # instruction actually checks (basis, not type) -- this
+                    # was previously written but never wired to a caller, so
+                    # the mismatch was never exercised.
+                    "basis": "public_company_research",
                     "title": title,
                     "url": url,
                     "date": clean_text(item.get("publishedDate") or iso_date()),
