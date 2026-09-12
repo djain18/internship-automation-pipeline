@@ -1,6 +1,17 @@
 import llm_rank
 
 
+def test_role_judgement_instruction_treats_no_fixed_jd_as_positive() -> None:
+    """Regression for Daksh's explicit 2026-09-13 clarification: a founder's
+    office role often has no fixed JD by nature (the founder hands out ad hoc
+    problems), and that must read as a POSITIVE signal for cross_functional,
+    not as "too thin to tell" -- which is what the instruction used to say."""
+    instruction = llm_rank.ROLE_JUDGEMENT_INSTRUCTION.casefold()
+    assert "too thin to tell" not in instruction
+    assert "no fixed job description" in instruction
+    assert "thin description is not evidence against fit" in instruction
+
+
 def test_kimi_fit_and_spam_gate(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_BEDROCK", "true")
     monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
@@ -366,8 +377,8 @@ def test_linkedin_extraction_cap_comes_from_scoring_config_not_hardcoded_ten(mon
     assert meta["candidates"] == 25
     assert meta["sent"] == 25
     assert meta["resolved"] == 25
-    # 25 candidates / 10-per-batch => 3 calls, not 1 oversized call.
-    assert len(calls) == 3
+    # 25 candidates / 5-per-batch => 5 calls, not 1 oversized call.
+    assert len(calls) == 5
     assert sum(len(batch) for batch in calls) == 25
     assert all(item.get("company") for item in output)
 
@@ -436,3 +447,85 @@ def test_linkedin_batch_extraction_accepts_clean_subset(monkeypatch) -> None:
     assert meta["resolved"] == 1
     assert output[0]["company"] == "Signal AI"
     assert not output[1].get("company")
+
+
+def test_linkedin_batch_extraction_keeps_good_rows_when_model_returns_stray_id(
+    monkeypatch,
+) -> None:
+    # run_f9ae04eb99b98d0e lost 3 of 10 batches to "extraction IDs must be a
+    # clean subset of supplied records": one hallucinated or duplicated id
+    # discarded every other record in the same call. Stray rows are dropped;
+    # the rest still go through the exact-quote validator.
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = "Signal AI is hiring a Growth Intern in Bengaluru. Apply now."
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-not-sent",
+                        "company": "Ghost Co",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "evidence_quote": "Ghost Co is hiring a Growth Intern in Bengaluru.",
+                    },
+                    {
+                        "id": "post-1",
+                        "company": "Signal AI",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "evidence_quote": text,
+                    },
+                ]
+            },
+            {"calls": 1},
+        ),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": text,
+            "source_url": "https://linkedin.com/posts/1",
+        }
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["status"] == "ok"
+    assert meta["resolved"] == 1
+    assert output[0]["company"] == "Signal AI"
+    assert not any(item.get("company") == "Ghost Co" for item in output)
+
+
+def test_linkedin_batch_extraction_fails_batch_when_no_supplied_id_returned(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: ({"records": [{"id": "nope", "company": "Ghost Co"}]}, {"calls": 1}),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": "Signal AI is hiring a Growth Intern in Bengaluru. Apply now.",
+            "source_url": "https://linkedin.com/posts/1",
+        }
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["status"] == "failed"
+    assert meta["resolved"] == 0
+    assert not output[0].get("company")

@@ -358,9 +358,19 @@ def hard_exclusions(
     if _contains(joined, _terms(roles, "senior_reject")):
         reasons.append("senior_role")
     cross_functional = _contains(joined, _terms(roles, "cross_functional_terms"))
-    accepted = _contains(joined, _terms(roles, "accepted")) or _contains(
-        title, _terms(roles, "accepted_title")
-    )
+    # A curated phrase in `accepted` ("growth intern", "gtm intern", "founder's
+    # office", ...) is Daksh naming the exact title he wants -- accepting it
+    # is the whole point, and it must not be re-gated behind JD-level
+    # founder-exposure evidence just because the title also contains a bare
+    # broad word ("growth") that the evidence requirement below exists to
+    # police. Only a title that matched SOLELY via a bare broad word (e.g.
+    # "Growth & Marketing Associate", which never matches "growth intern")
+    # needs that corroborating evidence -- otherwise a real, exactly-named
+    # Growth Intern posting gets rejected unless its JD happens to mention
+    # founder exposure, which was never the ask.
+    accepted_phrase = _contains(joined, _terms(roles, "accepted"))
+    accepted_title_word = _contains(title, _terms(roles, "accepted_title"))
+    accepted = accepted_phrase or accepted_title_word
     broad_title = _contains(title, _terms(roles, "broad_title_requires_evidence"))
     function_groups = roles.get("function_evidence", {})
     function_count = sum(
@@ -368,7 +378,7 @@ def hard_exclusions(
         for terms in function_groups.values()
         if isinstance(terms, list)
     ) if isinstance(function_groups, dict) else 0
-    if broad_title and not cross_functional and function_count < 2:
+    if broad_title and not accepted_phrase and not cross_functional and function_count < 2:
         accepted = False
     specialist = _contains(title, _terms(roles, "specialist_reject"))
     if specialist and not cross_functional:

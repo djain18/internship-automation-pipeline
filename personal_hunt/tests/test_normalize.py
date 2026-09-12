@@ -158,6 +158,42 @@ def test_broad_title_requires_two_function_or_leadership_evidence() -> None:
     assert record["eligible"], record["rejection_reasons"]
 
 
+def test_curated_accepted_title_phrase_needs_no_jd_evidence() -> None:
+    """Daksh's explicit instruction (2026-09-13): a posting titled exactly
+    "Growth Intern", "GTM Intern", "Generalist Intern", "Founder's Office
+    Intern" etc. must be accepted on the title alone. He reviews the JD
+    himself; the pipeline must not additionally require founder-exposure
+    language or 2+ function-category evidence just because the title also
+    contains a bare broad word ("growth") that broad_title_requires_evidence
+    exists to police for OTHER, less explicit titles. Before this fix, a
+    curated phrase in `accepted` (e.g. "growth intern") was re-gated behind
+    that same evidence requirement purely because the title also matched a
+    bare word in broad_title_requires_evidence, incorrectly rejecting an
+    exactly-named target role with a thin JD."""
+    for title in ("Growth Intern", "GTM Intern", "Generalist Intern", "Strategy Intern"):
+        record = _record(title=title, description="")
+        assert record["eligible"], (title, record["rejection_reasons"])
+        assert "role_not_cross_functional" not in record["rejection_reasons"]
+
+    # Contrast: a bare broad word with NO curated phrase match still needs
+    # corroborating evidence -- this is the case the guard is actually for.
+    bare_word_only = _record(title="Growth & Marketing Associate", description="")
+    assert "role_not_cross_functional" in bare_word_only["rejection_reasons"]
+
+
+def test_no_fixed_jd_phrasing_qualifies_as_cross_functional() -> None:
+    """Daksh's 2026-09-13 clarification: a founder's office role often has no
+    fixed JD by nature (the founder hands out ad hoc problems as they come
+    up) -- that must count as a positive cross-functional signal, not get
+    rejected for lacking a concrete, describable scope."""
+    record = _record(
+        title="Intern",
+        description="There's no fixed job description here -- you'll wear many hats and solve whatever the founder needs that week.",
+    )
+    assert record["eligible"], record["rejection_reasons"]
+    assert "role_not_cross_functional" not in record["rejection_reasons"]
+
+
 def test_tier_one_role_family_is_not_matched_from_the_description() -> None:
     """A description mentioning growth must not admit an unrelated role."""
     record = _record(
@@ -275,3 +311,53 @@ def test_title_family_match_scores_as_an_explicit_role_match() -> None:
         config["scoring"]["weights"]["role_breadth"]
     )
     assert "role:title_family_match" in scored["score_reasons"]
+
+
+def test_named_bengaluru_role_publishes_without_verifiable_company_metadata() -> None:
+    """The exact profile Daksh hunts must not be unreachable by arithmetic.
+
+    46 of the 100 weighted points (lane_fit, company_size, funding_growth,
+    learning, source_contact) measure company metadata that is unverifiable for
+    a small unknown Bengaluru startup, so a perfect role+location match tops out
+    at 64 against publish_threshold 70. On run_f9ae04eb99b98d0e that dropped
+    Shobitam's "Partnerships Growth Intern" (Jayanagar, posted 2026-09-10) and
+    Vatsenix's "Business Development Intern" (Whitefield), both at exactly 64.
+    """
+    from datetime import date
+
+    from score import score_record
+
+    config = load_all()
+    record = _record(
+        title="Partnerships Growth Intern",
+        description="Own partner outreach end to end.",
+        location="Jayanagar, Bengaluru",
+    )
+    record["source_confidence"] = "low"
+    assert record["eligible"], record["rejection_reasons"]
+    scored = score_record(
+        dict(record), config["roles"], config["scoring"], date(2026, 9, 8)
+    )
+    assert scored["eligible"]
+    assert scored["score"] >= config["scoring"]["publish_threshold"]
+    assert "floor:named_role_in_bengaluru" in scored["score_reasons"]
+
+
+def test_score_floor_does_not_reach_outside_bengaluru() -> None:
+    """The floor is a location-verified concession, not a blanket pass."""
+    from datetime import date
+
+    from score import score_record
+
+    config = load_all()
+    record = _record(
+        title="Partnerships Growth Intern",
+        description="Own partner outreach end to end.",
+        location="Remote - India",
+    )
+    record["source_confidence"] = "low"
+    scored = score_record(
+        dict(record), config["roles"], config["scoring"], date(2026, 9, 8)
+    )
+    assert "floor:named_role_in_bengaluru" not in scored["score_reasons"]
+    assert not scored["eligible"]

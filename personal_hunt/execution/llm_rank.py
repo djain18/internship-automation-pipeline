@@ -14,7 +14,10 @@ LINKEDIN_EXTRACTION_LIMIT = 10
 # Per-call batch size. Kept small enough that one call's output (~350 tokens
 # per resolved record) stays well inside max_tokens=3500 — a 2026-09-11 live
 # run truncated a 20x6000-char batch mid-JSON and failed closed.
-LINKEDIN_EXTRACTION_BATCH_SIZE = 10
+# 2026-09-13: 10 was still too big. run_f9ae04eb99b98d0e lost 3 of 10 batches
+# to `Unterminated string` at char ~11970 (≈3500 output tokens exactly), i.e.
+# 10 records x 300-char quote sits right on the ceiling. 5 halves it.
+LINKEDIN_EXTRACTION_BATCH_SIZE = 5
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -196,10 +199,21 @@ def extract_linkedin_hiring_fields(
             extracted = payload.get("records") if isinstance(payload, dict) else None
             if not isinstance(extracted, list):
                 raise ValueError("response must contain a records list")
-            by_id = {str(item.get("id")): item for item in extracted if isinstance(item, dict)}
             supplied_ids = {str(item["id"]) for item in batch}
-            if not by_id or len(by_id) != len(extracted) or not set(by_id) <= supplied_ids:
-                raise ValueError("extraction IDs must be a clean subset of supplied records")
+            # Keep only IDs we actually sent. A stray or duplicated ID used to
+            # raise and discard the whole batch (3 of 10 batches on
+            # run_f9ae04eb99b98d0e), even though every surviving record still
+            # has to clear _apply_extraction_result's exact-quote validator
+            # before anything is written. Drop the bad rows, keep the good.
+            by_id: dict[str, Any] = {}
+            for item in extracted:
+                if not isinstance(item, dict):
+                    continue
+                identifier = str(item.get("id"))
+                if identifier in supplied_ids:
+                    by_id.setdefault(identifier, item)
+            if not by_id:
+                raise ValueError("extraction returned no IDs from the supplied records")
         except Exception as exc:
             # One bad batch doesn't sink the rest: it is left unresolved
             # (still rejected downstream by hard_exclusions) while later
@@ -372,12 +386,27 @@ ROLE_JUDGEMENT_INSTRUCTION = (
     "single-track scope. Each record below already passed "
     "every other filter and failed only a keyword test for cross-functional "
     "scope. Read the description, not the title. Answer cross_functional true "
-    "ONLY when the described work genuinely spans more than one business "
-    "function or explicitly involves working directly with founders or "
-    "leadership on varied projects. Answer false for a single-track specialist "
-    "role (engineering, design, finance, legal, pure sales quota carrying, "
-    "content only), and false when the description is too thin to tell. Never "
-    "invent detail that is not in the text. Return ONLY raw JSON as "
+    "when the described work genuinely spans more than one business function, "
+    "explicitly involves working directly with founders or leadership on "
+    "varied projects, OR -- treat this as an equally strong positive signal, "
+    "not a weaker one -- when the role has NO fixed job description at all: "
+    "the founder or team hands the intern ad hoc problems to solve as they "
+    "come up, the work is open-ended ('wear many hats', 'figure it out', "
+    "'own whatever needs doing', 'build what the team needs', 'interact with "
+    "customers and build', 'comfortable with ambiguity', 'trusted generalist', "
+    "'whatever it takes', 'direct founder access', 'junior chief of staff' -- "
+    "real phrases founders actually use when hiring for this exact role), or "
+    "the posting is deliberately vague about scope because the role itself is "
+    "meant to flex across whatever the business "
+    "needs that week. A THIN description is not evidence against fit here -- "
+    "an intentionally open-ended, no-fixed-JD role often reads thin because "
+    "there is nothing fixed to describe, and that is exactly the shape Daksh "
+    "wants. Answer false only when the description affirmatively describes a "
+    "SINGLE-TRACK specialist role with a fixed, narrow scope (engineering, "
+    "design, finance, legal, pure sales quota carrying, content-only) and "
+    "gives no sign of broader ownership. When genuinely ambiguous between a "
+    "narrow specialist role and an open-ended generalist one, prefer true. "
+    "Never invent detail that is not in the text. Return ONLY raw JSON as "
     '{"judgements":[{"id":"...","cross_functional":false,"reason":"..."}]}, '
     "one entry per supplied ID, reasons no longer than 180 characters."
 )
