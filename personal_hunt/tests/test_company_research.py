@@ -220,6 +220,39 @@ def test_funding_research_does_not_call_llm_without_explicit_promotion(
     assert "llm_status" not in result
 
 
+def test_funding_research_with_resolved_url_reaches_inference_needs_validation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    monkeypatch.setenv("ENABLE_COMPANY_SITE_RESEARCH", "false")
+    monkeypatch.setattr(
+        "research.cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "problem_hypothesis": "Scaling onboarding after a raise strains ops.",
+                "why_now": "Fresh capital usually funds team growth.",
+                "solution_concept": "Lightweight onboarding tracker.",
+                "uncertainty": "Not confirmed by the company itself.",
+                "supported": True,
+            },
+            {"input_tokens": 10, "output_tokens": 10},
+        ),
+    )
+    result = research_funding_event(
+        {
+            "company": "Acme",
+            "headline": "Acme raises funding",
+            "company_url": "https://acme.com",
+        },
+        allow_llm=True,
+    )
+    assert result["llm_status"] == "ok"
+    assert result["problem_status"] == "inference_needs_validation"
+    assert result["problem_hypothesis"] == "Scaling onboarding after a raise strains ops."
+
+
 OFFICE_PAGE = (
     "<html><body><p>We build payroll software for small Indian teams.</p>"
     "<p>Our Bengaluru office hosts product, sales, and support under one roof.</p>"
