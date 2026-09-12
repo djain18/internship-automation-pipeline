@@ -26,6 +26,7 @@ def load_all() -> dict[str, dict[str, Any]]:
         "scoring": load_yaml("scoring.yml"),
         "roles": load_yaml("roles.yml"),
         "models": load_yaml("models.yml"),
+        "watchlist": load_yaml("watchlist.yml"),
     }
 
 

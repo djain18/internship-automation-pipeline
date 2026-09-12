@@ -348,27 +348,36 @@ def select_discovered_for_research(
     funded_companies: list[Record],
     config: dict[str, Any] | None = None,
     run_date: date | None = None,
+    watchlist_companies: list[Record] | None = None,
 ) -> list[Record]:
     """Select funded companies for deep research based on evidence strength.
 
     Returns top N by evidence score, with minimum evidence threshold applied.
+    Watchlist companies are ALWAYS included with no evidence-minimum gate.
     Companies with no evidence are filtered out.
     """
     config = config or {}
     run_date = run_date or date.today()
     max_per_run = int(config.get("max_deep_research_per_run", 8))
     sector_bonus_weight = float(config.get("deep_research_sector_bonus", 3.0))
+    watchlist_companies = watchlist_companies or []
 
-    # Quick pre-filter: reject companies with no company_url
+    # Watchlist companies are always included, with no evidence gate
+    watchlist_selected = [
+        company for company in watchlist_companies
+        if company.get("company_url")
+    ]
+
+    # Quick pre-filter: reject funded companies with no company_url
     viable = [
         company for company in funded_companies
         if company.get("company_url") and company.get("company_url_basis")
     ]
 
     if not viable:
-        return []
+        return watchlist_selected
 
-    # Score each company by evidence availability
+    # Score each funded company by evidence availability
     scored: list[tuple[Record, float]] = []
     for company in viable:
         lane = company.get("lane", "unknown")
@@ -383,8 +392,11 @@ def select_discovered_for_research(
 
         scored.append((company, base_score))
 
-    # Sort by score descending and take top N
+    # Sort by score descending and take top N (minus slots reserved for watchlist)
     scored.sort(key=lambda x: x[1], reverse=True)
-    selected = [company for company, _score in scored[:max_per_run]]
+    # Reserve up to len(watchlist_selected) slots; remainder for discovered
+    funded_slots = max(0, max_per_run - len(watchlist_selected))
+    funded_selected = [company for company, _score in scored[:funded_slots]]
 
-    return selected
+    # Combine: watchlist first (standing exception), then discovered
+    return watchlist_selected + funded_selected

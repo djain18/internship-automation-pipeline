@@ -449,8 +449,16 @@ def test_discovered_for_research_reaches_the_run_dict_with_prompts(
 
     assert "discovered_for_research" in result
     discovered = result["discovered_for_research"]
-    assert len(discovered) == 1
-    assert discovered[0]["prompt_generation"]["prompt_text"] == "fake prompt"
+    # Now includes 1 funded company + 3 watchlist companies (Emergent, Lyzr AI, AEOS)
+    assert len(discovered) == 4
+    # All should have prompt_generation
+    assert all(item.get("prompt_generation", {}).get("prompt_text") == "fake prompt" for item in discovered)
+    # Verify both funded and watchlist companies are present
+    company_names = {item["company"] for item in discovered}
+    assert "Resolvable Co" in company_names  # The funded one
+    assert "Emergent" in company_names  # From watchlist
+    assert "Lyzr AI" in company_names  # From watchlist
+    assert "AEOS" in company_names  # From watchlist
 
     # And it must also have merged back into funding_primary, not only into
     # the standalone discovered_for_research list.

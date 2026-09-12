@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Lyzr AI</title>
+    <link>https://careers.lyzr.ai/jobs</link>
+    <description>Jobs at Lyzr AI</description>
+    <item>
+      <title>Staff Engineer - DevOps</title>
+      <id>7187541a-83a2-42ab-8b48-e2166d75c28e</id>
+      <link>https://careers.lyzr.ai/jobs/699506-staff-engineer-devops</link>
+      <published>Fri, 11 Sep 2026 14:21:14 +0530</published>
+      <summary>&lt;h1&gt;Lyzr is an enterprise software company&lt;/h1&gt;&lt;p&gt;Build solutions&lt;/p&gt;</summary>
+      <tt:city xmlns:tt="http://teamtailor.com">Bengaluru</tt:city>
+      <tt:country xmlns:tt="http://teamtailor.com">India</tt:country>
+      <tt:department xmlns:tt="http://teamtailor.com">Product</tt:department>
+      <tt:address xmlns:tt="http://teamtailor.com">Maker Meridian</tt:address>
+      <tt:name xmlns:tt="http://teamtailor.com">Bengaluru</tt:name>
+    </item>
+    <item>
+      <title>Customer Success Manager</title>
+      <id>abc123def456</id>
+      <link>https://careers.lyzr.ai/jobs/699507-customer-success-manager</link>
+      <published>Mon, 09 Sep 2026 10:30:00 +0530</published>
+      <summary>&lt;p&gt;Support our customers in Bengaluru and globally&lt;/p&gt;</summary>
+      <tt:city xmlns:tt="http://teamtailor.com">Bengaluru</tt:city>
+      <tt:country xmlns:tt="http://teamtailor.com">India</tt:country>
+      <tt:department xmlns:tt="http://teamtailor.com">Sales</tt:department>
+    </item>
+    <item>
+      <title>US Remote Role</title>
+      <id>xyz789pqr012</id>
+      <link>https://careers.lyzr.ai/jobs/699508-us-remote</link>
+      <published>Wed, 07 Sep 2026 09:15:00 +0530</published>
+      <summary>&lt;p&gt;Remote position based in US&lt;/p&gt;</summary>
+      <tt:city xmlns:tt="http://teamtailor.com">New York</tt:city>
+      <tt:country xmlns:tt="http://teamtailor.com">United States</tt:country>
+      <tt:department xmlns:tt="http://teamtailor.com">Engineering</tt:department>
+    </item>
+  </channel>
+</rss>
