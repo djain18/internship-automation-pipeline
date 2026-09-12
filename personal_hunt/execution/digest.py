@@ -93,6 +93,7 @@ def _funding_section(title: str, records: list[Record]) -> str:
 
 
 def _problem_section(records: list[Record]) -> str:
+    """Legacy section for funding-event problem hypotheses (Phase 1-6)."""
     lines = ["## Evidence-backed problem hypotheses", ""]
     shown = 0
     for item in records:
@@ -120,6 +121,182 @@ def _problem_section(records: list[Record]) -> str:
                 "",
             ]
         )
+    return "\n".join(lines)
+
+
+def _watchlist_movement_section(discovered: list[Record]) -> str:
+    """Summary of activity at each watchlist company.
+
+    Watchlist companies are those with company_url_basis == "watchlist".
+    This section provides a one-line status per watchlist company so Daksh
+    can see at a glance what changed since yesterday.
+    """
+    watchlist_companies = [
+        item for item in discovered
+        if item.get("company_url_basis") == "watchlist"
+    ]
+
+    lines = ["## Watchlist movement", ""]
+
+    if not watchlist_companies:
+        lines.append("No watchlist companies present this run.")
+        lines.append("")
+        return "\n".join(lines)
+
+    for item in watchlist_companies:
+        company = item.get("company", "Unknown")
+        deep_research = item.get("deep_problem_research") or {}
+
+        # Build a one-line status based on what we found
+        evidence_count = deep_research.get("evidence_count", 0)
+        if evidence_count == 0:
+            status = "no activity observed"
+        else:
+            status = f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
+
+        lines.append(f"- **{company}**: {status}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _problem_brief_block(company: Record) -> list[str]:
+    """Render one problem brief company block for Phase 7 digest.
+
+    Returns a list of lines (not joined) for a single company's full problem
+    brief including observed signals, hypothesis, prompt, contact, and drafts.
+    """
+    lines: list[str] = []
+    company_name = company.get("company", "Unknown")
+    deep_research = company.get("deep_problem_research") or {}
+    prompt_gen = company.get("prompt_generation") or {}
+    contact = company.get("selected_contact") or {}
+    outreach = company.get("outreach") or {}
+
+    lines.append(f"### {company_name}")
+    lines.append("")
+
+    # Observed signals with evidence URLs
+    lines.append("**Observed signals:**")
+    lines.append("")
+    signals = deep_research.get("observed_signals") or []
+    if signals:
+        for signal in signals:
+            text = signal.get("text", "")
+            url = signal.get("url", "")
+            if text and url:
+                lines.append(f"- \"{text}\" — {url}")
+        lines.append("")
+    else:
+        lines.append("(No signals observed)")
+        lines.append("")
+
+    # Problem hypothesis, labeled as inference
+    hypothesis = deep_research.get("problem_hypothesis", "")
+    if hypothesis:
+        lines.append("**Inference (not verified):**")
+        lines.append("")
+        lines.append(f"{hypothesis}")
+        lines.append("")
+
+    # Fenced Claude Code prompt
+    prompt_text = prompt_gen.get("prompt_text", "")
+    lines.append("**Claude Code prompt (paste-ready):**")
+    lines.append("")
+    if prompt_text:
+        lines.append("```")
+        lines.append(prompt_text)
+        lines.append("```")
+    else:
+        # Handle insufficient evidence honestly
+        basis = prompt_gen.get("prompt_basis", "unknown")
+        status = outreach.get("send_status", "")
+        if status == "blocked_insufficient_evidence" or basis == "insufficient_evidence":
+            lines.append("*Insufficient evidence to generate a prompt. The observed signals may need more depth.*")
+        else:
+            lines.append("*Prompt generation was not completed for this company.*")
+    lines.append("")
+
+    # Contact information
+    lines.append("**Contact:**")
+    lines.append("")
+    contact_name = contact.get("name", "")
+    contact_email = contact.get("email", "")
+    contact_linkedin = contact.get("linkedin", "")
+    contact_source = contact.get("source", "")
+    contact_status = contact.get("status", "")
+
+    if contact_name:
+        lines.append(f"- Name: {contact_name}")
+    if contact_email:
+        lines.append(f"- Email: {contact_email}")
+    if contact_linkedin:
+        lines.append(f"- LinkedIn: {contact_linkedin}")
+    if contact_source:
+        lines.append(f"- Source: {contact_source}")
+    if contact_status and not contact_name:
+        lines.append(f"- Status: {contact_status}")
+    lines.append("")
+
+    # Three humanized drafts
+    lines.append("**Outreach drafts:**")
+    lines.append("")
+
+    validation_errors = outreach.get("validation_errors", [])
+    send_status = outreach.get("send_status", "")
+
+    if send_status == "blocked_insufficient_evidence":
+        lines.append("*Blocked: insufficient evidence for outreach. Research the company more before contacting.*")
+    elif send_status == "blocked_validation":
+        lines.append(f"*Blocked by humanizer rules: {'; '.join(validation_errors)}*")
+    else:
+        # Email draft
+        email_body = outreach.get("email_body", "")
+        if email_body:
+            lines.append("**Email (cold outreach):**")
+            lines.append("")
+            lines.append(email_body)
+            lines.append("")
+
+        # LinkedIn note (connection request)
+        linkedin_note = outreach.get("linkedin_note", "")
+        if linkedin_note:
+            lines.append("**LinkedIn connection note:**")
+            lines.append("")
+            lines.append(linkedin_note)
+            lines.append("")
+
+        # LinkedIn message (after connection accepted)
+        linkedin_message = outreach.get("linkedin_message", "")
+        if linkedin_message:
+            lines.append("**LinkedIn message (after connection):**")
+            lines.append("")
+            lines.append(linkedin_message)
+            lines.append("")
+
+    return lines
+
+
+def _problem_briefs_section(discovered: list[Record]) -> str:
+    """Full problem briefs for all researched (discovered) companies.
+
+    Phase 7: The core section that gives Daksh everything needed to understand
+    a company's problem and reach out with a working prototype. Includes observed
+    signals with quoted evidence, hypothesis (labeled as inference), paste-ready
+    Claude Code prompt, contact info, and three humanized drafts.
+    """
+    if not discovered:
+        lines = ["## Problem briefs for researched companies", ""]
+        lines.append("No companies were researched this run.")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines = ["## Problem briefs for researched companies", ""]
+
+    for item in discovered:
+        block_lines = _problem_brief_block(item)
+        lines.extend(block_lines)
+
     return "\n".join(lines)
 
 
@@ -318,6 +495,7 @@ def render_digest(run: Record) -> str:
     shadow = os.getenv("SHADOW_MODE", "true").casefold() in {"1", "true", "yes"}
     label = "SHADOW / HUMAN REVIEW" if shadow else "HUMAN REVIEW REQUIRED"
     stale_notice = run.get("staleness_warning", "")
+    discovered = run.get("discovered_for_research", [])
     return "\n".join(
         [
             f"# Internship hunt digest - {run['run_date']}",
@@ -331,6 +509,7 @@ def render_digest(run: Record) -> str:
                 f"labeled extension through {run.get('funding_extension_window_days', 30)} days."
             ),
             "",
+            # Phase 7: Section 1 - Approved internship matches (unchanged)
             _section("New Bengaluru internships approved by Kimi", primary),
             _section("New India-remote internships approved by Kimi", remote),
             "## Kimi admission summary",
@@ -347,6 +526,11 @@ def render_digest(run: Record) -> str:
                 else "Daily internship quality target met."
             ),
             "",
+            # Phase 7: Section 2 - Watchlist movement summary (NEW)
+            _watchlist_movement_section(discovered),
+            # Phase 7: Section 3 - Problem briefs for all researched companies (NEW)
+            _problem_briefs_section(discovered),
+            # Phase 7: Section 4 - Verification, funding, health (existing sections)
             _verification_section(run.get("needs_verification", [])),
             _spotted_section(run.get("spotted_leads", [])),
             _glance_section(run.get("glance_queue", [])),
