@@ -120,3 +120,57 @@ as the Modal CLI); the global install lives at
 shim (resolves to a nonexistent `E:\Projects\vite\bin\vite.js`); run
 `node node_modules/vite/bin/vite.js build` directly instead. Does not
 affect Vercel's own container build, which succeeds normally.
+
+## 2026-09-13 — mojibake mystery resolved (Modal preemption snapshot theory confirmed); Phase 1 verification complete
+
+**Trigger:** commit `16c9fa1` widened `repair_mojibake`'s pre-check
+(`personal_hunt/execution/models.py`) to catch `â‚¹` (rupee sign
+mis-decoded as cp1252), not just the original `â€` guard. The fix was
+verified correct locally against the live Inc42 feed, but the first
+cloud run after redeploying still showed the mangled text, and that run
+had logged `"Container terminated due to preemption... will be
+restarted with the same input"` before completing — raising an
+unconfirmed theory that the preemption resumed a pre-redeploy process
+snapshot rather than the freshly deployed code.
+
+**Resolution:** redeployed (`daksh-internship-hunt`, no errors) and ran
+`collect` again. No preemption message this time. Downloaded the new
+run artifact from the volume — `run_05650933bd04f0cd`, completed
+2026-09-12T09:27:53Z — and inspected `funding_primary` directly:
+`"Paris Panini Parent Popo Global Raises ₹532 Cr From Artal Asia"`
+renders the rupee sign correctly in `headline`, `company`,
+`observed_signal`, and `source_reported_detail`. No `â` or `Â` anywhere
+in either funding event's fields. **Confirmed: the fix works; the
+mojibaked cloud run was a preemption/snapshot artifact, not a live bug
+in the current code.** (Unrelated: raw FTB internship-listing
+`description` text in `all_scored` still carries mojibake — that field
+was never in scope for this fix and is a separate, undiagnosed source
+of the same defect class in a different field.)
+
+Both funding events remain `company_url_basis: unresolved` (Graph AI,
+Paris Panini Parent Popo Global) — expected, documented low-hit-rate
+behavior per the Phase 1 design (neither company is in a VC registry or
+that day's opportunity list), not a bug.
+
+**Phase 1's own verification gap closed:** no live event has resolved a
+`company_url` yet to exercise the `allow_llm=True` → real Kimi call →
+`inference_needs_validation` path end-to-end, and Bedrock credentials
+only exist in the Modal secret (not locally), so a live exercise wasn't
+possible this session. Added
+`test_funding_research_with_resolved_url_reaches_inference_needs_validation`
+to `personal_hunt/tests/test_company_research.py`, mirroring the
+existing negative-path test
+(`test_funding_research_does_not_call_llm_without_explicit_promotion`):
+mocks `cached_bedrock_json` to return `supported: true` and asserts
+`llm_status: ok`, `problem_status: inference_needs_validation`, and the
+generated `problem_hypothesis` survives. This proves the gating and
+status-mapping logic in `research_funding_event`
+(`personal_hunt/execution/research.py:405-456`) is correct in isolation;
+it does not replace a real cloud exercise once a live funding event
+actually resolves a `company_url`.
+
+**Verified:** 179 personal_hunt tests (was 177 + 2 new), 200 Rise tests
+(separate commands), Ruff clean on `personal_hunt`.
+
+Phase 1 is now considered done. Next: Phase 2 (`problem_research.py`)
+and Phase 3 (`build_prompt.py`), per the approved plan's ship order.
