@@ -291,6 +291,34 @@ def test_linkedin_actor_nested_posted_date_is_mapped() -> None:
     assert records[0]["title"] == ""
 
 
+def test_linkedin_mojibaked_apostrophe_is_repaired() -> None:
+    # UTF-8 bytes for "'" (U+2019) decoded as cp1252 upstream produce this
+    # exact three-character mangling. The extraction validator in llm_rank.py
+    # requires an exact quote match against the post text, so leaving this
+    # unrepaired silently loses otherwise-good posts.
+    mojibaked = "Weâ€™re hiring at Auraaison a Founderâ€™s Office Intern"
+    records = map_actor_items(
+        [
+            {
+                "id": "post_moji",
+                "content": mojibaked,
+                "linkedinUrl": "https://www.linkedin.com/posts/auraaisonn",
+            }
+        ],
+        {"id": "linkedin_posts_apify", "adapter": "apify_linkedin_posts"},
+    )
+    assert records[0]["description"] == "We’re hiring at Auraaison a Founder’s Office Intern"
+
+
+def test_linkedin_genuinely_clean_text_is_left_unchanged() -> None:
+    clean = "We are hiring a Founder's Office Intern in Bengaluru"
+    records = map_actor_items(
+        [{"id": "post_clean", "content": clean, "linkedinUrl": "https://www.linkedin.com/posts/clean"}],
+        {"id": "linkedin_posts_apify", "adapter": "apify_linkedin_posts"},
+    )
+    assert records[0]["description"] == clean
+
+
 def test_linkedin_fixture_uses_only_structured_job_evidence() -> None:
     payload = json.loads((FIXTURES / "linkedin-posts-response.json").read_text(encoding="utf-8"))
     records = map_actor_items(payload, {"id": "linkedin_posts_apify", "adapter": "apify_linkedin_posts"})

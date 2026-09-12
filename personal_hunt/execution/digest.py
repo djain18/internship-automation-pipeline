@@ -170,8 +170,43 @@ def _cost_section(run: Record) -> str:
             for item in yields
         ]
         lines.append(f"- Yield: {'; '.join(parts)}.")
+        zero_yield = [item for item in yields if item.get("unique") and not item.get("eligible")]
+        if zero_yield:
+            lines.append("- Sources that yielded nothing:")
+            for item in zero_yield:
+                reason = item.get("dominant_rejection_reason")
+                count = item.get("dominant_rejection_count", 0)
+                reason_text = f", mostly {reason} ({count})" if reason else ""
+                lines.append(
+                    f"  - {item.get('source')}: {item.get('unique', 0)} reviewed, 0 eligible{reason_text}."
+                )
     else:
         lines.append("- Yield: no source activity recorded.")
+    role_judgement = run.get("role_judgement", {}) or {}
+    skipped = int(role_judgement.get("skipped_over_cap", 0) or 0)
+    if skipped:
+        lines.append(
+            f"- Cross-functional judging hit its per-run cap: {skipped} candidate(s) "
+            "skipped_over_cap without a Tier 2 read. Raise max_role_judgements_per_run "
+            "in scoring.yml if this recurs."
+        )
+    extraction = next(
+        (item for item in run.get("source_health", []) if item.get("source_id") == "linkedin_posts_apify_extraction"),
+        None,
+    )
+    if extraction:
+        lines.append(
+            f"- LinkedIn field extraction: {extraction.get('resolved', extraction.get('record_count', 0))} "
+            f"resolved of {extraction.get('attempted', 0)} attempted "
+            f"(status {extraction.get('status')})."
+        )
+        extraction_skipped = int(extraction.get("skipped_over_cap", 0) or 0)
+        if extraction_skipped:
+            lines.append(
+                f"- LinkedIn extraction hit its per-run cap: {extraction_skipped} qualifying "
+                "post(s) skipped. Raise max_linkedin_extractions_per_run in scoring.yml "
+                "if this recurs."
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -282,11 +317,13 @@ def render_digest(run: Record) -> str:
     admitted_count = len(primary) + len(remote)
     shadow = os.getenv("SHADOW_MODE", "true").casefold() in {"1", "true", "yes"}
     label = "SHADOW / HUMAN REVIEW" if shadow else "HUMAN REVIEW REQUIRED"
+    stale_notice = run.get("staleness_warning", "")
     return "\n".join(
         [
             f"# Internship hunt digest - {run['run_date']}",
             "",
             f"**{label}**",
+            *(["", f"**{stale_notice}**"] if stale_notice else []),
             "",
             (
                 f"Internships: prior {run.get('internship_window_days', 10)} days. "

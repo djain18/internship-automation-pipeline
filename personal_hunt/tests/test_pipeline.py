@@ -154,6 +154,149 @@ def test_self_digest_is_sent_once_per_live_run(monkeypatch, tmp_path: Path) -> N
     assert sent_subjects == ["1 new internship match - Rise"]
 
 
+def test_self_digest_still_sends_when_every_match_was_already_sent(monkeypatch, tmp_path: Path) -> None:
+    # 2026-09-12 incident: the day's only match was already emailed on a
+    # previous day, the per-opportunity filter left nothing, and the whole
+    # email was silently dropped. A quiet day must still produce mail.
+    state = LocalState(tmp_path / "state.json")
+    sent_subjects: list[str] = []
+
+    def fake_send(subject: str, _body: str, _html: str = "") -> str:
+        sent_subjects.append(subject)
+        return "gmail_message_quiet"
+
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("GMAIL_DIGEST_TO", "dakshinjain187@gmail.com")
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+    state.record_digest_delivery(
+        "run_prior_day", "dakshinjain187@gmail.com", "gmail_prior", "2026-09-10T02:00:00Z",
+        opportunity_ids=["opp-1"],
+    )
+    run = {
+        "run_id": "run_quiet_day",
+        "run_date": "2026-09-12",
+        "run_kind": "live",
+        "digest_usable": True,
+        "digest_primary": [{"id": "opp-1", "company": "Example", "title": "Founder's Office Intern"}],
+        "digest_remote_fallback": [],
+        "primary": [],
+        "remote_fallback": [],
+        "funding_primary": [],
+        "funding_extended": [],
+        "source_health": [],
+        "needs_verification": [{"id": "lead-1", "company": "Tray Co", "title": "Growth Intern"}],
+    }
+
+    status, message_id = _send_once(run, state)
+
+    assert status == "digest_sent_no_new_matches"
+    assert message_id == "gmail_message_quiet"
+    assert sent_subjects == ["no new internship matches - Rise"]
+
+
+def test_digest_key_is_per_ist_day_not_only_per_run_id(monkeypatch, tmp_path: Path) -> None:
+    # A retry within the same IST day against the same run_id must not
+    # double-send; a genuinely new IST day referencing the same run_id
+    # (e.g. a failed later collect re-rendering the last good run) must send.
+    state = LocalState(tmp_path / "state.json")
+    calls: list[str] = []
+
+    def fake_send(subject: str, _body: str, _html: str = "") -> str:
+        calls.append(subject)
+        return f"gmail_message_{len(calls)}"
+
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("GMAIL_DIGEST_TO", "dakshinjain187@gmail.com")
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+    run = {
+        "run_id": "run_same_artifact",
+        "run_date": "2026-09-12",
+        "run_kind": "live",
+        "digest_usable": True,
+        "digest_primary": [],
+        "digest_remote_fallback": [],
+        "primary": [],
+        "remote_fallback": [],
+        "funding_primary": [],
+        "funding_extended": [],
+        "source_health": [],
+    }
+
+    ist_days = iter(["2026-09-12", "2026-09-13", "2026-09-13"])
+    monkeypatch.setattr(
+        pipeline,
+        "_ist_delivery_key",
+        lambda run_id: f"{next(ist_days)}:{run_id}",
+    )
+
+    first = _send_once(run, state)
+    second_new_day = _send_once(run, state)
+    third_same_day_as_second = _send_once(run, state)
+
+    assert first == ("digest_sent_no_new_matches", "gmail_message_1")
+    # 2026-09-13 is a new IST day relative to the first send -> sends again.
+    assert second_new_day == ("digest_sent_no_new_matches", "gmail_message_2")
+    # A second call later the same IST day must not send a third time.
+    assert third_same_day_as_second == ("digest_already_sent", "gmail_message_2")
+
+
+def test_stale_collect_marks_digest_subject_and_body(monkeypatch, tmp_path: Path) -> None:
+    state = LocalState(tmp_path / "state.json")
+    captured: dict[str, str] = {}
+
+    def fake_send(subject: str, body: str, _html: str = "") -> str:
+        captured["subject"] = subject
+        captured["body"] = body
+        return "gmail_message_stale"
+
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("GMAIL_DIGEST_TO", "dakshinjain187@gmail.com")
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+    run = {
+        "run_id": "run_stale",
+        "run_date": "2026-09-10",
+        "run_kind": "live",
+        "digest_usable": True,
+        "digest_primary": [],
+        "digest_remote_fallback": [],
+        "primary": [],
+        "remote_fallback": [],
+        "funding_primary": [],
+        "funding_extended": [],
+        "source_health": [],
+        "completed_at": "2026-09-10T00:00:00+00:00",
+    }
+
+    status, _ = _send_once(run, state)
+
+    assert status == "digest_sent_no_new_matches"
+    assert captured["subject"].startswith("[STALE]")
+    assert "STALE DATA" in captured["body"]
+
+
+def test_digest_latest_sends_failure_note_and_reraises_when_pointer_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PIPELINE_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("PIPELINE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ENABLE_SELF_DIGEST", "true")
+    monkeypatch.setattr(
+        "sys.argv", ["pipeline.py", "--digest-latest", "--no-state", "--send-digest"]
+    )
+    failure_subjects: list[str] = []
+
+    def fake_send(subject: str, _body: str, _html: str = "") -> str:
+        failure_subjects.append(subject)
+        return "gmail_message_failure"
+
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+
+    with pytest.raises(RuntimeError, match="No saved latest-live pointer"):
+        pipeline.main()
+
+    assert failure_subjects == ["[FAILED] internship digest delivery - Rise"]
+
+
 def test_self_digest_accepts_either_daksh_alias_and_rejects_other() -> None:
     assert "dakshinjain187@gmail.com" in pipeline.APPROVED_DIGEST_RECIPIENTS
     assert "dakshjainn02@gmail.com" in pipeline.APPROVED_DIGEST_RECIPIENTS
@@ -332,7 +475,24 @@ def test_source_yield_keeps_raw_unique_and_approved_counts_separate() -> None:
     assert by_source["yc"] == {
         "source": "yc", "raw": 2, "unique": 1, "eligible": 1,
         "kimi_approved": 1, "manually_applied": 1, "replied": 1, "interviewed": 1,
+        "dominant_rejection_reason": "", "dominant_rejection_count": 0,
     }
+
+
+def test_source_yield_surfaces_dominant_rejection_reason_for_zero_yield_source() -> None:
+    result = build_source_yield(
+        [{"source": "linkedin"}] * 3,
+        [
+            {"source": "linkedin", "eligible": False, "rejection_reasons": ["missing_required_identity_or_source"]},
+            {"source": "linkedin", "eligible": False, "rejection_reasons": ["missing_required_identity_or_source"]},
+            {"source": "linkedin", "eligible": False, "rejection_reasons": ["location_out_of_scope"]},
+        ],
+        [],
+    )
+    by_source = {item["source"]: item for item in result}
+    assert by_source["linkedin"]["eligible"] == 0
+    assert by_source["linkedin"]["dominant_rejection_reason"] == "missing_required_identity_or_source"
+    assert by_source["linkedin"]["dominant_rejection_count"] == 2
 
 
 def test_company_url_requires_one_exact_reviewed_company_match() -> None:

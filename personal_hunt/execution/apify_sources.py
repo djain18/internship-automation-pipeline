@@ -68,10 +68,28 @@ def _actor_key(actor_id: str) -> str:
     return actor_id.replace("/", "~")
 
 
+def _repair_mojibake(text: str) -> str:
+    """Undo UTF-8 bytes that were decoded as cp1252 upstream (e.g. an
+    apostrophe arriving as "Founderâ€™s Office"). The extraction
+    validator in llm_rank.py needs an exact quote match, so mangled
+    punctuation silently loses otherwise-good posts. Only applied when the
+    round trip succeeds cleanly; genuinely correct text that happens to
+    contain cp1252-range characters is left untouched."""
+    if not text or "Â" not in text and "â€" not in text:
+        return text
+    try:
+        repaired = text.encode("cp1252").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+    return repaired
+
+
 def _map_linkedin(items: list[Record], source: dict[str, Any]) -> list[Record]:
     output: list[Record] = []
     for item in items:
-        text = clean_text(item.get("text") or item.get("content") or item.get("postText"))
+        text = _repair_mojibake(
+            clean_text(item.get("text") or item.get("content") or item.get("postText"))
+        )
         url = item.get("linkedinUrl") or item.get("postUrl") or item.get("url")
         job = item.get("job") if isinstance(item.get("job"), dict) else {}
         hiring_company = item.get("hiringCompany") if isinstance(item.get("hiringCompany"), dict) else {}

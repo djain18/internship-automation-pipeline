@@ -55,9 +55,32 @@ spend. It has explicit loading, empty, stale, error, and access-denied states.
 ## Delivery and safety
 
 Gmail sends multipart plain-text plus Rise-branded HTML. Delivery requires the
-approved recipient, a usable live run, at least one newly approved opportunity,
-and the separate enable flag. The delivery ledger stores both Gmail message ID
-and sent opportunity IDs only after success.
+approved recipient, a usable live run, and the separate enable flag.
+
+**Amended 2026-09-12** (2026-09-12 incident: the whole email was silently
+suppressed whenever the day's only match had already been sent on a prior
+day, discarding the verification tray and funding sections along with it,
+with no error and no signal): delivery no longer requires at least one
+newly approved opportunity. A day with nothing new still sends, with the
+subject and body saying so plainly — silence must mean the pipeline
+broke, never "nothing to report." The delivery ledger key is the IST
+calendar date plus run_id (`<ist-date>:<run_id>`), not run_id alone, so a
+retry within the same IST morning stays idempotent while a genuinely new
+day always sends even against the same run artifact; a bare run_id key
+recorded before this change still counts as already-sent. The ledger
+stores the Gmail message ID and sent opportunity IDs only after success,
+same as before. A collect older than 18 hours is flagged stale in the
+subject and body rather than silently re-rendered as fresh, and the
+`--digest-latest` delivery path now catches its own exceptions and
+best-effort emails a failure note before re-raising.
+
+The LinkedIn field-extraction repair step (posts arrive as text without
+structured company/title) is capped by
+`config/scoring.yml:max_linkedin_extractions_per_run` (100), not a
+hardcoded limit, and runs in chunked batches so one oversized prompt
+cannot truncate the whole attempt; a failed batch no longer sinks the
+rest. Post text is repaired for UTF-8-decoded-as-cp1252 mojibake before
+the extraction validator sees it.
 
 Local college-Wi-Fi support uses the Windows system CA through Node
 `--use-system-ca` and Python `truststore`; certificate verification is never

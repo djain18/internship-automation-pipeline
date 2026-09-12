@@ -15,6 +15,14 @@ adaptive_apify_topup: true
 linkedin_every_run: true
 llm_fit_threshold: 70
 max_role_judgements_per_run: 25
+# 2026-09-12: was a hardcoded LINKEDIN_EXTRACTION_LIMIT=10 in llm_rank.py.
+# On 2026-09-12, 76 of 99 identity-missing LinkedIn posts qualified for
+# extraction but only 10 were attempted, dropping same-day exact-match
+# roles (e.g. Auraaison Founder's Office Intern) purely for want of a
+# parse. Set above the actor's own max_items:150 ceiling, chunked into
+# batches per call (see MAX_LINKEDIN_EXTRACTION_BATCH in llm_rank.py) so a
+# single oversized prompt cannot truncate and lose the tail.
+max_linkedin_extractions_per_run: 100
 # Unverified LinkedIn leads shown per run for manual checking. Capped so a
 # long tail of low-confidence leads cannot bury the approved matches.
 max_needs_verification: 10

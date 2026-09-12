@@ -51,6 +51,16 @@ def test_sent_opportunity_history_survives_new_runs(tmp_path: Path) -> None:
     assert state.sent_opportunity_ids() == {"opp-1", "opp-2", "opp-3"}
 
 
+def test_digest_delivery_for_run_falls_back_to_legacy_bare_run_id_key(tmp_path: Path) -> None:
+    state = LocalState(tmp_path / "state.json")
+    # Pre-migration deliveries were keyed on the bare run_id (no IST date
+    # prefix). The dated-key lookup must still recognize them as sent so a
+    # legacy delivery is never re-sent under the new keying scheme.
+    state.record_digest_delivery("run_legacy", "dakshinjain187@gmail.com", "msg_legacy", "now")
+    assert state.digest_delivery_for_run("2026-09-12:run_legacy", "run_legacy")["message_id"] == "msg_legacy"
+    assert state.digest_delivery_for_run("2026-09-13:run_new", "run_new") == {}
+
+
 def test_llm_cache_persists_and_merges(tmp_path: Path) -> None:
     state = LocalState(tmp_path / "state.json")
     state.update_llm_cache({"key-a": {"payload": {"value": 1}}})
