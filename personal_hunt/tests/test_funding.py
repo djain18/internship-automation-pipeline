@@ -71,6 +71,30 @@ def test_funding_feed_repairs_mojibaked_title() -> None:
     assert "’" in records[0]["headline"]
 
 
+def test_funding_feed_repairs_mojibaked_rupee_sign() -> None:
+    # 2026-09-13: a real cloud run showed the apostrophe-only mojibake
+    # check missed this pattern entirely -- U+20B9 (rupee) mis-decoded as
+    # cp1252 produces U+00E2 U+201A U+00B9, not the U+00E2 U+20AC prefix
+    # the first fix checked for. Verified against real Inc42 output:
+    # "Paris Panini Parent Popo Global Raises â‚¹532 Cr
+    # From Artal Asia" survived the earlier version of this fix unrepaired.
+    xml = (
+        "<?xml version='1.0'?><rss version='2.0'><channel>"
+        "<item><title>Popo Global Raises â‚¹532 Cr From Artal Asia</title>"
+        "<link>https://example.com/rupee</link><pubDate>Wed, 09 Sep 2026 01:00:00 GMT</pubDate>"
+        "<description>Restaurant company hasâ€¦ raised funding.</description></item>"
+        "</channel></rss>"
+    ).encode("utf-8")
+    records = parse_funding_feed(
+        xml,
+        {"id": "funding_fixture", "name": "Funding Fixture", "source_confidence": "medium"},
+    )
+    assert len(records) == 1
+    assert "₹" in records[0]["headline"]
+    assert "â" not in records[0]["headline"]
+    assert "â" not in records[0]["source_reported_detail"]
+
+
 def test_funding_primary_extension_and_hard_max() -> None:
     scoring = {
         "funding_primary_age_days": 15,
