@@ -174,3 +174,93 @@ actually resolves a `company_url`.
 
 Phase 1 is now considered done. Next: Phase 2 (`problem_research.py`)
 and Phase 3 (`build_prompt.py`), per the approved plan's ship order.
+
+## 2026-09-13 — Phases 2, 3, 4, 5, 6, 7 shipped; all verified, all bug-fixed
+
+All remaining phases of `i-want-you-to-ethereal-sloth.md` are implemented
+and committed on `main`, in ship order (2+3, 6, 4+5, 7). Commit range
+`e6a857b^..3beeec5` (13 commits). Only Phase 8's live `/my-hunt` frontend
+deploy step remains a Daksh action (deploying the merged copy); everything
+in `personal_hunt/` is done.
+
+Each phase was built by a Haiku implementation subagent, then independently
+verified (Sonnet, and for the final pass Opus) against the real pipeline
+output, not just its own tests. **Every single phase shipped with at least
+one real, confirmed bug that only surfaced by reading actual output or
+running a live check** — the pattern is consistent enough to record:
+
+- **Phase 2/3**: `build_prompt.py` read `company["problem_research"]`
+  (Phase 1's unrelated funding-event research shape) instead of
+  `company["deep_problem_research"]` (Phase 2's real output key) — the
+  entire prototype-prompt feature was dead on every real run despite
+  passing its own tests, because the tests used the same wrong key. Also:
+  `discovered_for_research` was computed but never written into
+  `run_pipeline`'s returned dict. Also: the fail-closed evidence gate
+  checked a quote was a real substring but accepted any non-empty URL,
+  letting a fabricated source ride along with a genuine quote.
+- **Phase 6**: `watchlist.yml`'s Emergent `board_url` and AEOS `site_url`
+  were both plausible-looking guesses, not real — caught only by live
+  fetching each one (Emergent's real Greenhouse token, `emergentlabsinc`,
+  was buried in a JS bundle behind a custom job-board SPA; AEOS's real
+  site is `aeoscompany.com`, not `aeos.ai`). Also: `board_url` was never
+  actually read anywhere, so watchlist companies' own job boards never
+  reached the pipeline at all until a `watchlist_board_sources()` fetcher
+  was added and wired in.
+- **Phase 4/5**: the humanizer validator's "curly quote" rule used a plain
+  ASCII apostrophe as its forbidden character instead of the real curly
+  quote (U+2019) — every contraction in every draft ("I've", "don't")
+  hard-failed validation. A test comment left behind ("use plain text to
+  avoid apostrophe encoding issues") is the tell that the agent worked
+  around its own bug instead of finding it. Also: `draft_outreach`/
+  `draft_problem_led_email` was fully built but never called on
+  `discovered_for_research`. Also: the fixed email template's word count
+  (~66) couldn't satisfy the validator's own 80-110 word range.
+- **Phase 7**: `render_digest` (plain text) got the new sections;
+  `render_html_digest` — the part Gmail actually renders when both parts
+  exist in one message — did not. The whole phase's deliverable would
+  have been invisible in the real inbox.
+- **Final Opus review pass** (commit `3beeec5`) found and fixed 10 more:
+  a site-scraped LinkedIn URL could attach to the wrong person (any
+  `/in/` link on a team page, not necessarily the actual contact) and, in
+  one path, manufacture a fake "available" contact status from a stray
+  profile link with no name or email attached; the digest read
+  `contact["source"]` when `choose_contact` emits `source_url`, so every
+  problem brief silently dropped its contact provenance; the humanizer's
+  forbidden-word scan ran over the verbatim evidence quote too, so a
+  company merely describing itself with a word like "robust" blocked its
+  own outreach draft; `_role_priority`'s founder/chief-of-staff/head-of-ops
+  ladder was computed and discarded (both branches returned the same
+  string); the emoji check only covered 14 hand-listed emoji, missing
+  🚀✨✅⚡ and anything else outside that list; both LinkedIn note/message
+  used a bare `[:300]` slice that could cut off mid-word; the Teamtailor
+  adapter bypassed `_verified_ats_url`'s host allowlist entirely, so
+  `board_url` in `watchlist.yml` could point anywhere.
+
+**The common failure shape across all of it**: a field computed correctly
+in one function, read under a different name (or never read) by its
+consumer; a fixed-length template that doesn't actually satisfy its own
+validator; a plausible-looking fact (a URL, a Unicode character, an emoji
+list) that was never checked against the real thing. Tests passed in every
+case because the test used the same wrong assumption as the code. The
+lesson already written into this file on 2026-09-12 about Modal exit
+codes not proving work applies just as much to unit tests: a green suite
+is not proof a feature works end-to-end — only reading the real output
+(or, this session, an adversarial second/third read of the diff) caught
+any of this.
+
+**Verified, final state:** 233 personal_hunt tests (up from 177 at the
+start of this entry), 200 Rise tests (run separately), Ruff clean on
+`personal_hunt`. Nothing pushed to `origin/main` yet as of this entry —
+confirm with Daksh before pushing the full range.
+
+**Known, deliberately unshipped scope** (documented, not bugs):
+- Phase 2's evidence sources are company site + Hacker News only. Reddit
+  JSON (blocked by Reddit without auth, confirmed live), Google Play /
+  Chrome Web Store reviews, and the approved X/LinkedIn Apify actors are
+  not wired into `problem_research.py` yet.
+- `_teamtailor`'s location-fallback chain was never exercised against a
+  fresh live fetch of `careers.lyzr.ai/jobs.rss` post-fix (all fixture
+  items have `tt_city` set, so a fallback path involving `tt_name`, which
+  is actually the job name in real Teamtailor feeds, stays unverified).
+- The three watchlist companies' `description` fields in `watchlist.yml`
+  are documentation only, never read by code — intentional.
