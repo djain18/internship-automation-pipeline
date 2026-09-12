@@ -1,5 +1,11 @@
 # Modal Deployment Setup
 
+> Private hunt: deploy `personal_hunt/deploy/modal_app.py` under the explicit
+> `dakshinjain187` profile. It updates the existing `daksh-internship-hunt` app
+> and retains one combined 00:30/08:00 Asia/Kolkata cron. On networks with a
+> locally installed CA, use `python scripts/modal_system_ca.py deploy
+> personal_hunt/deploy/modal_app.py`; do not disable certificate verification.
+
 ## Quick Start
 
 ### Step 1: Install Modal

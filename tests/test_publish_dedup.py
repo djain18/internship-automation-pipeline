@@ -34,14 +34,25 @@ class TestNormalizeCompany:
 
 
 class TestStandardizeRole:
+    """Buckets are role_taxonomy track keys now (was a private keyword list).
+    The bucket NAMES changed with that delegation; what matters is that both
+    sides of dedup use the same function, which they do — fetch_existing_urls
+    recomputes sheet keys through this same call."""
+
     def test_software_bucket(self):
         assert pub.standardize_role_for_dedup("Senior Backend Developer Intern") == "software"
 
     def test_data_bucket(self):
-        assert pub.standardize_role_for_dedup("Machine Learning Intern") == "data"
+        assert pub.standardize_role_for_dedup("Machine Learning Intern") == "data_ml"
 
     def test_marketing_bucket(self):
-        assert pub.standardize_role_for_dedup("SEO & Social Media Intern") == "marketing"
+        assert pub.standardize_role_for_dedup("SEO & Social Media Intern") == "marketing_content"
+
+    def test_ai_automation_no_longer_collides_with_data(self):
+        # Regression: this used to bucket as "data", so an AI-automation role
+        # and an unrelated data role at the same company deduped as one.
+        assert pub.standardize_role_for_dedup("AI Automation Intern") == "ai_automation"
+        assert pub.standardize_role_for_dedup("Data Analyst Intern") == "data_ml"
 
 
 class TestDedupKeys:

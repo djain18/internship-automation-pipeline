@@ -1,5 +1,10 @@
 # Temporary files
 .tmp/
+personal_hunt/.tmp/
+personal_hunt/out/
+personal_hunt/state/
+# Daksh's spotted leads (may contain tracking URLs; local only)
+personal_hunt/input/
 error_*.txt
 error_*.log
 modal_output.txt

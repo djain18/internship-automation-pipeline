@@ -118,7 +118,8 @@ export default function InternshipDetail({ listing, onClose }) {
               )}
             </div>
             <p className="mt-4 text-xs text-muted-foreground">
-              Rise never charges to apply. If a role asks for a fee, it isn't real — report it.
+              Rise never charges to apply. A role that requests a fee is not legitimate;
+              please report it.
             </p>
           </motion.div>
         </motion.div>

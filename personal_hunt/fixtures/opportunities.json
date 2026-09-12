@@ -1,0 +1,210 @@
+{
+  "records": [
+    {
+      "id": "nebula-founder-office",
+      "source": "yc_bengaluru",
+      "source_url": "https://example.com/nebula/jobs/founders-office",
+      "apply_url": "https://example.com/nebula/jobs/founders-office",
+      "company_url": "https://example.com/nebula",
+      "company": "Nebula AI",
+      "title": "Founder’s Office Intern",
+      "description": "Work directly with the founder across AI automation, product operations, growth, and zero to one special projects.",
+      "location": "Bengaluru - onsite",
+      "lane": "ai",
+      "employee_count": 45,
+      "funding_date": "2026-06-12",
+      "funding_source_url": "https://example.com/nebula/funding",
+      "growth_signal": "Seed funding announced",
+      "duration_months": 6,
+      "source_confidence": "official",
+      "contact": {
+        "name": "Aarav",
+        "role": "Founder",
+        "email": "founder@example.com",
+        "source_url": "https://example.com/nebula/about",
+        "verification_status": "published_by_source"
+      },
+      "evidence": [
+        {
+          "type": "job",
+          "title": "Founder’s Office Intern",
+          "url": "https://example.com/nebula/jobs/founders-office",
+          "date": "2026-09-07",
+          "observation": "The public role lists founder-facing AI, product, and growth work.",
+          "confidence": "official"
+        },
+        {
+          "type": "funding",
+          "title": "Nebula AI seed round",
+          "url": "https://example.com/nebula/funding",
+          "date": "2026-06-12",
+          "observation": "The company published a seed funding announcement.",
+          "confidence": "medium"
+        }
+      ]
+    },
+    {
+      "id": "nebula-duplicate",
+      "source": "human_import",
+      "source_url": "https://example.com/nebula/jobs/founders-office?utm_source=test",
+      "apply_url": "https://example.com/nebula/jobs/founders-office?utm_source=test",
+      "company": "Nebula AI",
+      "title": "Founder’s Office Intern",
+      "description": "Work directly with the founder across AI automation and growth.",
+      "location": "Bangalore onsite",
+      "lane": "ai",
+      "employee_count": 45,
+      "source_confidence": "medium"
+    },
+    {
+      "id": "homeglow-founder-associate",
+      "source": "ftb_internships",
+      "source_url": "https://example.com/homeglow/founder-associate",
+      "apply_url": "https://example.com/homeglow/founder-associate",
+      "company_url": "https://example.com/homeglow",
+      "company": "HomeGlow",
+      "title": "Founder’s Associate Intern",
+      "description": "Cross-functional D2C home brand role spanning retail operations, customer experience, supply chain, and growth.",
+      "location": "Bengaluru hybrid",
+      "lane": "consumer",
+      "employee_count": 90,
+      "growth_signal": "New Bengaluru fulfilment hub announced",
+      "duration_months": 6,
+      "source_confidence": "official",
+      "evidence": [
+        {
+          "type": "job",
+          "title": "Founder’s Associate Intern",
+          "url": "https://example.com/homeglow/founder-associate",
+          "date": "2026-09-06",
+          "observation": "The role spans D2C operations, customer experience, supply chain, and growth.",
+          "confidence": "official"
+        },
+        {
+          "type": "company",
+          "title": "HomeGlow expansion",
+          "url": "https://example.com/homeglow/news",
+          "date": "2026-08-15",
+          "observation": "The company announced a Bengaluru fulfilment expansion.",
+          "confidence": "medium"
+        }
+      ]
+    },
+    {
+      "id": "agentnest-special-projects",
+      "source": "yc_bengaluru",
+      "source_url": "https://example.com/agentnest/jobs/special-projects",
+      "apply_url": "https://example.com/agentnest/jobs/special-projects",
+      "company": "AgentNest",
+      "title": "Special Projects Intern",
+      "description": "Partner with founders on AI agent launches, product operations, GTM, and cross-functional execution.",
+      "location": "Bangalore - in office",
+      "lane": "ai",
+      "employee_count": 130,
+      "funding_date": "2026-02-20",
+      "funding_source_url": "https://example.com/agentnest/round",
+      "duration_months": 6,
+      "source_confidence": "official",
+      "evidence": [
+        {
+          "type": "job",
+          "title": "Special Projects Intern",
+          "url": "https://example.com/agentnest/jobs/special-projects",
+          "date": "2026-09-03",
+          "observation": "The role names founder partnership, AI launches, operations, and GTM.",
+          "confidence": "official"
+        }
+      ]
+    },
+    {
+      "id": "cartcraft-growth-ops",
+      "source": "human_import",
+      "source_url": "https://example.com/cartcraft/careers/growth-ops",
+      "apply_url": "https://example.com/cartcraft/careers/growth-ops",
+      "company": "CartCraft",
+      "title": "Growth Operations Intern",
+      "description": "A cross-functional consumer commerce internship across brand experiments, seller operations, and customer retention.",
+      "location": "Bengaluru onsite",
+      "lane": "consumer",
+      "employee_count": 180,
+      "funding_date": "2026-05-01",
+      "funding_source_url": "https://example.com/cartcraft/series-a",
+      "duration_months": 5,
+      "source_confidence": "high",
+      "verification_status": "human_verified",
+      "evidence": [
+        {
+          "type": "job",
+          "title": "Growth Operations Intern",
+          "url": "https://example.com/cartcraft/careers/growth-ops",
+          "date": "2026-09-02",
+          "observation": "The role covers brand experiments, seller operations, and retention.",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "id": "remoteflow-chief-of-staff",
+      "source": "wwr_rss",
+      "source_url": "https://example.com/remoteflow/chief-of-staff-intern",
+      "apply_url": "https://example.com/remoteflow/chief-of-staff-intern",
+      "company": "RemoteFlow AI",
+      "title": "Chief of Staff Intern",
+      "description": "India-remote founder-facing role across AI automation, operations, and growth.",
+      "location": "Remote - India",
+      "lane": "ai",
+      "employee_count": 35,
+      "growth_signal": "Hiring first business operations team",
+      "duration_months": 6,
+      "source_confidence": "official",
+      "evidence": [
+        {
+          "type": "job",
+          "title": "Chief of Staff Intern",
+          "url": "https://example.com/remoteflow/chief-of-staff-intern",
+          "date": "2026-09-01",
+          "observation": "The listing describes an India-remote founder-facing role.",
+          "confidence": "official"
+        }
+      ]
+    },
+    {
+      "id": "mega-ai-founder-office",
+      "source": "yc_bengaluru",
+      "source_url": "https://example.com/mega/jobs/founder-office",
+      "company": "Mega AI Corporation",
+      "title": "Founder’s Office Intern",
+      "description": "Cross-functional founder projects.",
+      "location": "Bengaluru onsite",
+      "lane": "ai",
+      "employee_count": 900,
+      "source_confidence": "official"
+    },
+    {
+      "id": "codeonly-engineer",
+      "source": "yc_bengaluru",
+      "source_url": "https://example.com/codeonly/software-engineer",
+      "company": "CodeOnly",
+      "title": "Software Engineer Intern",
+      "description": "Implement backend services and fix production bugs.",
+      "location": "Bengaluru onsite",
+      "lane": "ai",
+      "employee_count": 50,
+      "source_confidence": "official"
+    },
+    {
+      "id": "excluded-board",
+      "source": "internshala",
+      "source_url": "https://example.com/excluded/founder-office",
+      "company": "Excluded Startup",
+      "title": "Founder’s Office Intern",
+      "description": "Work across growth and operations.",
+      "location": "Bengaluru onsite",
+      "lane": "consumer",
+      "employee_count": 20,
+      "source_confidence": "medium"
+    }
+  ]
+}
+
+

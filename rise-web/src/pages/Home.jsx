@@ -31,8 +31,8 @@ export default function Home({ listings = [], stats, loading, onOpen, onOpenDash
                   The latest verified roles
                 </h2>
                 <p className="mt-2 max-w-xl text-muted-foreground">
-                  A peek at tonight's board — every role posted in the last day, scam-checked
-                  and open to students in India.
+                  A preview of tonight's board: every role posted in the last day, checked
+                  for scams and open to students in India.
                 </p>
               </div>
               <Link
