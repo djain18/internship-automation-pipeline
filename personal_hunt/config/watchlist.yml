@@ -4,7 +4,14 @@
 
 companies:
   - name: Emergent
-    board_url: "https://boards.greenhouse.io/emergent"
+    # Verified 2026-09-13: emergent.sh/careers embeds a custom job-board SPA
+    # (jobboard-ui.emergent.host) that itself calls the Greenhouse API with
+    # board token "emergentlabsinc" -- confirmed live against
+    # boards-api.greenhouse.io/v1/boards/emergentlabsinc/jobs. The
+    # human-readable careers page URL is NOT a fetchable Greenhouse board
+    # URL on its own; use the real API URL below.
+    board_url: "https://boards-api.greenhouse.io/v1/boards/emergentlabsinc/jobs"
+    board_adapter: greenhouse_ats
     site_url: "https://emergent.sh"
     lane: ai
     description: >
@@ -14,6 +21,7 @@ companies:
 
   - name: Lyzr AI
     board_url: "https://careers.lyzr.ai/jobs.rss"
+    board_adapter: teamtailor_ats
     site_url: "https://lyzr.ai"
     lane: ai
     description: >
@@ -24,7 +32,12 @@ companies:
 
   - name: AEOS
     board_url: ""
-    site_url: "https://www.aeos.ai"
+    board_adapter: ""
+    # Verified 2026-09-13 via web search + live fetch: aeos.ai is NOT the
+    # company's site (unconfirmed/unrelated domain, title tag empty).
+    # The real official site is aeoscompany.com (title: "State of AEOS"),
+    # confirmed live with HTTP 200.
+    site_url: "https://www.aeoscompany.com"
     lane: ai
     description: >
       Founders Varun Mayya + Achina Mayya, founded 2022, bootstrapped/profitable,

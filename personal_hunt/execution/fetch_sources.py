@@ -512,6 +512,38 @@ def _harvested_ats_source(vendor: str, slug: str) -> Record | None:
     }
 
 
+def watchlist_board_sources(watchlist_config: dict[str, Any]) -> list[Record]:
+    """Convert config/watchlist.yml's per-company board_url/board_adapter into
+    fetch_live-compatible source dicts, so each watchlist company's own board
+    is read directly every run rather than hoping a registry surfaces it.
+    Companies with no board (board_url or board_adapter empty, e.g. AEOS,
+    which is bootstrapped with no ATS at all) are skipped, not guessed at."""
+    output: list[Record] = []
+    for company_cfg in watchlist_config.get("companies", []):
+        if not isinstance(company_cfg, dict):
+            continue
+        board_url = clean_text(company_cfg.get("board_url", ""))
+        adapter = clean_text(company_cfg.get("board_adapter", ""))
+        name = clean_text(company_cfg.get("name", ""))
+        if not board_url or not adapter or not name:
+            continue
+        slug = re.sub(r"[^A-Za-z0-9_.-]", "_", name.casefold())
+        output.append(
+            {
+                "id": f"watchlist_{slug}",
+                "name": f"Watchlist board: {name}",
+                "company": name,
+                "company_url": clean_text(company_cfg.get("site_url", "")),
+                "url": board_url,
+                "enabled": True,
+                "adapter": adapter,
+                "access_policy": "watchlist_configured_board",
+                "source_priority": 1,
+            }
+        )
+    return output
+
+
 ATS_LINK_PATTERNS = (
     ("greenhouse", re.compile(r"https://boards\.greenhouse\.io/([A-Za-z0-9][A-Za-z0-9_.-]*)", re.I)),
     ("ashby", re.compile(r"https://jobs\.ashbyhq\.com/([A-Za-z0-9][A-Za-z0-9_.-]*)", re.I)),

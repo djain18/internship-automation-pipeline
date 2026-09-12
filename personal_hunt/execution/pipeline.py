@@ -53,6 +53,7 @@ from fetch_sources import (
     fixture_health,
     load_json_records,
     load_spotted_leads,
+    watchlist_board_sources,
 )
 from funding import fetch_funding_live, select_funding_events
 from hunter import find_company_contact
@@ -1052,7 +1053,14 @@ def main() -> int:
                     pass  # noqa: BLE001 - failure-note delivery is best-effort only
             raise
     if args.live:
-        raw, health = fetch_live(config["sources"])
+        live_sources = {
+            **config["sources"],
+            "sources": [
+                *config["sources"].get("sources", []),
+                *watchlist_board_sources(config.get("watchlist", {})),
+            ],
+        }
+        raw, health = fetch_live(live_sources)
         preview_first_seen = (
             {} if args.no_state or args.dry_run else state.first_seen_dates()
         )
