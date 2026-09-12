@@ -49,6 +49,9 @@ SIGNAL_TERMS = (
 )
 
 EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+LINKEDIN_PROFILE_PATTERN = re.compile(
+    r"https?://(?:www\.)?linkedin\.com/in/[\w-]+"
+)
 
 
 def _utc_date() -> str:
@@ -85,8 +88,8 @@ def fetch_site_evidence(
     user_agent: str = "InternshipResearch/0.1",
     timeout: int = 10,
     max_pages: int = 3,
-) -> tuple[list[Record], list[str], str]:
-    """Return (evidence, published_emails, status) for one company website.
+) -> tuple[list[Record], list[str], list[str], str]:
+    """Return (evidence, published_emails, published_linkedin_urls, status) for one company website.
 
     Never raises: research runs inside the pipeline and a slow or hostile site
     must not take the run down with it.
@@ -94,7 +97,7 @@ def fetch_site_evidence(
 
     base = canonical_url(company_url)
     if not base.startswith("http"):
-        return [], [], "no_company_url"
+        return [], [], [], "no_company_url"
     origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
     session = requests.Session()
     session.headers["User-Agent"] = user_agent
@@ -102,6 +105,7 @@ def fetch_site_evidence(
     access_date = _utc_date()
     evidence: list[Record] = []
     emails: list[str] = []
+    linkedin_urls: list[str] = []
     blocked = 0
     for path in CANDIDATE_PATHS:
         if len(evidence) >= max_pages:
@@ -125,6 +129,8 @@ def fetch_site_evidence(
             # to be worth excluding by extension.
             if not match.casefold().endswith((".png", ".jpg", ".gif", ".svg", ".webp"))
         )
+        # Extract LinkedIn profile URLs from company team/about pages
+        linkedin_urls.extend(LINKEDIN_PROFILE_PATTERN.findall(response.text))
         quoted = next(
             (
                 line
@@ -145,10 +151,10 @@ def fetch_site_evidence(
             }
         )
     if evidence:
-        return evidence, sorted(set(emails)), "ok"
+        return evidence, sorted(set(emails)), sorted(set(linkedin_urls)), "ok"
     if blocked:
-        return [], sorted(set(emails)), "robots_disallowed"
-    return [], sorted(set(emails)), "no_usable_page"
+        return [], sorted(set(emails)), sorted(set(linkedin_urls)), "robots_disallowed"
+    return [], sorted(set(emails)), sorted(set(linkedin_urls)), "no_usable_page"
 
 
 # Verbs a posting uses when it describes work someone will own. The sentence

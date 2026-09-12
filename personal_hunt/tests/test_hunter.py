@@ -90,6 +90,41 @@ def test_missing_key_and_disabled_flag_skip_quietly(monkeypatch) -> None:
     assert find_company_contact(_record(), {"hunter_enabled": False}, state, "2026-09") is None
 
 
+def test_linkedin_url_from_hunter_result() -> None:
+    """Hunter result with LinkedIn URL includes it in contact."""
+    from hunter import _contact_from_pick
+    pick = {
+        "value": "aarav@example.com",
+        "first_name": "Aarav",
+        "last_name": "Sharma",
+        "confidence": 95,
+        "type": "personal",
+        "position": "Founder",
+        "linkedin_url": "https://linkedin.com/in/aarav-sharma",
+        "sources": [{"uri": "https://example.com/team"}],
+    }
+    record = _record()
+    contact = _contact_from_pick(pick, record, False, None)
+    assert contact["linkedin"] == "https://linkedin.com/in/aarav-sharma"
+
+
+def test_linkedin_url_never_guessed_from_hunter() -> None:
+    """Hunter contact without explicit LinkedIn URL has empty LinkedIn field."""
+    from hunter import _contact_from_pick
+    pick = {
+        "value": "aarav@example.com",
+        "first_name": "Aarav",
+        "last_name": "Sharma",
+        "confidence": 95,
+        "type": "personal",
+        "position": "Founder",
+        "sources": [{"uri": "https://example.com/team"}],
+    }
+    record = _record()
+    contact = _contact_from_pick(pick, record, False, None)
+    assert contact["linkedin"] == ""
+
+
 def test_monthly_cap_and_empty_quota_stop_before_http(monkeypatch) -> None:
     _clear_key(monkeypatch)
     monkeypatch.setenv("HUNTER_API_KEY", "key")

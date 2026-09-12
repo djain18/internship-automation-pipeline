@@ -90,16 +90,17 @@ def _fetch_hackernews_evidence(
         return []
 
 
-def _fetch_site_and_roles(company_url: str) -> tuple[list[Record], list[str]]:
+def _fetch_site_and_roles(company_url: str) -> tuple[list[Record], list[str], list[str]]:
     """Fetch company website evidence and parse roles from opportunities.
 
     Reuses company_site.py for robots-respecting website fetches.
+    Returns (evidence, emails, linkedin_urls).
     """
     try:
-        evidence, emails, _status = fetch_site_evidence(company_url, max_pages=3)
-        return evidence, emails
+        evidence, emails, linkedin_urls, _status = fetch_site_evidence(company_url, max_pages=3)
+        return evidence, emails, linkedin_urls
     except Exception:
-        return [], []
+        return [], [], []
 
 
 _SOFTWARE_TERMS = (
@@ -189,10 +190,12 @@ def research_deep_problem(
 
     # Collect evidence from all sources
     all_evidence: list[Record] = []
+    published_linkedin_urls: list[str] = []
 
     # 1. Company-owned surfaces
-    site_evidence, _emails = _fetch_site_and_roles(company_url)
+    site_evidence, _emails, site_linkedin_urls = _fetch_site_and_roles(company_url)
     all_evidence.extend(site_evidence)
+    published_linkedin_urls.extend(site_linkedin_urls)
 
     # 2. Hacker News via Algolia
     hn_evidence = _fetch_hackernews_evidence(company_name)
@@ -212,6 +215,7 @@ def research_deep_problem(
             "why_now": "",
             "confidence": "low",
             "supported": False,
+            "published_linkedin_urls": published_linkedin_urls,
         }
 
     # Score evidence for ranking
@@ -231,6 +235,7 @@ def research_deep_problem(
             "why_now": "",
             "confidence": "low",
             "supported": False,
+            "published_linkedin_urls": published_linkedin_urls,
         }
 
     # Call LLM to synthesize hypothesis if enabled
@@ -253,6 +258,7 @@ def research_deep_problem(
             "why_now": "",
             "confidence": "medium",
             "supported": False,
+            "published_linkedin_urls": published_linkedin_urls,
         }
 
     # LLM synthesis with fail-closed validation
@@ -320,6 +326,7 @@ def research_deep_problem(
             "confidence": clean_text(payload.get("confidence", "medium")),
             "supported": bool(payload.get("supported", False)),
             "llm_status": "ok",
+            "published_linkedin_urls": published_linkedin_urls,
         }
 
     except Exception as e:
@@ -341,6 +348,7 @@ def research_deep_problem(
             "supported": False,
             "llm_error": str(e)[:200],
             "llm_status": "failed",
+            "published_linkedin_urls": published_linkedin_urls,
         }
 
 

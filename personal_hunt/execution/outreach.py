@@ -3,13 +3,38 @@ from __future__ import annotations
 import re
 from models import Record, clean_text
 
+# Humanizer rules - hard-fail checks for outreach quality
+FORBIDDEN_PUNCTUATION = {
+    "—": "em-dash",  # No em dashes
+    """: "curly-quote-open",  # No curly quotes
+    """: "curly-quote-close",
+    "'": "curly-quote-single",
+}
+
+FORBIDDEN_WORDS = (
+    "delve",
+    "leverage",
+    "robust",
+    "testament",
+    "underscore",
+    "showcase",
+    "landscape",
+    "pivotal",
+    "crucial",
+    "vibrant",
+)
 
 FORBIDDEN_PHRASES = (
     "i hope this email finds you well",
+    "i hope this helps",
+    "let me know",
     "just checking in",
     "bumping this",
     "synergy",
     "best-in-class",
+    "world-class",
+    "cutting-edge",
+    "looking forward to",
 )
 
 STRATEGY_RULES = (
@@ -98,19 +123,93 @@ def _recipient(record: Record) -> str:
     return name
 
 
+def _is_problem_led_company(record: Record) -> bool:
+    """Check if company has deep problem research and prompt generation."""
+    deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
+    prompt_gen = record.get("prompt_generation") if isinstance(record.get("prompt_generation"), dict) else {}
+    return bool(deep_research.get("observed_signals") and prompt_gen.get("prompt_text"))
+
+
+def draft_problem_led_email(record: Record) -> Record:
+    """Draft a problem-led cold email for companies with deep research and prototype.
+
+    Leads with observed problem, offers prototype as proof.
+    """
+    company = clean_text(record.get("company"))
+    contact_name = _recipient(record)
+
+    deep_research = record.get("deep_problem_research", {})
+    problem_hypothesis = clean_text(deep_research.get("problem_hypothesis"))
+    observed_signals = deep_research.get("observed_signals") or []
+
+    prompt_gen = record.get("prompt_generation", {})
+    artifact = clean_text(prompt_gen.get("artifact_path") or "")
+
+    if not problem_hypothesis or not observed_signals:
+        return {
+            "email_body": "",
+            "linkedin_note": "",
+            "linkedin_message": "",
+            "send_status": "blocked_insufficient_evidence",
+            "draft_source": "problem_led",
+        }
+
+    # Build problem statement from first signal
+    signal_quote = clean_text(observed_signals[0].get("text", ""))[:150]
+
+    # Email: problem first, prototype offered
+    body = (
+        f"Hi {contact_name}, I've researched {company} and found a real operational gap. "
+        f"{signal_quote} I built a small prototype to explore how this could improve, "
+        f"and I'd like to share it. I'm seeking a six-month onsite generalist internship "
+        f"in Bengaluru from November 2026 where I can own work across functions. "
+        f"Would the prototype be worth seeing?"
+    )
+
+    # LinkedIn connection note
+    linkedin_note = (
+        f"Hi {contact_name} - I found a specific problem in {company}'s operations "
+        f"and built a prototype. Seeking an onsite internship from November 2026. Worth exploring?"
+    )[:300]
+
+    # LinkedIn message (after connection accepted)
+    linkedin_message = (
+        f"Thanks for connecting. I mapped the operational gap I found at {company} "
+        f"and built a small prototype to explore it. Happy to walk through it if you're interested."
+    )
+
+    return {
+        "email_body": body,
+        "email_subject": f"{company.lower()} prototype idea",
+        "linkedin_note": linkedin_note,
+        "linkedin_message": linkedin_message,
+        "send_status": "draft_needs_human_review",
+        "draft_source": "problem_led",
+        "artifact_path": artifact,
+    }
+
+
 def draft_outreach(record: Record) -> Record:
+    """Draft outreach for an opportunity record (generic version).
+
+    Returns dict with email_body, email_subject, linkedin_note, linkedin_message, send_status.
+    Also supports legacy "followups" for backwards compatibility with testing.
+    """
+    # Check if this is a problem-led company (with deep research)
+    if _is_problem_led_company(record):
+        return draft_problem_led_email(record)
+
+    # Generic internship listing outreach
     company = clean_text(record.get("company"))
     title = clean_text(record.get("title"))
     location = clean_text(record.get("location")) or "Bengaluru"
     contact_name = _recipient(record)
     research = record.get("research", {})
     solution = clean_text(research.get("solution_concept"))
-    # The observed problem is what makes the note specific; sending only the
-    # solution was why every draft read the same. Quote the listing when it gave
-    # one, and fall back to the role's own breadth when it did not.
     problem = clean_text(research.get("primary_responsibility"))
     strategy_id = choose_strategy(record)
     artifact = _approved_artifact(record)
+
     opening = (
         f"your {title} listing in {location} asks for someone to "
         f"{_clause(problem)}"
@@ -118,7 +217,9 @@ def draft_outreach(record: Record) -> Record:
         else f"your {title} opening in {location} pairs hands-on execution with a "
         f"broad view of {company}"
     )
+
     resource_phrase = f" I can share the approved resource: {artifact}." if artifact else ""
+
     body = (
         f"Hi {contact_name}, {opening}. I mapped the public context into a "
         f"source-linked brief and one small idea: {solution} My background spans "
@@ -127,65 +228,145 @@ def draft_outreach(record: Record) -> Record:
         "six-month onsite generalist internship in Bengaluru from November 2026 "
         f"where I can own work across functions.{resource_phrase} Would a short outline be useful?"
     )
-    # A long company name plus a long title pushed one real draft to 303
-    # characters, so the note is built short and then held under the limit.
-    linkedin = (
+
+    # LinkedIn connection note (under 300 chars)
+    linkedin_note = (
         f"Hi {contact_name} - the {title} work at {company} caught my attention. "
         "I mapped the public context into a short evidence brief and one small "
         "idea. I'm seeking a six-month Bengaluru generalist internship from "
         "November 2026. Useful if I share it?"
     )
-    if len(linkedin) > 300:
-        linkedin = (
+    if len(linkedin_note) > 300:
+        linkedin_note = (
             f"Hi {contact_name} - the {title} work at {company} caught my "
             "attention. I mapped the public context into a short brief and one "
             "idea. Seeking a six-month Bengaluru internship from November 2026. "
             "Share it?"
         )[:300]
+
+    # LinkedIn message (after connection accepted)
+    linkedin_message = (
+        f"Thanks for connecting. I mapped some of the context around the {title} role "
+        f"and found an interesting angle. Happy to share if you'd like to see it."
+    )
+
+    # Legacy followups for backwards compatibility
     followups = _followups(record, company)
+
     if not solution:
         return {
-            "subject": "founder office idea",
+            "email_subject": "founder office idea",
             "email_body": "",
-            "linkedin_note": linkedin,
+            "linkedin_note": linkedin_note,
+            "linkedin_message": linkedin_message,
             "followups": followups,
             "send_status": "blocked_insufficient_evidence",
             "artifact_mention_allowed": False,
             "strategy_id": strategy_id,
+            "draft_source": "generic_opportunity",
         }
+
     return {
-        "subject": "founder office idea",
+        "email_subject": "founder office idea",
         "email_body": body,
-        "linkedin_note": linkedin,
+        "linkedin_note": linkedin_note,
+        "linkedin_message": linkedin_message,
         "followups": followups,
         "send_status": "draft_needs_human_review",
         "artifact_mention_allowed": bool(artifact),
         "strategy_id": strategy_id,
+        "draft_source": "generic_opportunity",
     }
 
 
 def validate_outreach(draft: Record) -> list[str]:
+    """Validate outreach drafts against humanizer rules.
+
+    Hard-fail checks prevent marketing-speak, AI tone, and poor quality.
+    Returns list of error strings (empty = valid).
+    """
     errors: list[str] = []
+
+    # Skip validation for blocked drafts
     if draft.get("send_status") == "blocked_insufficient_evidence":
         return errors
-    subject = clean_text(draft.get("subject"))
-    body = clean_text(draft.get("email_body"))
-    linkedin = clean_text(draft.get("linkedin_note"))
-    word_count = len(_words(body))
-    if not 80 <= word_count <= 110:
-        errors.append(f"email_word_count:{word_count}")
-    if not 2 <= len(_words(subject)) <= 4 or subject != subject.casefold():
-        errors.append("subject_format")
-    if len(linkedin) > 300:
-        errors.append(f"linkedin_too_long:{len(linkedin)}")
-    lowered = f"{subject} {body}".casefold()
+
+    # Extract text fields (keep original for structure detection, clean version for text)
+    subject_raw = draft.get("email_subject") or draft.get("subject", "")
+    body_raw = draft.get("email_body", "")
+    linkedin_note_raw = draft.get("linkedin_note", "")
+    linkedin_message_raw = draft.get("linkedin_message", "")
+
+    subject = clean_text(subject_raw)
+    body = clean_text(body_raw)
+    linkedin_note = clean_text(linkedin_note_raw)
+    linkedin_message = clean_text(linkedin_message_raw)
+
+    # Combine all text for some checks
+    all_text = f"{subject} {body} {linkedin_note} {linkedin_message}".casefold()
+
+    # For structural checks, use the raw body with newlines preserved
+    body_with_structure = f"{subject_raw}\n{body_raw}"
+
+    # 1. Check for forbidden punctuation (em dashes, curly quotes, emoji)
+    for char, name in FORBIDDEN_PUNCTUATION.items():
+        if char in all_text:
+            errors.append(f"punctuation:{name}")
+
+    if any(ord(c) > 127 for c in all_text if c in "😀😁😂😃😄😅😆😇😈😉😊😋😌😍"):
+        errors.append("punctuation:emoji")
+
+    # 2. Check for forbidden words
+    for word in FORBIDDEN_WORDS:
+        if f" {word} " in f" {all_text} ":  # Word boundaries
+            errors.append(f"forbidden_word:{word}")
+
+    # 3. Check for forbidden phrases
     for phrase in FORBIDDEN_PHRASES:
-        if phrase in lowered:
+        if phrase in all_text:
             errors.append(f"forbidden_phrase:{phrase}")
-    url_count = len(re.findall(r"https?://", body))
-    if url_count > 1:
-        errors.append("too_many_links")
-    if draft.get("send_status") not in {"draft_needs_human_review", "approved_manual_send"}:
+
+    # 4. Check for -ing significance tails (highlighting, underscoring, reflecting)
+    ing_tails = re.findall(r"(highlighting|underscoring|reflecting|showcasing|underlining|demonstrating)\b", all_text)
+    if ing_tails:
+        errors.append(f"ing_significance_tail:{ing_tails[0]}")
+
+    # 5. Check for "not just X but Y" pattern
+    if re.search(r"not just .+? but", all_text):
+        errors.append("not_just_but_pattern")
+
+    # 6. Check for three-item lists (check on raw text to preserve structure)
+    list_items = re.findall(r"(?:^|\n)\s*(?:\d+\.|-|\*|•)\s+\S", f"\n{body_with_structure}", re.MULTILINE)
+    if len(list_items) >= 3:
+        errors.append(f"three_item_list:{len(list_items)}")
+
+    # 7. Check for inline headers with bullets
+    if re.search(r"\n\s*(•|-|\*)\s+\w+:", all_text):
+        errors.append("inline_header_bullets")
+
+    # Email-specific checks
+    if body:
+        word_count = len(_words(body))
+        if not 80 <= word_count <= 110:
+            errors.append(f"email_word_count:{word_count}")
+
+        # Subject format
+        if not 2 <= len(_words(subject)) <= 4 or subject != subject.casefold():
+            errors.append("subject_format")
+
+        # URL count
+        url_count = len(re.findall(r"https?://", body))
+        if url_count > 1:
+            errors.append("too_many_urls")
+
+    # LinkedIn-specific checks
+    if linkedin_note:
+        if len(linkedin_note) > 300:
+            errors.append(f"linkedin_note_too_long:{len(linkedin_note)}")
+
+    # Check send status validity
+    if draft.get("send_status") not in {"draft_needs_human_review", "approved_manual_send", "blocked_insufficient_evidence"}:
         errors.append("invalid_send_status")
+
     return errors
 
