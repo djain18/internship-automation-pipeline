@@ -17,7 +17,7 @@ def test_deep_research_requires_minimum_evidence(monkeypatch) -> None:
 
     # Mock to return no evidence
     def mock_fetch_site(*args, **kwargs):
-        return [], []
+        return [], [], []  # evidence, emails, linkedin_urls
 
     def mock_fetch_hn(*args, **kwargs):
         return []
@@ -76,7 +76,7 @@ def test_deep_research_evidence_only_mode(monkeypatch) -> None:
                 "confidence": "medium",
                 "basis": "company_site",
             }
-        ], []
+        ], [], []  # evidence, emails, linkedin_urls
 
     def mock_fetch_hn(*args, **kwargs):
         return []
@@ -185,7 +185,8 @@ def _mock_evidence():
                 "basis": "hacker_news_algolia",
             },
         ],
-        [],
+        [],  # emails
+        [],  # linkedin_urls
     )
 
 
