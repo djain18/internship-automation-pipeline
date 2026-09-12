@@ -716,6 +716,22 @@ def run_pipeline(
     # explicitly by funding_event_id rather than relying on the earlier loop's
     # in-place mutation to have leaked through (it happened to, but a copy
     # anywhere in that chain would silently drop the result with no error).
+    # Phase 5: draft problem-led outreach for each researched company. Funded
+    # companies already got selected_contact from the funding-event loop
+    # above; watchlist companies (never funding events) have not, so this is
+    # the first point every discovered_for_research company definitely has
+    # one. Without this, draft_problem_led_email's output never reaches a
+    # real run -- the same "computed but never called" failure shape as the
+    # earlier discovered_for_research/prompt_generation wiring gap.
+    for company in discovered_for_research:
+        if not company.get("selected_contact"):
+            company["selected_contact"] = choose_contact(company)
+        draft = draft_outreach(company)
+        draft["validation_errors"] = validate_outreach(draft)
+        if draft["validation_errors"]:
+            draft["send_status"] = "blocked_validation"
+        company["outreach"] = draft
+
     discovered_by_id = {
         item["funding_event_id"]: item for item in discovered_for_research
     }

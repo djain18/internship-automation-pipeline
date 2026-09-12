@@ -2,7 +2,7 @@ import company_site
 from company_site import fetch_site_evidence, primary_responsibility
 from contacts import choose_contact
 from normalize import normalize_record
-from outreach import draft_outreach, validate_outreach
+from outreach import draft_outreach
 from research import deterministic_research, research_funding_event
 
 ABOUT_PAGE = (
