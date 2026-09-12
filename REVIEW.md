@@ -470,3 +470,47 @@ times across this session (once per real bug found and fixed). One real digest s
 `1a096e9228b368fc`, checked against `state.json`'s `digest_deliveries` ledger first (two other
 sends already existed for 2026-09-12; Daksh explicitly approved this third one in this session's
 plan approval).
+
+## 2026-09-13 (continued) — Firecrawl scoped to funded companies, fresh key wired, resolution verified live
+
+Daksh asked why Emergent/Lyzr/AEOS's problem briefs always come back "insufficient evidence" and
+whether recently-funded companies are actually being scraped. Clarified: those three are the
+static `watchlist.yml` entries, always shown regardless of evidence; real funding scraping
+(Inc42/YourStory RSS -> `funding.py`) is a separate, working feature, but its output never reached
+a problem brief because domain resolution needed Firecrawl, and Firecrawl was returning `402
+Payment Required` on the existing account.
+
+Checked Firecrawl's real pricing before doing anything else: the free plan does include `/search`
+(1,000 credits/month, 2 credits per 10 results, `scrapeOptions` adds ~1 credit/page). Found that
+`research_record` (used for every admitted internship + weekly target, ~7 records/run) was ALSO
+calling `maybe_add_firecrawl_evidence` on top of its existing free `company_site.py`/HN evidence —
+never the intent, and alone burning ~70 of 1,000 monthly credits per run. Removed that call;
+internship research is back to free-only evidence. Firecrawl usage is now scoped to only
+`resolve_company_url_via_search` (funded companies, capped at 5/run) — worst case ~20 credits/run,
+~1,200/month, real usage far lower since funded companies are rare (1-2/day observed).
+
+Daksh supplied a fresh free-tier Firecrawl key. Wired safely: extracted just the
+`FIRECRAWL_API_KEY` line from the local `.env` into a scratch-only temp file (never pasted in
+chat, never committed), created a new dedicated Modal secret `firecrawl-key`, placed after
+`internship-hunt-secrets` in `pipeline_secrets` so it overrides the old dead key (Modal secrets
+apply in list order). Temp file deleted immediately after.
+
+**Verified live** (`run_b57aa67fbd11006f`): Graph AI resolved to `graphsafety.ai`,
+`company_url_basis: firecrawl_search_verified_onpage_name`, no 402. Read the match by hand — the
+verifying text was the site's own footer, `"© 2026 Graph AI Services, Inc."`, a genuine on-page
+name match, not a false positive. Second funded company that day (`Paris Panini Parent Popo
+Global`) correctly stayed `unresolved` with no error rather than guessing. Admitted internships:
+5 that day.
+
+**Honest caveat, not yet resolved:** Graph AI's `problem_status` still came back
+`insufficient_evidence` even with a resolved domain — the resolution step works, but a brand-new
+Series A company's site mostly has marketing copy so far, and the pipeline correctly refused to
+invent an internal-problem hypothesis from it rather than fabricate one. The full resolve -> real
+hypothesis -> prototype -> contact chain has not yet been observed succeeding end to end on a real
+company; that is the next thing to watch for on a funded company with richer public evidence
+(engineering blog, more open roles, etc.).
+
+Verified: 244 personal_hunt tests, 200 Rise tests (separate commands), Ruff clean throughout.
+Committed `83ec1e9` (Firecrawl scoping) and `d2cd7f6` (key wiring), pushed to `origin/main`,
+redeployed twice. One real digest sent for the new run, message `1a09783b537a4647` — the second
+send today (2026-09-13), both explicitly requested by Daksh in this session.
