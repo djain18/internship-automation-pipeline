@@ -26,6 +26,16 @@ FORBIDDEN_WORDS = (
     "vibrant",
 )
 
+# Emoji and pictographic symbol blocks. A literal list of sample emoji only
+# catches the samples; these ranges cover the pictographs, dingbats and
+# variation selectors that actually turn up in drafted copy.
+EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),  # pictographs, emoticons, transport, symbols
+    (0x2600, 0x27BF),    # misc symbols and dingbats
+    (0x2B00, 0x2BFF),    # arrows and geometric shapes used as emoji
+    (0xFE0F, 0xFE0F),    # variation selector-16
+)
+
 FORBIDDEN_PHRASES = (
     "i hope this email finds you well",
     "i hope this helps",
@@ -92,13 +102,32 @@ def _followups(record: Record, company: str) -> list[Record]:
         "day": 14,
         "status": "draft_needs_human_review",
         "angle": "close_loop",
-        "body": f"I'll close the loop here. If the {company} idea is relevant, I’m happy to share an outline; otherwise, no action needed.",
+        # ASCII apostrophe: U+2019 is in FORBIDDEN_PUNCTUATION, and this body
+        # is a draft Daksh sends.
+        "body": f"I'll close the loop here. If the {company} idea is relevant, I'm happy to share an outline; otherwise, no action needed.",
     })
     return output
 
 
 def _words(text: str) -> list[str]:
     return re.findall(r"\b[\w’'-]+\b", text)
+
+
+def _fit_note(note: str, limit: int = 300) -> str:
+    """Trim a connection note to `limit` at a sentence boundary.
+
+    A hard `[:300]` slice satisfies the validator's length check while leaving
+    the note ending mid-word ("...from Nov"), which is unsendable. Cut at the
+    last complete sentence instead, and only fall back to a word boundary when
+    there isn't one.
+    """
+    if len(note) <= limit:
+        return note
+    cut = note[:limit]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    if end > 0:
+        return cut[: end + 1]
+    return cut[: cut.rfind(" ")].rstrip(" ,;:-") + "."
 
 
 def _clause(problem: str) -> str:
@@ -186,10 +215,10 @@ def draft_problem_led_email(record: Record) -> Record:
         body = f"{body}{padding}"
 
     # LinkedIn connection note
-    linkedin_note = (
+    linkedin_note = _fit_note(
         f"Hi {contact_name} - I found a specific problem in {company}'s operations "
         f"and built a prototype. Seeking an onsite internship from November 2026. Worth exploring?"
-    )[:300]
+    )
 
     # LinkedIn message (after connection accepted)
     linkedin_message = (
@@ -205,6 +234,11 @@ def draft_problem_led_email(record: Record) -> Record:
         "send_status": "draft_needs_human_review",
         "draft_source": "problem_led",
         "artifact_path": artifact,
+        # The humanizer rules police Daksh's own prose. This span is a verbatim
+        # quote from the company's own fetched page, so its wording is evidence,
+        # not style -- a company that describes its platform as "robust" would
+        # otherwise hard-fail every draft built on its own words.
+        "quoted_span": signal_quote,
     }
 
 
@@ -256,12 +290,12 @@ def draft_outreach(record: Record) -> Record:
         "November 2026. Useful if I share it?"
     )
     if len(linkedin_note) > 300:
-        linkedin_note = (
+        linkedin_note = _fit_note(
             f"Hi {contact_name} - the {title} work at {company} caught my "
             "attention. I mapped the public context into a short brief and one "
             "idea. Seeking a six-month Bengaluru internship from November 2026. "
             "Share it?"
-        )[:300]
+        )
 
     # LinkedIn message (after connection accepted)
     linkedin_message = (
@@ -324,6 +358,11 @@ def validate_outreach(draft: Record) -> list[str]:
     # Combine all text for some checks
     all_text = f"{subject} {body} {linkedin_note} {linkedin_message}".casefold()
 
+    # Word/phrase/tone checks run on Daksh's own prose only. A verbatim quote
+    # from the company's own page is evidence, and its vocabulary is theirs.
+    quoted = clean_text(draft.get("quoted_span", "")).casefold()
+    prose = all_text.replace(quoted, " ") if quoted else all_text
+
     # For structural checks, use the raw body with newlines preserved
     body_with_structure = f"{subject_raw}\n{body_raw}"
 
@@ -332,26 +371,29 @@ def validate_outreach(draft: Record) -> list[str]:
         if char in all_text:
             errors.append(f"punctuation:{name}")
 
-    if any(ord(c) > 127 for c in all_text if c in "😀😁😂😃😄😅😆😇😈😉😊😋😌😍"):
+    # Emoji by codepoint range, not by a hand-listed sample: the earlier
+    # 14-emoji literal let every other emoji (rocket, sparkles, check mark)
+    # through untouched.
+    if any(any(low <= ord(c) <= high for low, high in EMOJI_RANGES) for c in all_text):
         errors.append("punctuation:emoji")
 
     # 2. Check for forbidden words
     for word in FORBIDDEN_WORDS:
-        if f" {word} " in f" {all_text} ":  # Word boundaries
+        if f" {word} " in f" {prose} ":  # Word boundaries
             errors.append(f"forbidden_word:{word}")
 
     # 3. Check for forbidden phrases
     for phrase in FORBIDDEN_PHRASES:
-        if phrase in all_text:
+        if phrase in prose:
             errors.append(f"forbidden_phrase:{phrase}")
 
     # 4. Check for -ing significance tails (highlighting, underscoring, reflecting)
-    ing_tails = re.findall(r"(highlighting|underscoring|reflecting|showcasing|underlining|demonstrating)\b", all_text)
+    ing_tails = re.findall(r"(highlighting|underscoring|reflecting|showcasing|underlining|demonstrating)\b", prose)
     if ing_tails:
         errors.append(f"ing_significance_tail:{ing_tails[0]}")
 
     # 5. Check for "not just X but Y" pattern
-    if re.search(r"not just .+? but", all_text):
+    if re.search(r"not just .+? but", prose):
         errors.append("not_just_but_pattern")
 
     # 6. Check for three-item lists (check on raw text to preserve structure)
@@ -359,8 +401,10 @@ def validate_outreach(draft: Record) -> list[str]:
     if len(list_items) >= 3:
         errors.append(f"three_item_list:{len(list_items)}")
 
-    # 7. Check for inline headers with bullets
-    if re.search(r"\n\s*(•|-|\*)\s+\w+:", all_text):
+    # 7. Check for inline headers with bullets. Must run on the raw body:
+    # clean_text collapses every newline into a space, so this pattern could
+    # never match all_text and the check was dead.
+    if re.search(r"\n\s*(•|-|\*)\s+\w+:", body_with_structure):
         errors.append("inline_header_bullets")
 
     # Email-specific checks

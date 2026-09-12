@@ -659,7 +659,11 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
                 response = _request(session, source["url"], timeout)
                 records = _wwr(response.content, source)
             elif source["adapter"] == "teamtailor_ats":
-                response = _request(session, source["url"], timeout)
+                # Same reviewed-host gate every other ATS adapter goes through.
+                # Without it the _ATS_HOSTS["teamtailor"] entry is decorative
+                # and any board_url dropped into watchlist.yml is fetched
+                # unchecked, over any scheme.
+                response = _request(session, _verified_ats_url(source), timeout)
                 records = _teamtailor(response.content, source)
             elif source["adapter"] == "yc":
                 response = _request(session, source["url"], timeout)

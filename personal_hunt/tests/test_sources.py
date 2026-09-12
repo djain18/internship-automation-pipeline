@@ -78,6 +78,17 @@ def test_teamtailor_rss_parser_extracts_bengaluru_roles() -> None:
     assert all(r["source"] == "lyzr_teamtailor" for r in records)
 
 
+def test_teamtailor_board_url_goes_through_the_reviewed_host_gate() -> None:
+    """_ATS_HOSTS["teamtailor"] must be load-bearing, not decorative: the
+    live dispatch has to reject an unreviewed or non-HTTPS board_url the same
+    way every other ATS adapter does."""
+    source = {"adapter": "teamtailor_ats", "url": "https://careers.lyzr.ai/jobs.rss"}
+    assert _verified_ats_url(source) == source["url"]
+    for bad in ("http://careers.lyzr.ai/jobs.rss", "https://evil.example.com/jobs.rss"):
+        with pytest.raises(ValueError):
+            _verified_ats_url({"adapter": "teamtailor_ats", "url": bad})
+
+
 def test_watchlist_board_sources_reads_configured_boards_only() -> None:
     """Watchlist companies with a board_url+board_adapter become fetchable
     source dicts; a company with no board (AEOS, bootstrapped, no ATS) is

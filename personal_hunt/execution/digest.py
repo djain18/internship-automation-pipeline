@@ -223,7 +223,11 @@ def _problem_brief_block(company: Record) -> list[str]:
     contact_name = contact.get("name", "")
     contact_email = contact.get("email", "")
     contact_linkedin = contact.get("linkedin", "")
-    contact_source = contact.get("source", "")
+    # choose_contact emits "source_url"/"access_date", never "source" -- reading
+    # the wrong key silently dropped the provenance line CLAUDE.md requires on
+    # every contact.
+    contact_source = contact.get("source_url", "")
+    contact_access_date = contact.get("access_date", "")
     contact_status = contact.get("status", "")
 
     if contact_name:
@@ -234,6 +238,8 @@ def _problem_brief_block(company: Record) -> list[str]:
         lines.append(f"- LinkedIn: {contact_linkedin}")
     if contact_source:
         lines.append(f"- Source: {contact_source}")
+    if contact_access_date:
+        lines.append(f"- Accessed: {contact_access_date}")
     if contact_status and not contact_name:
         lines.append(f"- Status: {contact_status}")
     lines.append("")
@@ -642,8 +648,10 @@ def _problem_briefs_html(discovered: list[Record], site_url: str) -> str:
             contact_lines.append(f"Email: {html.escape(str(contact['email']))}")
         if contact.get("linkedin"):
             contact_lines.append(f"LinkedIn: {html.escape(str(contact['linkedin']))}")
-        if contact.get("source"):
-            contact_lines.append(f"Source: {html.escape(str(contact['source']))}")
+        if contact.get("source_url"):
+            contact_lines.append(f"Source: {html.escape(str(contact['source_url']))}")
+        if contact.get("access_date"):
+            contact_lines.append(f"Accessed: {html.escape(str(contact['access_date']))}")
         contact_html = (
             f'<div style="margin-top:10px;font-size:12px;color:#6b7375">{" &middot; ".join(contact_lines)}</div>'
             if contact_lines
