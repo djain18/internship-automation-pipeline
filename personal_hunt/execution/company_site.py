@@ -20,16 +20,24 @@ from bs4 import BeautifulSoup
 
 from models import Record, canonical_url, clean_text
 
+# 2026-09-13: reordered operational-first. The homepage/about/product pages
+# are always marketing copy, which problem_research.py's Kimi instruction
+# now explicitly refuses to treat as evidence of an internal problem
+# (marketing copy describes what a company sells, not how it operates) --
+# so pages that are actually about how the company operates internally
+# (careers, jobs, blog, engineering) are tried first, homepage last.
 CANDIDATE_PATHS = (
-    "",
+    "/careers",
+    "/jobs",
+    "/blog",
+    "/changelog",
+    "/engineering",
     "/about",
     "/about-us",
     "/company",
-    "/product",
-    "/careers",
-    "/blog",
-    "/changelog",
+    "",
 )
+OPERATIONAL_PATHS = {"/careers", "/jobs", "/blog", "/changelog", "/engineering"}
 
 # Pages that describe what the company does read like this. A page that matches
 # nothing is almost certainly a cookie banner or a login wall, and quoting it
@@ -131,6 +139,18 @@ def fetch_site_evidence(
         )
         # Extract LinkedIn profile URLs from company team/about pages
         linkedin_urls.extend(LINKEDIN_PROFILE_PATTERN.findall(response.text))
+        # Tag by WHICH PAGE this came from, not by sentence content.
+        # primary_responsibility() (its OWNERSHIP_VERBS: build, help, support,
+        # run...) was built for structured job-listing sentences ("You will
+        # own X") and, tried against real company_site.py fetches of
+        # emergent.sh/lyzr.ai, matched cookie-banner boilerplate and the
+        # company's own product tagline ("Build production-ready apps
+        # through conversation") as "operational" -- worse than the plain
+        # SIGNAL_TERMS match it was meant to replace, because ordinary
+        # marketing copy uses these exact verbs too. Page origin (careers/
+        # jobs/blog/changelog/engineering vs about/company/homepage) is a
+        # far more reliable operational-vs-descriptive signal than any
+        # sentence-level verb check on arbitrary webpage HTML.
         quoted = next(
             (
                 line
@@ -141,13 +161,18 @@ def fetch_site_evidence(
         )
         if not quoted:
             continue
+        basis = (
+            "company_site_operational"
+            if path in OPERATIONAL_PATHS
+            else "company_site_descriptive"
+        )
         evidence.append(
             {
                 "url": canonical_url(response.url),
                 "observation": quoted,
                 "access_date": access_date,
                 "confidence": "medium",
-                "basis": "company_site",
+                "basis": basis,
             }
         )
     if evidence:

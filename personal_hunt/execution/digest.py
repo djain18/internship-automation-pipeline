@@ -211,7 +211,20 @@ def _problem_brief_block(company: Record) -> list[str]:
         # Handle insufficient evidence honestly
         basis = prompt_gen.get("prompt_basis", "unknown")
         status = outreach.get("send_status", "")
-        if status == "blocked_insufficient_evidence" or basis == "insufficient_evidence":
+        validation_errors = prompt_gen.get("validation_errors") or []
+        if prompt_gen.get("llm_status") == "blocked_validation" and validation_errors:
+            lines.append(
+                "*A prompt was generated but failed a quality check, so it is withheld:*"
+            )
+            for error in validation_errors:
+                lines.append(f"- {error}")
+        elif prompt_gen.get("llm_status") == "skipped_unsupported_hypothesis":
+            lines.append(
+                "*A real page or post was found, but it did not support an internal-problem "
+                "hypothesis, so no prototype was generated. This is the pipeline correctly "
+                "refusing to invent a problem from thin evidence, not a failure.*"
+            )
+        elif status == "blocked_insufficient_evidence" or basis == "insufficient_evidence":
             lines.append("*Insufficient evidence to generate a prompt. The observed signals may need more depth.*")
         else:
             lines.append("*Prompt generation was not completed for this company.*")
@@ -443,6 +456,48 @@ def _glance_section(records: list[Record]) -> str:
     return "\n".join(lines)
 
 
+def _worth_a_look_records(run: Record) -> list[Record]:
+    """Records Kimi scored 60-69: below llm_fit_threshold (70), so never
+    digest_approved and never counted toward the daily five, but close
+    enough that Daksh asked to see them with Kimi's own reason rather than
+    have them silently disappear."""
+    all_selected = run.get("primary", []) + run.get("remote_fallback", [])
+    return [
+        item
+        for item in all_selected
+        if not item.get("digest_approved")
+        and item.get("llm_relevant")
+        and not item.get("llm_spam")
+        and 60 <= int(item.get("llm_fit_score", 0)) <= 69
+    ]
+
+
+def _worth_a_look_section(run: Record) -> str:
+    records = _worth_a_look_records(run)
+    lines = [
+        "## Worth a look (fit 60-69, not counted toward the daily five)",
+        "",
+        "Kimi scored these below the 70 admission bar but close enough that "
+        "you may want to judge them yourself.",
+        "",
+    ]
+    if not records:
+        lines.extend(["None today.", ""])
+        return "\n".join(lines)
+    for index, item in enumerate(records, 1):
+        lines.extend(
+            [
+                f"### {index}. {item.get('company')} - {item.get('title')} "
+                f"(fit {item.get('llm_fit_score')})",
+                "",
+                f"- Apply: {item.get('apply_url') or item.get('source_url')}",
+                f"- Kimi's reason: {item.get('llm_rank_reason')}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _send_queue_section(run: Record) -> str:
     queue = run.get("send_queue", []) or []
     stale = run.get("stale_queue", []) or []
@@ -532,6 +587,7 @@ def render_digest(run: Record) -> str:
                 else "Daily internship quality target met."
             ),
             "",
+            _worth_a_look_section(run),
             # Phase 7: Section 2 - Watchlist movement summary (NEW)
             _watchlist_movement_section(discovered),
             # Phase 7: Section 3 - Problem briefs for all researched companies (NEW)
@@ -634,6 +690,24 @@ def _problem_briefs_html(discovered: list[Record], site_url: str) -> str:
             prompt_html = (
                 f'<pre style="margin-top:8px;padding:10px;background:#f5f5f5;border-radius:8px;'
                 f'font-size:11px;white-space:pre-wrap;overflow-wrap:break-word">{html.escape(prompt_text)}</pre>'
+            )
+        elif prompt_gen.get("llm_status") == "blocked_validation" and prompt_gen.get(
+            "validation_errors"
+        ):
+            errors_html = "".join(
+                f"<li>{html.escape(str(e))}</li>" for e in prompt_gen["validation_errors"]
+            )
+            prompt_html = (
+                '<div style="margin-top:8px;font-size:12px;color:#8b9294">'
+                "A prompt was generated but failed a quality check, so it is withheld:"
+                f'<ul style="margin:4px 0 0;padding-left:18px">{errors_html}</ul></div>'
+            )
+        elif prompt_gen.get("llm_status") == "skipped_unsupported_hypothesis":
+            prompt_html = (
+                '<div style="margin-top:8px;font-size:12px;color:#8b9294">'
+                "A real page or post was found, but it did not support an internal-problem "
+                "hypothesis, so no prototype was generated -- the pipeline correctly refused "
+                "to invent a problem from thin evidence.</div>"
             )
         else:
             prompt_html = (
@@ -748,6 +822,28 @@ def render_html_digest(run: Record) -> str:
             + (f" · {location}" if location else "")
             + "</div></li>"
         )
+    worth_a_look_items: list[str] = []
+    for item in _worth_a_look_records(run):
+        company = html.escape(str(item.get("company") or ""))
+        title = html.escape(str(item.get("title") or "Internship"))
+        fit = html.escape(str(item.get("llm_fit_score") or "—"))
+        reason = html.escape(str(item.get("llm_rank_reason") or ""))
+        url = html.escape(
+            str(item.get("apply_url") or item.get("source_url") or site_url), quote=True
+        )
+        worth_a_look_items.append(
+            f'<li style="margin:0 0 12px"><a href="{url}" style="color:#2a2e33;font-weight:600;text-decoration:none">{title}</a>'
+            f'<div style="margin-top:3px;color:#6b7375">{company} &middot; fit {fit}/100</div>'
+            f'<div style="margin-top:3px;color:#8b9294">{reason}</div></li>'
+        )
+    worth_a_look_block = ""
+    if worth_a_look_items:
+        worth_a_look_block = f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#fafafa">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Worth a look &middot; fit 60-69, not counted toward the daily five</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(worth_a_look_items)}</ul>
+        </div>"""
+
     unverified_block = ""
     if unverified:
         unverified_block = f"""
@@ -825,6 +921,7 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
       <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
+      {worth_a_look_block}
       {watchlist_html}
       {problem_briefs_html}
       {queue_block}

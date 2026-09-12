@@ -14,14 +14,18 @@ ABOUT_PAGE = (
 
 
 class _Response:
-    def __init__(self, text: str, status_code: int = 200) -> None:
+    def __init__(self, text: str, status_code: int = 200, url: str = "https://acme.com/about") -> None:
         self.text = text
         self.status_code = status_code
         self.headers = {"Content-Type": "text/html; charset=utf-8"}
-        self.url = "https://acme.com/about"
+        self.url = url
 
 
-def _fake_session(monkeypatch, robots: str, page: str = ABOUT_PAGE) -> None:
+def _fake_session(monkeypatch, robots: str, page: str = ABOUT_PAGE, only_path: str = "") -> None:
+    """only_path: if set, every path except it 404s -- lets a test pin which
+    CANDIDATE_PATHS entry actually supplies the page, since basis is now
+    decided by which page succeeded, not by sentence content."""
+
     class _Session:
         def __init__(self) -> None:
             self.headers: dict[str, str] = {}
@@ -29,20 +33,33 @@ def _fake_session(monkeypatch, robots: str, page: str = ABOUT_PAGE) -> None:
         def get(self, url: str, timeout: int = 0):
             if url.endswith("robots.txt"):
                 return _Response(robots)
-            return _Response(page)
+            if only_path and not url.rstrip("/").endswith(only_path):
+                return _Response("", status_code=404)
+            return _Response(page, url=url)
 
     monkeypatch.setattr(company_site.requests, "Session", _Session)
 
 
 def test_site_evidence_quotes_the_page_and_carries_provenance(monkeypatch) -> None:
-    _fake_session(monkeypatch, "User-agent: *\nAllow: /")
+    _fake_session(monkeypatch, "User-agent: *\nAllow: /", only_path="/careers")
     evidence, emails, _linkedin_urls, status = fetch_site_evidence("https://acme.com")
 
     assert status == "ok"
-    assert evidence[0]["basis"] == "company_site"
+    # /careers is in OPERATIONAL_PATHS -- basis is decided by which page
+    # supplied the evidence, not by sentence content.
+    assert evidence[0]["basis"] == "company_site_operational"
     assert "payroll software" in evidence[0]["observation"]
     assert evidence[0]["url"] and evidence[0]["access_date"]
     assert emails == ["hello@acme.com", "priya@acme.com"]
+
+
+def test_site_evidence_tags_descriptive_when_only_an_about_page_succeeds(monkeypatch) -> None:
+    _fake_session(monkeypatch, "User-agent: *\nAllow: /", only_path="/about")
+    evidence, _emails, _linkedin_urls, status = fetch_site_evidence("https://acme.com")
+
+    assert status == "ok"
+    assert evidence[0]["basis"] == "company_site_descriptive"
+    assert "payroll software" in evidence[0]["observation"]
 
 
 def test_site_evidence_obeys_a_disallowing_robots_file(monkeypatch) -> None:

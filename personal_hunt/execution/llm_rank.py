@@ -337,6 +337,14 @@ def score_shortlist(
             prompt=prompt,
             region=region,
             cache=cache,
+            # 2026-09-13: the 1800-token default was set for a shortlist of
+            # 10; at llm_shortlist_size:30, ~30 x (rank, fit_score, relevant,
+            # spam, 180-char reason) sits right on that limit. A truncated
+            # payload fails _validate_response and zeroes the WHOLE section
+            # (every admit for the day), not just the tail records -- the
+            # same failure class max_linkedin_extractions_per_run already
+            # hit twice. Sized for 40 records with headroom.
+            max_tokens=5000,
         )
         ranked = _validate_response(payload, {record["id"] for record in records})
     except Exception as exc:

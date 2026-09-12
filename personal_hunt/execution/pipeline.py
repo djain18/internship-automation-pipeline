@@ -42,6 +42,7 @@ from build_prompt import build_prompts_for_companies
 from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
 from company_site import fetch_office_evidence
+from firecrawl_research import resolve_company_url_via_search
 from contacts import choose_contact
 from dedupe import deduplicate
 from digest import render_digest, render_html_digest, send_self_digest, write_digest
@@ -329,6 +330,50 @@ def attach_company_provenance(
             item["company_url"] = candidate["company_url"]
             item["company_url_basis"] = "reviewed_registry_exact_company_name"
             item["company_url_source"] = candidate.get("registry_url")
+        output.append(item)
+    return output
+
+
+def _resolve_unresolved_via_firecrawl(
+    events: list[Record], scoring: dict[str, Any]
+) -> list[Record]:
+    """Try Firecrawl-search resolution for funding events resolve_company_urls
+    could not match by exact registry/opportunity name.
+
+    A third pool on top of company_resolve.py's two exact-match pools, not a
+    replacement -- resolve_company_url_via_search never accepts a domain
+    without live on-page verification, so this stays inside the "no domain
+    is ever guessed" rule. Gated on the same env vars as
+    maybe_add_firecrawl_evidence; a run without Firecrawl configured leaves
+    events exactly as resolve_company_urls returned them.
+    """
+    if os.getenv("PUBLIC_RESEARCH_PROVIDER", "source_evidence").casefold() != "firecrawl":
+        return events
+    if os.getenv("ENABLE_FIRECRAWL_RESEARCH", "").casefold() not in {"1", "true", "yes"}:
+        return events
+    api_key = os.getenv("FIRECRAWL_API_KEY", "")
+    if not api_key:
+        return events
+    cap = int(scoring.get("max_url_resolutions_per_run", 5))
+    output: list[Record] = []
+    attempted = 0
+    for event in events:
+        if event.get("company_url_basis") != "unresolved" or attempted >= cap:
+            output.append(event)
+            continue
+        attempted += 1
+        try:
+            result = resolve_company_url_via_search(event.get("company", ""), api_key)
+        except Exception as exc:
+            item = dict(event)
+            item["company_url_resolution_error"] = str(exc)[:300]
+            output.append(item)
+            continue
+        if not result:
+            output.append(event)
+            continue
+        item = dict(event)
+        item.update(result)
         output.append(item)
     return output
 
@@ -662,6 +707,7 @@ def run_pipeline(
     resolved_funding = resolve_company_urls(
         funding_primary + funding_extended, company_candidates or [], scored
     )
+    resolved_funding = _resolve_unresolved_via_firecrawl(resolved_funding, config["scoring"])
     resolved_by_id = {
         item["funding_event_id"]: item for item in resolved_funding
     }

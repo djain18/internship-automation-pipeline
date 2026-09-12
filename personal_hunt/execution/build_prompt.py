@@ -7,6 +7,7 @@ grounded in observed problems and the company's visible tech stack.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,52 @@ A single runnable prototype, scoped to {scope_hours} hours.
 
 Do not invent facts about {company_name}. Mark every assumption in the README.
 Build and test locally; do not make external API calls beyond reading this brief."""
+
+
+_CLONE_TERMS = ("clone", "alternative", "competitor", "version of", "rebuild")
+# Must match templates/prototype_prompt.txt's real headings, not the embedded
+# PROMPT_TEMPLATE fallback -- _load_prompt_template() prefers the disk file
+# when it exists, and it does in this repo, so validating against the
+# fallback's different wording ("## Problem", "## What to build") would
+# reject every prompt this pipeline actually generates.
+_REQUIRED_SECTIONS = ("## Observed signals", "## Build the prototype", "## Acceptance criteria")
+
+
+def validate_prototype_prompt(prompt_text: str, company_name: str) -> list[str]:
+    """Structural checks build_prototype_prompt's own LLM call has no way to
+    enforce on itself -- unlike outreach, which has validate_outreach, this
+    generator previously had nothing between "the LLM returned JSON" and
+    "the digest prints it." Returns an empty list when the prompt is fine."""
+    errors: list[str] = []
+    text = prompt_text or ""
+    if len(text) < 400:
+        errors.append("prompt shorter than 400 characters")
+        return errors
+    for section in _REQUIRED_SECTIONS:
+        if section not in text:
+            errors.append(f"missing required section: {section}")
+    # A bare unresolved {word} is what str.format() leaves behind on a
+    # missing template key.
+    if re.search(r"\{[a-z_]+\}", text):
+        errors.append("unresolved template placeholder left in prompt")
+    if not re.search(r"https?://", text):
+        errors.append("no evidence URL present in prompt body")
+    name = clean_text(company_name)
+    if name:
+        lowered = text.casefold()
+        name_lower = name.casefold()
+        for term in _CLONE_TERMS:
+            idx = lowered.find(name_lower)
+            while idx != -1:
+                window = lowered[max(0, idx - 40): idx + len(name_lower) + 40]
+                if term in window:
+                    errors.append(f"prompt reads as a clone/competitor of {company_name}")
+                    break
+                idx = lowered.find(name_lower, idx + 1)
+            else:
+                continue
+            break
+    return errors
 
 
 def _load_prompt_template(templates_dir: Path | None = None) -> str:
@@ -91,6 +138,25 @@ def build_prototype_prompt(
             "prompt_basis": "insufficient_evidence",
             "evidence_urls": [],
             "llm_status": "skipped_no_evidence",
+        }
+
+    # 2026-09-13: a real cloud run showed this generating "Build an internal
+    # vendor cookie audit dashboard for Lyzr AI's marketing/ops team" from
+    # evidence that was literally a cookie-consent banner -- observed_signals
+    # can be non-empty (a real quote from a real page) while
+    # research_deep_problem still correctly judged supported=false and left
+    # problem_hypothesis empty, because a quote merely being real doesn't
+    # make it evidence of an internal PROBLEM. Requiring evidence_urls alone
+    # let this function invent a prototype anyway. Same fail-closed pattern
+    # research_funding_event already uses for its own allow_llm gate.
+    if not problem_research.get("supported") or not clean_text(
+        problem_research.get("problem_hypothesis", "")
+    ):
+        return {
+            "prompt_text": "",
+            "prompt_basis": f"{len(evidence_urls)}_urls_unsupported_hypothesis",
+            "evidence_urls": evidence_urls,
+            "llm_status": "skipped_unsupported_hypothesis",
         }
 
     # Check if LLM is enabled and configured
@@ -182,12 +248,31 @@ def build_prototype_prompt(
             acceptance_criteria=acceptance_criteria,
         )
 
+        validation_errors = validate_prototype_prompt(prompt_text, company_name)
+        if validation_errors:
+            # Fail closed like every other quality gate here: a prompt that
+            # fails structural validation (too short, missing a required
+            # section, no evidence URL, or reads as a clone/competitor -- the
+            # same failure class as the Emergent bug, caught here structurally
+            # instead of by someone reading the email) never reaches Daksh.
+            return {
+                "prompt_text": "",
+                "prompt_basis": f"{len(evidence_urls)}_urls_blocked_validation",
+                "evidence_urls": evidence_urls,
+                "llm_status": "blocked_validation",
+                "validation_errors": validation_errors,
+            }
+
         return {
             "prompt_text": prompt_text,
             "prompt_basis": f"{len(evidence_urls)}_urls_llm_generated",
             "evidence_urls": evidence_urls,
             "llm_status": "ok",
             "scope_hours": scope_hours,
+            # Separate from prompt_text so outreach.py can say what the
+            # prototype does in one line, without re-parsing the assembled
+            # prompt to find it.
+            "what_to_build": what_to_build,
         }
 
     except Exception as e:

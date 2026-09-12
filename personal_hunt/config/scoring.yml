@@ -1,7 +1,15 @@
 publish_threshold: 70
 daily_target: 10
+# LLM shortlist size, separate from daily_target (the digest's display cap).
+# 2026-09-13: run_6e74f84cd7c98afb had daily_target=10 doing both jobs, so
+# any eligible record past #10 never reached the Kimi gate at all. Set to
+# absorb the ~26 eligible records the tripled LinkedIn volume (see
+# sources.yml max_items) is expected to produce.
+llm_shortlist_size: 30
 daily_min_target: 5
-max_artifacts: 2
+# 2026-09-13: raised 2 -> 6 so the deep-research/prototype-prompt chain can
+# cover a full 5-admitted day instead of only the top 2.
+max_artifacts: 6
 max_employees: 400
 preferred_max_employees: 150
 funding_recency_days: 365
@@ -27,7 +35,11 @@ max_role_judgements_per_run: 25
 # extraction is the only step that turns a raw LinkedIn post into an eligible
 # record, so a skipped candidate is a lost match. Measured cost of 4 extraction
 # calls that run: $0.00 against a $0.70 per-run ceiling.
-max_linkedin_extractions_per_run: 150
+# 2026-09-13: raised 150 -> 300, matching the actor's own max_items/maxPosts
+# raise in sources.yml (105 raw / 9 of 10 eligible on run_6e74f84cd7c98afb --
+# the highest-yield source by far). Extraction cap must never sit behind the
+# actor cap or paid-for posts get silently discarded.
+max_linkedin_extractions_per_run: 300
 # Unverified LinkedIn leads shown per run for manual checking. Capped so a
 # long tail of low-confidence leads cannot bury the approved matches.
 max_needs_verification: 10
@@ -53,6 +65,11 @@ funding_primary_age_days: 15
 funding_extension_age_days: 30
 funding_primary_min_items: 3
 funding_max_items: 5
+# 2026-09-13: how many funding events per run get a Firecrawl-search domain
+# resolution attempt (each is a live search + a live page fetch to verify).
+# Capped independently of max_deep_research_per_run -- resolution has to
+# happen before a company is even eligible for deep research.
+max_url_resolutions_per_run: 5
 # Phase 2: Deep problem research on funded companies
 max_deep_research_per_run: 8
 deep_research_min_evidence: 2
