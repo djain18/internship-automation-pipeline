@@ -9,6 +9,7 @@ from fetch_sources import (
     _greenhouse,
     _lever,
     _rise_sheet,
+    _teamtailor,
     _verified_ats_url,
     _wellfound,
     _workable,
@@ -57,6 +58,23 @@ def test_wwr_contract_fixture() -> None:
     assert len(records) == 1
     assert records[0]["company"] == "Remote Fixture"
     assert records[0]["title"] == "Chief of Staff Intern"
+
+
+def test_teamtailor_rss_parser_extracts_bengaluru_roles() -> None:
+    """Teamtailor RSS feed parsing with location extraction."""
+    content = (FIXTURES / "teamtailor-feed.xml").read_bytes()
+    records = _teamtailor(
+        content,
+        {"id": "lyzr_teamtailor", "url": "https://careers.lyzr.ai/jobs.rss", "company": "Lyzr AI"},
+    )
+    # Should extract multiple roles from the feed
+    assert len(records) >= 1
+    # Should extract title and location from Teamtailor RSS fields
+    bengaluru_roles = [r for r in records if "bengaluru" in r.get("location", "").lower()]
+    assert len(bengaluru_roles) > 0
+    # Check record structure
+    assert all(r["source_confidence"] == "official" for r in records)
+    assert all(r["source"] == "lyzr_teamtailor" for r in records)
 
 
 def test_yc_parser_ignores_navigation_and_extracts_company() -> None:

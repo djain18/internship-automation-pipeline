@@ -297,6 +297,7 @@ _ATS_HOSTS = {
     "lever": {"api.lever.co"},
     "ashby": {"api.ashbyhq.com"},
     "workable": {"apply.workable.com"},
+    "teamtailor": {"careers.lyzr.ai"},  # Teamtailor instances run on company domains; expand as needed
 }
 
 
@@ -424,6 +425,43 @@ def _workable(payload: Any, source: dict[str, Any]) -> list[Record]:
                 url=item.get("url") or item.get("shortlink"),
                 posted_at=item.get("published_on") or item.get("created_at"),
                 description=item.get("description"),
+            )
+        )
+    return output
+
+
+def _teamtailor(content: bytes, source: dict[str, Any]) -> list[Record]:
+    """Parse Teamtailor RSS feeds. Teamtailor instances run on company domains.
+
+    RSS entries include standard RSS fields plus Teamtailor-specific namespaced
+    fields: tt_city, tt_department, tt_name, tt_address, etc.
+    """
+    parsed = feedparser.parse(content)
+    output: list[Record] = []
+    for entry in parsed.entries:
+        if not isinstance(entry, dict):
+            continue
+        title = clean_text(entry.get("title"))
+        location = clean_text(entry.get("tt_city") or entry.get("tt_location") or entry.get("tt_name") or "")
+        url = clean_text(entry.get("link"))
+        if not title or not url:
+            continue
+        summary = clean_text(entry.get("summary", ""))
+        # Extract location from HTML summary if tt_city is empty
+        if not location and summary:
+            # Try to extract from HTML; summary may contain location mentions
+            summary_text = summary.replace("<", " ").replace(">", " ")
+            if "bengaluru" in summary_text.casefold() or "bangalore" in summary_text.casefold():
+                location = "Bengaluru"
+        output.append(
+            _ats_record(
+                source,
+                id=clean_text(entry.get("id")) or url,
+                title=title,
+                location=location,
+                url=url,
+                posted_at=entry.get("published") or entry.get("updated"),
+                description=summary,
             )
         )
     return output
@@ -588,6 +626,9 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
             elif source["adapter"] == "wwr":
                 response = _request(session, source["url"], timeout)
                 records = _wwr(response.content, source)
+            elif source["adapter"] == "teamtailor_ats":
+                response = _request(session, source["url"], timeout)
+                records = _teamtailor(response.content, source)
             elif source["adapter"] == "yc":
                 response = _request(session, source["url"], timeout)
                 records = _yc(response.text, source)

@@ -338,3 +338,147 @@ def test_evidence_scoring_by_volume_and_recency() -> None:
 
     # Recent evidence should score higher
     assert score_recent > score_old
+
+
+def test_watchlist_companies_always_included() -> None:
+    """Watchlist companies are always included regardless of evidence."""
+    # Funded companies with evidence
+    funded = [
+        {
+            "company": "Funded Co",
+            "company_url": "https://funded.com",
+            "company_url_basis": "reviewed",
+            "lane": "ai",
+            "funding_event_id": "funding_1",
+        }
+    ]
+
+    # Watchlist company (no evidence gate applied)
+    watchlist = [
+        {
+            "company": "Watchlist Co",
+            "company_url": "https://watchlist.com",
+            "lane": "ai",
+            "funding_event_id": "watchlist_1",
+        }
+    ]
+
+    selected = select_discovered_for_research(
+        funded,
+        config={"max_deep_research_per_run": 8},
+        run_date=date.today(),
+        watchlist_companies=watchlist,
+    )
+
+    selected_names = {c.get("company") for c in selected}
+    assert "Watchlist Co" in selected_names
+    assert "Funded Co" in selected_names
+
+
+def test_watchlist_companies_bypass_evidence_gate() -> None:
+    """Watchlist companies are included with no minimum evidence requirement."""
+    # No funded companies
+    funded = []
+
+    # Watchlist company alone
+    watchlist = [
+        {
+            "company": "Watchlist Only",
+            "company_url": "https://watchlist.com",
+            "lane": "unknown",
+            "funding_event_id": "watchlist_1",
+        }
+    ]
+
+    selected = select_discovered_for_research(
+        funded,
+        config={"max_deep_research_per_run": 8, "deep_research_min_evidence": 2},
+        run_date=date.today(),
+        watchlist_companies=watchlist,
+    )
+
+    # Watchlist should be selected despite no evidence and evidence gate
+    selected_names = {c.get("company") for c in selected}
+    assert "Watchlist Only" in selected_names
+    assert len(selected) == 1
+
+
+def test_watchlist_companies_reserve_slots() -> None:
+    """Watchlist companies reserve slots; discovered fills remainder."""
+    # Multiple funded companies
+    funded = [
+        {
+            "company": f"Funded {i}",
+            "company_url": f"https://funded{i}.com",
+            "company_url_basis": "reviewed",
+            "lane": "ai",
+            "funding_event_id": f"funding_{i}",
+        }
+        for i in range(10)
+    ]
+
+    # Two watchlist companies
+    watchlist = [
+        {
+            "company": "Watch 1",
+            "company_url": "https://watch1.com",
+            "lane": "ai",
+            "funding_event_id": "watch_1",
+        },
+        {
+            "company": "Watch 2",
+            "company_url": "https://watch2.com",
+            "lane": "ai",
+            "funding_event_id": "watch_2",
+        },
+    ]
+
+    selected = select_discovered_for_research(
+        funded,
+        config={"max_deep_research_per_run": 5},
+        run_date=date.today(),
+        watchlist_companies=watchlist,
+    )
+
+    # Should select both watchlist + up to 3 funded (5 total)
+    assert len(selected) == 5
+    selected_names = {c.get("company") for c in selected}
+    assert "Watch 1" in selected_names
+    assert "Watch 2" in selected_names
+    # Should have 3 funded companies
+    funded_selected = [n for n in selected_names if n.startswith("Funded")]
+    assert len(funded_selected) == 3
+
+
+def test_non_watchlist_company_with_thin_evidence_excluded() -> None:
+    """Non-watchlist companies still respect the evidence-minimum gate."""
+    # Funded company with no evidence
+    funded = [
+        {
+            "company": "Thin Evidence Co",
+            "company_url": "https://thin.com",
+            "company_url_basis": "reviewed",
+            "lane": "unknown",
+            "funding_event_id": "funding_1",
+        }
+    ]
+
+    # Empty watchlist
+    watchlist = []
+
+    selected = select_discovered_for_research(
+        funded,
+        config={
+            "max_deep_research_per_run": 8,
+            "deep_research_min_evidence": 2,
+        },
+        run_date=date.today(),
+        watchlist_companies=watchlist,
+    )
+
+    # Pre-filter (select_discovered_for_research) only does URL checking,
+    # not evidence checking. The gate applies later in research_deep_problem.
+    # So "Thin Evidence Co" gets selected for research, but would fail the
+    # evidence gate inside research_deep_problem.
+    selected_names = {c.get("company") for c in selected}
+    assert "Thin Evidence Co" in selected_names

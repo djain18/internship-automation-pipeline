@@ -1,0 +1,32 @@
+# Watchlist companies: permanent deep research targets regardless of funding or job posts.
+# Each company gets researched every run for problem signals and opportunities.
+# Verified facts only; no speculation beyond what's documented below.
+
+companies:
+  - name: Emergent
+    board_url: "https://boards.greenhouse.io/emergent"
+    site_url: "https://emergent.sh"
+    lane: ai
+    description: >
+      YC company, ~75 staff (70 in Bengaluru), $70M Series funding Jan 2026
+      (SoftBank/Khosla/Lightspeed), built Wingman (WhatsApp/Telegram autonomous agent).
+      Direct founder mentorship at careers page.
+
+  - name: Lyzr AI
+    board_url: "https://careers.lyzr.ai/jobs.rss"
+    site_url: "https://lyzr.ai"
+    lane: ai
+    description: >
+      Enterprise agent platform, Teamtailor RSS feed at
+      https://careers.lyzr.ai/jobs.rss. No generalist/founder's office/internship
+      opening as of 2026-09-12, but company-specific hiring patterns are visible
+      through open roles.
+
+  - name: AEOS
+    board_url: ""
+    site_url: "https://www.aeos.ai"
+    lane: ai
+    description: >
+      Founders Varun Mayya + Achina Mayya, founded 2022, bootstrapped/profitable,
+      ~500 staff. Runs 70+ channels at 1Bn+ views/month with 100+ enterprise clients
+      (Coca-Cola, Cleartrip, Zoho). Hires through Varun's public posts and company site only.

@@ -341,6 +341,36 @@ def _dated_signal(signal: Record, run_date: date, max_age_days: int) -> bool:
     return 0 <= age <= max_age_days and bool(signal.get("url") or signal.get("source_url"))
 
 
+def _watchlist_to_companies(watchlist_config: dict[str, Any]) -> list[Record]:
+    """Convert watchlist.yml company entries to Record format for deep research.
+
+    Each watchlist company becomes a company record with site URL and lane.
+    These bypass funding event requirements and are always researched.
+    """
+    output: list[Record] = []
+    for company_cfg in watchlist_config.get("companies", []):
+        if not isinstance(company_cfg, dict):
+            continue
+        name = clean_text(company_cfg.get("name", ""))
+        site_url = clean_text(company_cfg.get("site_url", ""))
+        if not name or not site_url:
+            continue
+        # Use a stable ID based on company name for the funding_event_id
+        # so deep research results can be merged back
+        company_id = stable_id("watchlist", name, prefix="watchlist")
+        output.append(
+            {
+                "company": name,
+                "company_url": site_url,
+                "company_url_basis": "watchlist",
+                "lane": clean_text(company_cfg.get("lane", "unknown")),
+                "funding_event_id": company_id,
+                "source": "watchlist",
+            }
+        )
+    return output
+
+
 def select_weekly_targets(
     companies: list[Record],
     funding_events: list[Record],
@@ -650,11 +680,15 @@ def run_pipeline(
         event["selected_contact"] = choose_contact(event)
 
     # Phase 2: Deep problem research for discovered companies
-    # Select funded companies with resolved URLs for deep research
+    # Load watchlist companies (always included, no evidence gate)
+    watchlist_companies = _watchlist_to_companies(config.get("watchlist", {}))
+    # Select funded companies with resolved URLs for deep research,
+    # plus all watchlist companies (which bypass the evidence-minimum gate)
     discovered_for_research = select_discovered_for_research(
         funding_primary + funding_extended,
         config=config["scoring"],
         run_date=run_date,
+        watchlist_companies=watchlist_companies,
     )
     model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
     region = os.getenv("AWS_REGION", "")
