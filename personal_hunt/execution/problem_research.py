@@ -18,8 +18,35 @@ from typing import Any
 import requests
 
 from company_site import fetch_site_evidence
+from firecrawl_research import search_public_evidence
 from models import Record, clean_text, canonical_url
 from research import cached_bedrock_json
+
+
+def _fetch_firecrawl_evidence(company_name: str) -> list[Record]:
+    """Third-party evidence (news, community posts) via Firecrawl search.
+
+    2026-09-13: company_site + Hacker News alone were consistently too thin
+    for a young, recently-funded company to ever produce a supported
+    hypothesis -- correct behavior on thin evidence, but useless in
+    practice. Scoped here to research_deep_problem's small, capped company
+    set (max_deep_research_per_run, typically <=8/run) rather than every
+    admitted internship, which is what actually burned the free plan's
+    credits before. Fails closed (empty list) on any error, including the
+    account being over its monthly quota -- this must never break deep
+    research, only add to it when available.
+    """
+    if os.getenv("PUBLIC_RESEARCH_PROVIDER", "source_evidence").casefold() != "firecrawl":
+        return []
+    if os.getenv("ENABLE_FIRECRAWL_RESEARCH", "").casefold() not in {"1", "true", "yes"}:
+        return []
+    api_key = os.getenv("FIRECRAWL_API_KEY", "")
+    if not api_key or not company_name:
+        return []
+    try:
+        return search_public_evidence(company_name, api_key)
+    except Exception:
+        return []
 
 
 def _fetch_hackernews_evidence(
@@ -206,9 +233,19 @@ def research_deep_problem(
     hn_evidence = _fetch_hackernews_evidence(company_name)
     all_evidence.extend(hn_evidence)
 
-    # 3. Apify sources (X/LinkedIn posts) - reuse existing budget-guarded fetcher
+    # 3. Firecrawl search (news, community posts) -- see _fetch_firecrawl_evidence
+    # docstring for why this exists. Skipped for watchlist companies: they
+    # are the same 3 fixed companies every single run, so re-querying
+    # Firecrawl for them daily spends real monthly credits on results that
+    # will not have changed since yesterday. Real funded companies (new
+    # each day) are exactly the case this is worth paying for.
+    if company.get("company_url_basis") != "watchlist":
+        firecrawl_evidence = _fetch_firecrawl_evidence(company_name)
+        all_evidence.extend(firecrawl_evidence)
+
+    # 4. Apify sources (X/LinkedIn posts) - reuse existing budget-guarded fetcher
     # Note: This would require wiring in apify_sources.py but that's already
-    # configured and budgeted. For now, rely on site + HN.
+    # configured and budgeted. For now, rely on site + HN + Firecrawl search.
 
     if not all_evidence:
         return {
