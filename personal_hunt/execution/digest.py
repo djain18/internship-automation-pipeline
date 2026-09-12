@@ -557,6 +557,140 @@ def render_digest(run: Record) -> str:
     )
 
 
+def _watchlist_movement_html(discovered: list[Record]) -> str:
+    """HTML counterpart of _watchlist_movement_section -- the plain-text
+    digest and the HTML digest must show the same content, since Gmail
+    renders the HTML part when both are present and a section only added
+    to render_digest would never reach the actual inbox."""
+    watchlist_companies = [
+        item for item in discovered if item.get("company_url_basis") == "watchlist"
+    ]
+    if not watchlist_companies:
+        return ""
+    items: list[str] = []
+    for item in watchlist_companies:
+        company = html.escape(str(item.get("company") or "Unknown"))
+        deep_research = item.get("deep_problem_research") or {}
+        evidence_count = deep_research.get("evidence_count", 0)
+        status = (
+            "no activity observed"
+            if not evidence_count
+            else f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
+        )
+        items.append(
+            f'<li style="margin:0 0 8px"><strong>{company}</strong>: {html.escape(status)}</li>'
+        )
+    return f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Watchlist movement</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(items)}</ul>
+        </div>"""
+
+
+def _problem_briefs_html(discovered: list[Record], site_url: str) -> str:
+    """HTML counterpart of _problem_briefs_section / _problem_brief_block."""
+    if not discovered:
+        return """
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Problem briefs</div>
+          <div style="margin-top:8px;font-size:13px;color:#6b7375">No companies cleared deep research today.</div>
+        </div>"""
+
+    blocks: list[str] = []
+    for company in discovered:
+        name = html.escape(str(company.get("company") or "Unknown"))
+        deep_research = company.get("deep_problem_research") or {}
+        prompt_gen = company.get("prompt_generation") or {}
+        contact = company.get("selected_contact") or {}
+        outreach = company.get("outreach") or {}
+
+        signal_items = "".join(
+            f'<li style="margin:0 0 6px">&ldquo;{html.escape(str(s.get("text", "")))}&rdquo; &mdash; '
+            f'<a href="{html.escape(str(s.get("url", "")) or site_url, quote=True)}" style="color:#6366f1">source</a></li>'
+            for s in (deep_research.get("observed_signals") or [])
+            if s.get("text") and s.get("url")
+        )
+        signals_html = (
+            f'<ul style="margin:8px 0 0;padding-left:18px;font-size:12px">{signal_items}</ul>'
+            if signal_items
+            else '<div style="margin-top:8px;font-size:12px;color:#8b9294">(No signals observed)</div>'
+        )
+
+        hypothesis = html.escape(str(deep_research.get("problem_hypothesis") or ""))
+        hypothesis_html = (
+            f'<div style="margin-top:10px;font-size:12px"><strong>Inference (not verified):</strong> {hypothesis}</div>'
+            if hypothesis
+            else ""
+        )
+
+        prompt_text = prompt_gen.get("prompt_text", "")
+        if prompt_text:
+            prompt_html = (
+                f'<pre style="margin-top:8px;padding:10px;background:#f5f5f5;border-radius:8px;'
+                f'font-size:11px;white-space:pre-wrap;overflow-wrap:break-word">{html.escape(prompt_text)}</pre>'
+            )
+        else:
+            prompt_html = (
+                '<div style="margin-top:8px;font-size:12px;color:#8b9294">'
+                "*Prompt not generated -- insufficient evidence.*</div>"
+            )
+
+        contact_lines = []
+        if contact.get("name"):
+            contact_lines.append(f"Name: {html.escape(str(contact['name']))}")
+        if contact.get("email"):
+            contact_lines.append(f"Email: {html.escape(str(contact['email']))}")
+        if contact.get("linkedin"):
+            contact_lines.append(f"LinkedIn: {html.escape(str(contact['linkedin']))}")
+        if contact.get("source"):
+            contact_lines.append(f"Source: {html.escape(str(contact['source']))}")
+        contact_html = (
+            f'<div style="margin-top:10px;font-size:12px;color:#6b7375">{" &middot; ".join(contact_lines)}</div>'
+            if contact_lines
+            else '<div style="margin-top:10px;font-size:12px;color:#8b9294">contact_research_required</div>'
+        )
+
+        send_status = outreach.get("send_status", "")
+        validation_errors = outreach.get("validation_errors", [])
+        if send_status == "blocked_insufficient_evidence":
+            drafts_html = '<div style="margin-top:8px;font-size:12px;color:#8b9294">Outreach blocked: insufficient evidence.</div>'
+        elif send_status == "blocked_validation":
+            errs = html.escape("; ".join(validation_errors))
+            drafts_html = f'<div style="margin-top:8px;font-size:12px;color:#8b9294">Outreach blocked by humanizer rules: {errs}</div>'
+        else:
+            parts = []
+            if outreach.get("email_body"):
+                parts.append(
+                    f'<div style="margin-top:8px;font-size:12px"><strong>Email:</strong> {html.escape(str(outreach["email_body"]))}</div>'
+                )
+            if outreach.get("linkedin_note"):
+                parts.append(
+                    f'<div style="margin-top:6px;font-size:12px"><strong>LinkedIn note:</strong> {html.escape(str(outreach["linkedin_note"]))}</div>'
+                )
+            if outreach.get("linkedin_message"):
+                parts.append(
+                    f'<div style="margin-top:6px;font-size:12px"><strong>LinkedIn message:</strong> {html.escape(str(outreach["linkedin_message"]))}</div>'
+                )
+            drafts_html = "".join(parts)
+
+        blocks.append(
+            f"""
+        <div style="padding:18px 28px;border-top:1px solid #e5e7eb">
+          <div style="font-size:14px;font-weight:600;color:#2a2e33">{name}</div>
+          {signals_html}
+          {hypothesis_html}
+          {prompt_html}
+          {contact_html}
+          {drafts_html}
+        </div>"""
+        )
+
+    return f"""
+        <div style="padding:20px 28px 4px;border-top:1px solid #e5e7eb">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Problem briefs</div>
+        </div>{''.join(blocks)}"""
+
+
 def render_html_digest(run: Record) -> str:
     """Render the personal decision digest in Rise's existing visual language."""
 
@@ -667,6 +801,10 @@ def render_html_digest(run: Record) -> str:
           <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(queue_items)}</ul>
         </div>"""
 
+    discovered = run.get("discovered_for_research", [])
+    watchlist_html = _watchlist_movement_html(discovered)
+    problem_briefs_html = _problem_briefs_html(discovered, site_url)
+
     count = len(records)
     return f"""<!doctype html>
 <html><body style="margin:0;background:#f5f5f5;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2a2e33">
@@ -679,6 +817,8 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
       <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
+      {watchlist_html}
+      {problem_briefs_html}
       {queue_block}
       {unverified_block}
       {weekly_block}

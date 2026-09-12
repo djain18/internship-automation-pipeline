@@ -14,6 +14,7 @@ from pathlib import Path
 from config import AUTOMATION_ROOT, load_all
 from digest import (
     render_digest,
+    render_html_digest,
     _watchlist_movement_section,
     _problem_briefs_section,
     _problem_brief_block,
@@ -273,10 +274,22 @@ def test_fixture_pipeline_render_includes_discovered_section(tmp_path: Path, mon
                 "source": "company_team_page",
             },
             "outreach": {
-                "email_body": "Hi Test Contact, I noticed performance challenges...",
+                "email_subject": "watchlist prototype idea",
+                "email_body": (
+                    "Hi Test Contact, I've been researching Test Watchlist Co and found a "
+                    "concrete operational gap worth flagging: users report slow performance "
+                    "on the platform. I put together a small working prototype instead of "
+                    "just describing the idea, since a runnable demo says more than a "
+                    "pitch. I'm looking for a six-month onsite generalist internship in "
+                    "Bengaluru starting November 2026, where I can pick up real "
+                    "cross-functional work like this. Would it be useful to walk through "
+                    "the prototype together sometime this week?"
+                ),
                 "linkedin_note": "Interested in your performance work",
                 "linkedin_message": "Great to connect! Here's my prototype idea.",
-                "send_status": "ready",
+                "send_status": "draft_needs_human_review",
+                "draft_source": "problem_led",
+                "validation_errors": [],
             },
         }
     ]
@@ -338,6 +351,20 @@ def test_fixture_pipeline_render_includes_discovered_section(tmp_path: Path, mon
     assert "Build a performance monitoring dashboard" in rendered
     assert "contact@test-watchlist.com" in rendered
 
+    # Regression: Gmail renders the HTML part over the plain-text part when
+    # both exist, so the same content added to render_digest above must also
+    # reach render_html_digest, not just the plain-text digest -- an earlier
+    # version of this fix only touched render_digest and the HTML digest
+    # actually sent to Daksh's inbox stayed unchanged.
+    html_rendered = render_html_digest(run)
+    assert "Watchlist movement" in html_rendered
+    assert "Test Watchlist Co" in html_rendered
+    assert "Users report slow performance" in html_rendered
+    assert "The platform has performance bottlenecks." in html_rendered
+    assert "Build a performance monitoring dashboard" in html_rendered
+    assert "contact@test-watchlist.com" in html_rendered
+    assert "Interested in your performance work" in html_rendered
+
 
 def test_digest_quiet_day_with_no_discovered_companies(tmp_path: Path, monkeypatch) -> None:
     """A quiet day with no research still sends mail and says so (regression test).
@@ -367,4 +394,9 @@ def test_digest_quiet_day_with_no_discovered_companies(tmp_path: Path, monkeypat
     assert "## Problem briefs for researched companies" in rendered
     # And should say what happened honestly
     assert "No watchlist companies" in rendered or "no activity" in rendered.lower()
+
+    # HTML digest must stay honest on a quiet day too, not just plain text.
+    html_rendered = render_html_digest(run)
+    assert "Problem briefs" in html_rendered
+    assert "No companies cleared deep research today" in html_rendered
     assert "No companies were researched" in rendered
