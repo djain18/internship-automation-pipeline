@@ -10,8 +10,9 @@ from typing import Any
 import feedparser
 import requests
 
+from company_resolve import is_roundup_headline
 from fetch_sources import _request
-from models import Record, canonical_url, clean_text, stable_id
+from models import Record, canonical_url, clean_text, repair_mojibake, stable_id
 from source_health import SourceHealth, classify_http_failure
 
 
@@ -77,16 +78,21 @@ def parse_funding_feed(content: bytes, source: dict[str, Any]) -> list[Record]:
         raise ValueError(f"invalid funding feed: {parsed.bozo_exception}")
     output: list[Record] = []
     for entry in parsed.entries:
-        title = html.unescape(clean_text(entry.get("title")))
+        title = repair_mojibake(html.unescape(clean_text(entry.get("title"))))
         if not title or not _funding_title(title):
+            continue
+        if is_roundup_headline(title):
+            # A weekly/period roundup names many companies; treating the
+            # first regex-matched name as "the" company would misattribute
+            # the whole roundup's evidence to one of them.
             continue
         company = _company_from_title(title)
         published = _event_date(entry.get("published") or entry.get("updated"))
         source_url = canonical_url(entry.get("link"))
         if not company or not published or not source_url:
             continue
-        summary = html.unescape(
-            clean_text(entry.get("summary") or entry.get("description"))
+        summary = repair_mojibake(
+            html.unescape(clean_text(entry.get("summary") or entry.get("description")))
         )
         output.append(
             {

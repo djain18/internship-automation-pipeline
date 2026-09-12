@@ -31,6 +31,46 @@ def test_funding_feed_requires_dated_funding_assertion() -> None:
     assert records[0]["event_date"] == "2026-09-09"
 
 
+def test_funding_feed_rejects_multi_company_roundup_headline() -> None:
+    # 2026-09-12 incident: "From Pixxel To Swish - Indian Startups Raised
+    # Over $321.9 Mn This Week" produced a bogus company named "From Pixxel
+    # To Swish". Real Inc42/YourStory titles verified before this test.
+    xml = """<?xml version='1.0'?><rss version='2.0'><channel>
+    <item><title>From Pixxel To Swish — Indian Startups Raised Over $321.9 Mn This Week</title>
+    <link>https://inc42.com/buzz/roundup</link><pubDate>Wed, 09 Sep 2026 01:00:00 GMT</pubDate>
+    <description>Roundup text.</description></item>
+    <item><title>[Weekly funding roundup Sept 5-11] VC inflow doubles this week</title>
+    <link>https://yourstory.com/roundup</link><pubDate>Wed, 09 Sep 2026 01:00:00 GMT</pubDate>
+    <description>Roundup text.</description></item>
+    <item><title>Nua raises $50 Mn to expand women's wellness portfolio</title>
+    <link>https://inc42.com/buzz/nua</link><pubDate>Wed, 09 Sep 2026 01:00:00 GMT</pubDate>
+    <description>Single company article.</description></item>
+    </channel></rss>""".encode("utf-8")
+    records = parse_funding_feed(
+        xml,
+        {"id": "funding_fixture", "name": "Funding Fixture", "source_confidence": "medium"},
+    )
+    assert len(records) == 1
+    assert records[0]["company"] == "Nua"
+
+
+def test_funding_feed_repairs_mojibaked_title() -> None:
+    xml = (
+        "<?xml version='1.0'?><rss version='2.0'><channel>"
+        "<item><title>Auraaisonâ€™s raises $2 Mn in seed round</title>"
+        "<link>https://example.com/mojibake</link><pubDate>Wed, 09 Sep 2026 01:00:00 GMT</pubDate>"
+        "<description>Company text.</description></item>"
+        "</channel></rss>"
+    ).encode("utf-8")
+    records = parse_funding_feed(
+        xml,
+        {"id": "funding_fixture", "name": "Funding Fixture", "source_confidence": "medium"},
+    )
+    assert len(records) == 1
+    assert "â€™" not in records[0]["headline"]
+    assert "’" in records[0]["headline"]
+
+
 def test_funding_primary_extension_and_hard_max() -> None:
     scoring = {
         "funding_primary_age_days": 15,

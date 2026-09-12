@@ -39,6 +39,7 @@ if os.getenv("ENABLE_BEDROCK", "").casefold() in {"1", "true", "yes"}:
 
 from artifacts import create_artifacts
 from config import AUTOMATION_ROOT, load_all
+from company_resolve import resolve_company_urls
 from company_site import fetch_office_evidence
 from contacts import choose_contact
 from dedupe import deduplicate
@@ -625,9 +626,21 @@ def run_pipeline(
     funding_primary, funding_extended, funding_excluded = select_funding_events(
         funding_records or [], run_date, config["scoring"]
     )
+    resolved_funding = resolve_company_urls(
+        funding_primary + funding_extended, company_candidates or [], scored
+    )
+    resolved_by_id = {
+        item["funding_event_id"]: item for item in resolved_funding
+    }
+    funding_primary = [resolved_by_id.get(item["funding_event_id"], item) for item in funding_primary]
+    funding_extended = [resolved_by_id.get(item["funding_event_id"], item) for item in funding_extended]
     for event in funding_primary + funding_extended:
+        # allow_llm only once a real company_url is resolved: with none, the
+        # model has no evidence beyond the headline to ground a hypothesis
+        # in, and the existing supported=false fail-closed gate would clear
+        # the result anyway, so the call is skipped rather than spent.
         event["problem_research"] = research_funding_event(
-            event, allow_llm=False, cache=llm_cache
+            event, allow_llm=bool(event.get("company_url")), cache=llm_cache
         )
         # Funding events skipped choose_contact entirely, which is why contact
         # was null on every one of them.
