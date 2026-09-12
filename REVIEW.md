@@ -264,3 +264,63 @@ confirm with Daksh before pushing the full range.
   is actually the job name in real Teamtailor feeds, stays unverified).
 - The three watchlist companies' `description` fields in `watchlist.yml`
   are documentation only, never read by code — intentional.
+
+## 2026-09-13 — Real send review: prototypes were targeting companies' own paid products
+
+Daksh read the actual digest email (`run_f9ae04eb99b98d0e`) and flagged
+two problems.
+
+**1. Zero internships, checked and confirmed correct, not a bug.** Of
+1,447 scored records, 1 was deterministically eligible (Ressl AI, GTM
+Intern); Kimi scored its real fit at 55/100 against the required ≥70 and
+correctly withheld it (`llm_scoring.primary`: `admitted: 0, withheld: 1,
+status: ok`). The dominant deterministic rejection reasons
+(`role_not_cross_functional` 1110, `location_out_of_scope` 1163,
+`posted_over_10_days` 903, `not_internship_or_fellowship` 1214, reasons
+compound per record) match this pipeline's documented historical
+pattern. A quiet day, honestly reported.
+
+**2. Real bug: the generated prototype for Emergent was a cut-rate clone
+of Emergent's own paid product.** The only evidence gathered was a
+homepage pricing blurb and a generic careers tagline. Neither LLM
+instruction (`problem_research.py`, `build_prompt.py`) forbade treating
+a company's own marketing/pricing copy as an internal problem, so Kimi
+inferred "AI app builders are too expensive/complex" and then generated
+a prototype spec for... an AI app builder with a pricing page. Daksh's
+own words: "why should we build something they're already doing, then
+tell them their pricing is too expensive, using a cheap app that
+wouldn't work at all."
+
+Fixed both instructions: `problem_research.py` now explicitly requires
+an INTERNAL operational hypothesis (workflow friction, support/onboarding
+load, tooling gaps) and forbids treating marketing/pricing copy as
+evidence of an internal problem — when that's all the evidence says, it
+must set `supported=false` and leave the hypothesis empty rather than
+inventing one. `build_prompt.py` now explicitly forbids proposing a
+clone or competitor of the company's own core commercial product;
+anything the prototype builds must be adjacent, helping the company's
+own team internally.
+
+**Found while verifying that fix, a second real bug:** `problem_status`
+in `research_deep_problem` was hardcoded to `inference_needs_validation`
+regardless of the model's own `supported` verdict — so even a correctly
+unsupported, empty-hypothesis result (exactly what the new instruction
+asks the model to produce on thin evidence) still claimed a validated
+inference. `research_funding_event` already got this right (status keyed
+on `supported`); this sibling function did not. Fixed to match.
+
+**Reverified against a real cloud run** (`run_5e783e64cf110835`, no
+preemption): all three watchlist companies now propose genuinely
+adjacent internal tools — an internal team-coordination dashboard for
+Emergent's distributed dev squads, an "Agent Performance Observatory"
+monitoring Lyzr's own open-source framework deployments, a "Culture
+Pulse" dashboard for AEOS's portfolio operations team. None mention
+rebuilding or pricing the company's own product.
+
+`deliver` was deliberately NOT rerun a second time today to avoid
+double-sending Daksh mail; the fix is verified against `collect`'s
+output only. Tomorrow's scheduled 08:30 IST digest is the first real
+end-to-end proof.
+
+234 personal_hunt tests, 200 Rise tests, Ruff clean. Pushed to
+`origin/main` (`8dc3868`). Redeployed to `daksh-internship-hunt`.
