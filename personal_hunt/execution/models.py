@@ -28,13 +28,24 @@ def clean_text(value: Any) -> str:
 
 def repair_mojibake(text: str) -> str:
     """Undo UTF-8 bytes that were decoded as cp1252 upstream (e.g. an
-    apostrophe arriving as "Founderâ€™s Office"). Downstream exact-quote
-    validators (llm_rank.py's LinkedIn extraction, this module's own
-    consumers) need a literal substring match against the original text,
-    so mangled punctuation silently loses otherwise-good records. Only
-    applied when the round trip succeeds cleanly; genuinely correct text
-    that happens to contain cp1252-range characters is left untouched."""
-    if not text or ("Â" not in text and "â€" not in text):
+    apostrophe arriving as "Founderâ€™s Office", or a rupee sign arriving
+    as "â‚¹532 Cr"). Downstream exact-quote validators (llm_rank.py's
+    LinkedIn extraction, this module's own consumers) need a literal
+    substring match against the original text, so mangled punctuation
+    silently loses otherwise-good records. Only applied when the round
+    trip succeeds cleanly; genuinely correct text that happens to contain
+    cp1252-range characters almost never round-trips through cp1252 into
+    valid UTF-8 by coincidence, so the safety is in the round trip itself,
+    not this pre-check -- the pre-check only exists to skip the encode/
+    decode attempt on plain-ASCII text.
+
+    Bug fixed 2026-09-13: an earlier version of this check required the
+    literal two-character sequence "â€" (U+00E2 U+20AC), which covers
+    apostrophes, dashes and ellipses but not other mojibaked punctuation
+    such as the rupee sign (U+00E2 U+201A U+00B9). Any occurrence of
+    U+00E2 or U+00C2 is a 3-byte or 2-byte UTF-8 lead byte misread as
+    cp1252, so either alone is enough to attempt the repair."""
+    if not text or ("Â" not in text and "â" not in text):
         return text
     try:
         repaired = text.encode("cp1252").decode("utf-8")
