@@ -8,6 +8,9 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -416,17 +419,31 @@ def select_weekly_targets(
     return candidates[: int(scoring.get("weekly_target_max_items", 3))]
 
 
+def _empty_yield_bucket(source: str) -> Record:
+    return {
+        "source": source,
+        "raw": 0,
+        "unique": 0,
+        "eligible": 0,
+        "kimi_approved": 0,
+        "manually_applied": 0,
+        "replied": 0,
+        "interviewed": 0,
+        "rejection_reasons": {},
+    }
+
+
 def build_source_yield(
     raw_records: list[Record], unique_records: list[Record], published: list[Record]
 ) -> list[Record]:
     buckets: dict[str, Record] = {}
     for record in raw_records:
         source = clean_text(record.get("source") or "unknown")
-        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket = buckets.setdefault(source, _empty_yield_bucket(source))
         bucket["raw"] += 1
     for record in unique_records:
         source = clean_text(record.get("source") or "unknown")
-        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket = buckets.setdefault(source, _empty_yield_bucket(source))
         bucket["unique"] += 1
         bucket["eligible"] += int(bool(record.get("eligible")))
         status = clean_text(record.get("status")).casefold()
@@ -435,11 +452,26 @@ def build_source_yield(
         bucket["manually_applied"] += int(status in {"applied", "sent_manually"})
         bucket["replied"] += int(bool(reply and reply != "no_reply"))
         bucket["interviewed"] += int(bool(interview and interview not in {"none", "no_interview"}))
+        if not record.get("eligible"):
+            reasons = bucket["rejection_reasons"]
+            for reason in record.get("rejection_reasons", []) or []:
+                reasons[reason] = reasons.get(reason, 0) + 1
     for record in published:
         source = clean_text(record.get("source") or "unknown")
-        bucket = buckets.setdefault(source, {"source": source, "raw": 0, "unique": 0, "eligible": 0, "kimi_approved": 0, "manually_applied": 0, "replied": 0, "interviewed": 0})
+        bucket = buckets.setdefault(source, _empty_yield_bucket(source))
         bucket["kimi_approved"] += int(bool(record.get("digest_approved")))
-    return sorted(buckets.values(), key=lambda item: item["source"])
+    results = []
+    for bucket in buckets.values():
+        reasons = bucket.pop("rejection_reasons")
+        if reasons:
+            top_reason, top_count = max(reasons.items(), key=lambda kv: kv[1])
+            bucket["dominant_rejection_reason"] = top_reason
+            bucket["dominant_rejection_count"] = top_count
+        else:
+            bucket["dominant_rejection_reason"] = ""
+            bucket["dominant_rejection_count"] = 0
+        results.append(bucket)
+    return sorted(results, key=lambda item: item["source"])
 
 
 def deterministic_candidate_count(
@@ -775,6 +807,32 @@ def _self_digest_enabled() -> bool:
     return os.getenv("ENABLE_SELF_DIGEST", "false").casefold() in {"1", "true", "yes"}
 
 
+_STALE_AFTER = timedelta(hours=18)
+
+
+def _staleness_warning(run: Record) -> str:
+    """Non-empty when the latest collect is old enough that 08:30 delivery
+    would otherwise silently re-render a failed day as if it were fresh."""
+    completed_at = run.get("completed_at")
+    if not completed_at:
+        return ""
+    try:
+        completed = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if datetime.now(completed.tzinfo) - completed > _STALE_AFTER:
+        return (
+            f"STALE DATA: the last successful collect finished at {completed_at}. "
+            "A more recent scheduled collect appears to have failed; treat every "
+            "match below as outdated until the pipeline is checked."
+        )
+    return ""
+
+
+def _ist_delivery_key(run_id: str) -> str:
+    return f"{datetime.now(IST).date().isoformat()}:{run_id}"
+
+
 # Both addresses land in Daksh's inbox (alias setup); either may receive digests.
 APPROVED_DIGEST_RECIPIENTS = frozenset(
     {"dakshinjain187@gmail.com", "dakshjainn02@gmail.com"}
@@ -782,7 +840,14 @@ APPROVED_DIGEST_RECIPIENTS = frozenset(
 
 
 def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
-    existing = state.digest_delivery(str(run["run_id"]))
+    run_id = str(run["run_id"])
+    delivery_key = _ist_delivery_key(run_id)
+    # Keyed on the IST calendar date, not just run_id: a retry within the same
+    # morning must not double-send, but a genuinely new day must always send
+    # even if it happens to reference the same (stale) run artifact. The
+    # legacy bare-run-id lookup covers deliveries recorded before this key
+    # existed so they still count as already-sent.
+    existing = state.digest_delivery_for_run(delivery_key, run_id)
     if existing.get("message_id"):
         return "digest_already_sent", str(existing["message_id"])
     if not run.get("digest_usable"):
@@ -804,35 +869,48 @@ def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
         for item in run.get("digest_remote_fallback", [])
         if str(item.get("id")) not in sent_ids
     ]
-    opportunity_ids = [
-        str(item["id"])
-        for item in delivery_run["digest_primary"]
-        + delivery_run["digest_remote_fallback"]
-        if item.get("id")
-    ]
-    if not opportunity_ids:
-        return "digest_skipped_no_new_matches", ""
+    new_only = delivery_run["digest_primary"] + delivery_run["digest_remote_fallback"]
+    opportunity_ids = [str(item["id"]) for item in new_only if item.get("id")]
+    stale_notice = _staleness_warning(run)
+    if stale_notice:
+        delivery_run["staleness_warning"] = stale_notice
+    # Daksh's explicit call (2026-09-12): a quiet day still gets mail. Silence
+    # must mean the pipeline broke, never "nothing new to report" — those two
+    # are indistinguishable from an empty inbox. The per-opportunity filter
+    # above still decides what counts as *new*; it no longer decides whether
+    # anything is sent. The verification tray and funding sections have their
+    # own content independent of digest_primary/digest_remote_fallback and
+    # were previously discarded along with the suppressed email.
+    if opportunity_ids:
+        subject = (
+            f"{len(opportunity_ids)} new internship match"
+            f"{'es' if len(opportunity_ids) != 1 else ''} - Rise"
+        )
+        status = "digest_sent"
+    else:
+        subject = "no new internship matches - Rise"
+        status = "digest_sent_no_new_matches"
+    if stale_notice:
+        subject = f"[STALE] {subject}"
     body = render_digest(delivery_run)
     html_body = render_html_digest(delivery_run)
-    message_id = send_self_digest(
-        f"{len(opportunity_ids)} new internship match{'es' if len(opportunity_ids) != 1 else ''} - Rise",
-        body,
-        html_body,
-    )
+    message_id = send_self_digest(subject, body, html_body)
     state.record_digest_delivery(
-        str(run["run_id"]),
+        delivery_key,
         recipient,
         message_id,
         utc_timestamp(),
         opportunity_ids=opportunity_ids,
     )
-    return "digest_sent", message_id
+    return status, message_id
 
 
 def main() -> int:
     args = _parse_args()
     config = load_all()
-    run_date = args.run_date or date.today()
+    # The scheduler fires on IST wall-clock time inside a UTC container; using
+    # date.today() here filed the 00:30 IST collect under the previous UTC day.
+    run_date = args.run_date or datetime.now(IST).date()
     output_base = Path(
         os.getenv("PIPELINE_OUTPUT_DIR", str(AUTOMATION_ROOT / "out"))
     )
@@ -842,25 +920,44 @@ def main() -> int:
     state = LocalState(state_base / "state.json")
     llm_cache = {} if args.no_state else state.llm_cache()
     if args.digest_latest:
-        run, run_path = _load_latest_live(output_base)
-        digest_path = run_path.with_name(f"{run['run_id']}-digest.md")
-        write_digest(digest_path, run)
-        message_id = ""
-        status = "digest_rendered"
-        if args.send_digest and _self_digest_enabled():
-            status, message_id = _send_once(run, state)
-        print(
-            json.dumps(
-                {
-                    "run_id": run["run_id"],
-                    "status": status,
-                    "digest": str(digest_path.resolve()),
-                    "digest_message_id": message_id,
-                },
-                indent=2,
+        # Unlike the --live path below, this branch used to have no exception
+        # handling at all: any raise from _load_latest_live() or the guards
+        # inside _send_once() crashed the scheduled Modal run with nothing in
+        # the inbox and nothing distinguishing it from a normal quiet day.
+        # Best-effort tell Daksh directly when that happens, then re-raise so
+        # the run is still recorded as failed.
+        try:
+            run, run_path = _load_latest_live(output_base)
+            digest_path = run_path.with_name(f"{run['run_id']}-digest.md")
+            write_digest(digest_path, run)
+            message_id = ""
+            status = "digest_rendered"
+            if args.send_digest and _self_digest_enabled():
+                status, message_id = _send_once(run, state)
+            print(
+                json.dumps(
+                    {
+                        "run_id": run["run_id"],
+                        "status": status,
+                        "digest": str(digest_path.resolve()),
+                        "digest_message_id": message_id,
+                    },
+                    indent=2,
+                )
             )
-        )
-        return 0
+            return 0
+        except Exception as exc:
+            if args.send_digest and _self_digest_enabled():
+                try:
+                    send_self_digest(
+                        "[FAILED] internship digest delivery - Rise",
+                        "The scheduled digest delivery failed before any mail could be "
+                        f"rendered or sent.\n\n{type(exc).__name__}: {str(exc)[:500]}\n\n"
+                        "Check the Modal app logs and out/latest-live.json.",
+                    )
+                except Exception:
+                    pass  # noqa: BLE001 - failure-note delivery is best-effort only
+            raise
     if args.live:
         raw, health = fetch_live(config["sources"])
         preview_first_seen = (
@@ -887,16 +984,29 @@ def main() -> int:
                     "human_action": "Open each link yourself; the pipeline may not open LinkedIn.",
                 }
             )
-        raw, extraction = extract_linkedin_hiring_fields(raw, cache=llm_cache)
+        raw, extraction = extract_linkedin_hiring_fields(
+            raw, cache=llm_cache, scoring=config["scoring"]
+        )
         if extraction.get("status") != "not_needed":
+            candidates = int(extraction.get("candidates", extraction.get("sent", 0)) or 0)
+            attempted = int(extraction.get("sent", 0) or 0)
+            resolved = int(extraction.get("resolved", 0) or 0)
             health.append(
                 {
                     "source_id": "linkedin_posts_apify_extraction",
                     "status": extraction.get("status"),
-                    "record_count": extraction.get("resolved", 0),
+                    "record_count": resolved,
                     "checked_at": utc_timestamp(),
                     "usage": extraction.get("usage", {}),
                     "error_message": extraction.get("error", ""),
+                    # candidates: posts that qualified for extraction; attempted:
+                    # actually sent to the LLM. A gap between the two means the
+                    # per-run cap is binding again and worth raising.
+                    "candidates": candidates,
+                    "attempted": attempted,
+                    "resolved": resolved,
+                    "unresolved": max(attempted - resolved, 0),
+                    "skipped_over_cap": max(candidates - attempted, 0),
                     "human_action": (
                         "Inspect unresolved public posts; unproven fields remain rejected."
                         if extraction.get("status") != "ok"

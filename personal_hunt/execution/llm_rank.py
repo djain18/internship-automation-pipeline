@@ -9,8 +9,12 @@ from research import cached_bedrock_json
 
 
 MAX_REASON_CHARS = 180
-# 10 records per batch; output headroom comes from max_tokens=3500 below.
+# Fallback only; the real cap is config/scoring.yml:max_linkedin_extractions_per_run.
 LINKEDIN_EXTRACTION_LIMIT = 10
+# Per-call batch size. Kept small enough that one call's output (~350 tokens
+# per resolved record) stays well inside max_tokens=3500 — a 2026-09-11 live
+# run truncated a 20x6000-char batch mid-JSON and failed closed.
+LINKEDIN_EXTRACTION_BATCH_SIZE = 10
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -61,35 +65,8 @@ def _validate_response(payload: Any, expected_ids: set[str]) -> list[Record]:
     return ranked
 
 
-def extract_linkedin_hiring_fields(
-    records: list[Record], cache: dict[str, Any] | None = None
-) -> tuple[list[Record], Record]:
-    """Resolve structured fields in one bounded batch and reject unquoted output."""
-
-    candidates = [
-        item
-        for item in records
-        if item.get("source") == "linkedin_posts_apify"
-        and not all(item.get(key) for key in ("company", "title", "location"))
-        and "intern" in str(item.get("description", "")).casefold()
-        and any(
-            term in str(item.get("description", "")).casefold()
-            for term in ("hiring", "opening", "apply")
-        )
-        and any(
-            term in str(item.get("description", "")).casefold()
-            for term in ("bengaluru", "bangalore", "remote", "hybrid")
-        )
-    ][:LINKEDIN_EXTRACTION_LIMIT]
-    if not candidates:
-        return records, {"status": "not_needed", "sent": 0, "resolved": 0}
-    if os.getenv("ENABLE_BEDROCK", "").casefold() not in {"1", "true", "yes"}:
-        return records, {"status": "skipped_disabled", "sent": 0, "resolved": 0}
-    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
-    region = os.getenv("AWS_REGION", "")
-    if not model_id or not region:
-        return records, {"status": "skipped_missing_configuration", "sent": 0, "resolved": 0}
-    content = {
+def _extraction_batch_content(candidates: list[Record]) -> dict[str, Any]:
+    return {
         "instruction": (
             "Extract only explicitly stated hiring fields. Return raw JSON as "
             '{"records":[{"id":"...","company":"","title":"","location":"",'
@@ -104,78 +81,164 @@ def extract_linkedin_hiring_fields(
             for item in candidates
         ],
     }
-    prompt = json.dumps(content, ensure_ascii=False)
-    try:
-        payload, usage = cached_bedrock_json(
-            purpose="linkedin_hiring_field_extraction",
-            model_id=model_id,
-            prompt_version="v1",
-            content=content,
-            prompt=prompt,
-            region=region,
-            cache=cache,
-            # 10 structured records need headroom past the 1800 default;
-            # truncation failed closed twice on live runs.
-            max_tokens=3500,
-        )
-        extracted = payload.get("records") if isinstance(payload, dict) else None
-        if not isinstance(extracted, list):
-            raise ValueError("response must contain a records list")
-        by_id = {str(item.get("id")): item for item in extracted if isinstance(item, dict)}
-        supplied_ids = {str(item["id"]) for item in candidates}
-        if not by_id or len(by_id) != len(extracted) or not set(by_id) <= supplied_ids:
-            raise ValueError("extraction IDs must be a clean subset of supplied records")
-    except Exception as exc:
-        return records, {
-            "status": "failed",
-            "sent": len(candidates),
-            "resolved": 0,
-            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+
+
+def _apply_extraction_result(record: Record, result: dict[str, Any] | None) -> tuple[Record, bool]:
+    item = dict(record)
+    if result is None:
+        return item, False
+    text = str(record.get("description", ""))
+    quote = clean_text(result.get("evidence_quote"))
+    company = clean_text(result.get("company"))
+    title = clean_text(result.get("title"))
+    location = clean_text(result.get("location"))
+    quote_lower = quote.casefold()
+    valid = bool(
+        quote
+        and quote_lower in text.casefold()
+        and company.casefold() in quote_lower
+        and "intern" in title.casefold()
+        and "intern" in quote_lower
+        and any(term in location.casefold() for term in ("bengaluru", "bangalore", "remote", "hybrid"))
+        and any(term in quote_lower for term in ("bengaluru", "bangalore", "remote", "hybrid"))
+    )
+    if not valid:
+        return item, False
+    item.update(
+        {
+            "company": company,
+            "title": title,
+            "location": location,
+            "extraction_evidence_quote": quote,
+            "extraction_status": "llm_evidence_validated",
         }
+    )
+    apply_url = clean_text(result.get("apply_url"))
+    if apply_url and apply_url in text:
+        item["apply_url"] = apply_url
+    return item, True
+
+
+def extract_linkedin_hiring_fields(
+    records: list[Record],
+    cache: dict[str, Any] | None = None,
+    scoring: dict[str, Any] | None = None,
+) -> tuple[list[Record], Record]:
+    """Resolve structured fields for every qualifying LinkedIn post, in
+    bounded batches, and reject unquoted output.
+
+    Previously capped at a hardcoded 10 posts total. On 2026-09-12, 76 of 99
+    identity-missing posts qualified but only 10 were attempted, silently
+    dropping same-day exact-match roles. The cap now comes from
+    config/scoring.yml (max_linkedin_extractions_per_run) and candidates are
+    split into LINKEDIN_EXTRACTION_BATCH_SIZE-sized calls so one oversized
+    prompt cannot truncate and lose the tail.
+    """
+
+    scoring = scoring or {}
+    run_limit = int(scoring.get("max_linkedin_extractions_per_run", LINKEDIN_EXTRACTION_LIMIT))
+    all_candidates = [
+        item
+        for item in records
+        if item.get("source") == "linkedin_posts_apify"
+        and not all(item.get(key) for key in ("company", "title", "location"))
+        and "intern" in str(item.get("description", "")).casefold()
+        and any(
+            term in str(item.get("description", "")).casefold()
+            for term in ("hiring", "opening", "apply")
+        )
+        and any(
+            term in str(item.get("description", "")).casefold()
+            for term in ("bengaluru", "bangalore", "remote", "hybrid")
+        )
+    ]
+    candidates = all_candidates[:run_limit]
+    if not candidates:
+        return records, {"status": "not_needed", "candidates": len(all_candidates), "sent": 0, "resolved": 0}
+    if os.getenv("ENABLE_BEDROCK", "").casefold() not in {"1", "true", "yes"}:
+        return records, {
+            "status": "skipped_disabled",
+            "candidates": len(all_candidates),
+            "sent": 0,
+            "resolved": 0,
+        }
+    model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
+    region = os.getenv("AWS_REGION", "")
+    if not model_id or not region:
+        return records, {
+            "status": "skipped_missing_configuration",
+            "candidates": len(all_candidates),
+            "sent": 0,
+            "resolved": 0,
+        }
+
+    resolved_by_id: dict[str, dict[str, Any]] = {}
+    attempted = 0
+    usages: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for start in range(0, len(candidates), LINKEDIN_EXTRACTION_BATCH_SIZE):
+        batch = candidates[start : start + LINKEDIN_EXTRACTION_BATCH_SIZE]
+        content = _extraction_batch_content(batch)
+        prompt = json.dumps(content, ensure_ascii=False)
+        try:
+            payload, usage = cached_bedrock_json(
+                purpose="linkedin_hiring_field_extraction",
+                model_id=model_id,
+                prompt_version="v1",
+                content=content,
+                prompt=prompt,
+                region=region,
+                cache=cache,
+                # 10 structured records need headroom past the 1800 default;
+                # truncation failed closed twice on live runs.
+                max_tokens=3500,
+            )
+            extracted = payload.get("records") if isinstance(payload, dict) else None
+            if not isinstance(extracted, list):
+                raise ValueError("response must contain a records list")
+            by_id = {str(item.get("id")): item for item in extracted if isinstance(item, dict)}
+            supplied_ids = {str(item["id"]) for item in batch}
+            if not by_id or len(by_id) != len(extracted) or not set(by_id) <= supplied_ids:
+                raise ValueError("extraction IDs must be a clean subset of supplied records")
+        except Exception as exc:
+            # One bad batch doesn't sink the rest: it is left unresolved
+            # (still rejected downstream by hard_exclusions) while later
+            # batches still get their own attempt.
+            errors.append(f"{type(exc).__name__}: {str(exc)[:240]}")
+            attempted += len(batch)
+            continue
+        attempted += len(batch)
+        resolved_by_id.update(by_id)
+        usages.append(usage)
+
     candidate_ids = {str(item["id"]) for item in candidates}
     output: list[Record] = []
     resolved = 0
     for record in records:
-        item = dict(record)
-        result = by_id.get(str(record.get("id")))
-        if str(record.get("id")) not in candidate_ids or result is None:
-            output.append(item)
+        result = resolved_by_id.get(str(record.get("id")))
+        if str(record.get("id")) not in candidate_ids:
+            output.append(dict(record))
             continue
-        text = str(record.get("description", ""))
-        quote = clean_text(result.get("evidence_quote"))
-        company = clean_text(result.get("company"))
-        title = clean_text(result.get("title"))
-        location = clean_text(result.get("location"))
-        quote_lower = quote.casefold()
-        valid = bool(
-            quote
-            and quote_lower in text.casefold()
-            and company.casefold() in quote_lower
-            and "intern" in title.casefold()
-            and "intern" in quote_lower
-            and any(term in location.casefold() for term in ("bengaluru", "bangalore", "remote", "hybrid"))
-            and any(term in quote_lower for term in ("bengaluru", "bangalore", "remote", "hybrid"))
-        )
-        if valid:
-            item.update(
-                {
-                    "company": company,
-                    "title": title,
-                    "location": location,
-                    "extraction_evidence_quote": quote,
-                    "extraction_status": "llm_evidence_validated",
-                }
-            )
-            apply_url = clean_text(result.get("apply_url"))
-            if apply_url and apply_url in text:
-                item["apply_url"] = apply_url
-            resolved += 1
+        item, was_resolved = _apply_extraction_result(record, result)
+        resolved += int(was_resolved)
         output.append(item)
+
+    combined_usage = {
+        "calls": sum(int(u.get("calls", 1)) for u in usages),
+        "cache_hits": sum(int(u.get("cache_hits", 0)) for u in usages),
+        "input_tokens": sum(int(u.get("input_tokens", 0)) for u in usages),
+        "output_tokens": sum(int(u.get("output_tokens", 0)) for u in usages),
+        "total_tokens": sum(int(u.get("total_tokens", 0)) for u in usages),
+        "elapsed_ms": sum(int(u.get("elapsed_ms", 0)) for u in usages),
+        "cost_usd": sum(float(u.get("cost_usd", 0) or 0) for u in usages),
+    }
     return output, {
-        "status": "ok",
-        "sent": len(candidates),
+        "status": "ok" if not errors else ("failed" if not usages else "partial"),
+        "candidates": len(all_candidates),
+        "sent": attempted,
         "resolved": resolved,
-        "usage": usage,
+        "usage": combined_usage,
+        "error": "; ".join(errors)[:500] if errors else "",
     }
 
 

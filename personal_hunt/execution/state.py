@@ -95,10 +95,19 @@ class LocalState:
         state.setdefault("llm_cache", {}).update(entries)
         self.save(state)
 
-    def digest_delivery(self, run_id: str) -> dict[str, Any]:
+    def digest_delivery(self, key: str) -> dict[str, Any]:
         state = self.load()
-        value = state.get("digest_deliveries", {}).get(run_id, {})
+        value = state.get("digest_deliveries", {}).get(key, {})
         return dict(value) if isinstance(value, dict) else {}
+
+    def digest_delivery_for_run(self, delivery_key: str, run_id: str) -> dict[str, Any]:
+        """Look up a delivery by its dated key (`<ist-date>:<run_id>`), falling
+        back to the legacy bare-run-id key so pre-migration deliveries
+        (recorded before dated keys existed) still count as already-sent."""
+        found = self.digest_delivery(delivery_key)
+        if found:
+            return found
+        return self.digest_delivery(run_id)
 
     def sent_opportunity_ids(self) -> set[str]:
         state = self.load()

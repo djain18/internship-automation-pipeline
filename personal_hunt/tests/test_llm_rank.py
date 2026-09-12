@@ -314,6 +314,79 @@ def test_linkedin_batch_extraction_rejects_unquoted_fields(monkeypatch) -> None:
     assert not output[0].get("company")
 
 
+def _linkedin_candidate(index: int) -> dict:
+    text = f"Company{index} is hiring a Growth Intern in Bengaluru. Apply now."
+    return {
+        "id": f"post-{index}",
+        "source": "linkedin_posts_apify",
+        "company": "",
+        "title": "",
+        "location": "",
+        "description": text,
+        "source_url": f"https://linkedin.com/posts/{index}",
+    }
+
+
+def test_linkedin_extraction_cap_comes_from_scoring_config_not_hardcoded_ten(monkeypatch) -> None:
+    # 2026-09-12 incident: 76 of 99 identity-missing posts qualified for
+    # extraction but a hardcoded limit of 10 attempted only 10, dropping a
+    # same-day exact-match Founder's Office post purely for want of a parse.
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    calls: list[list[str]] = []
+
+    def fake_cached(**kwargs):
+        ids = [item["id"] for item in kwargs["content"]["records"]]
+        calls.append(ids)
+        return (
+            {
+                "records": [
+                    {
+                        "id": identifier,
+                        "company": f"Company{identifier.split('-')[1]}",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "apply_url": "",
+                        "evidence_quote": f"Company{identifier.split('-')[1]} is hiring a Growth Intern in Bengaluru.",
+                    }
+                    for identifier in ids
+                ]
+            },
+            {"calls": 1, "total_tokens": 20},
+        )
+
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", fake_cached)
+    records = [_linkedin_candidate(index) for index in range(25)]
+
+    output, meta = llm_rank.extract_linkedin_hiring_fields(
+        records, {}, scoring={"max_linkedin_extractions_per_run": 25}
+    )
+
+    assert meta["candidates"] == 25
+    assert meta["sent"] == 25
+    assert meta["resolved"] == 25
+    # 25 candidates / 10-per-batch => 3 calls, not 1 oversized call.
+    assert len(calls) == 3
+    assert sum(len(batch) for batch in calls) == 25
+    assert all(item.get("company") for item in output)
+
+
+def test_linkedin_extraction_reports_skipped_over_cap(monkeypatch) -> None:
+    # Explicitly disabled (rather than relying on an unset env var, which a
+    # local .env with ENABLE_BEDROCK=true would otherwise override) so this
+    # stays a fast, no-network unit test.
+    monkeypatch.setenv("ENABLE_BEDROCK", "false")
+    records = [_linkedin_candidate(index) for index in range(15)]
+    _, meta = llm_rank.extract_linkedin_hiring_fields(
+        records, {}, scoring={"max_linkedin_extractions_per_run": 5}
+    )
+    # candidates must reflect every post the predicate matched, not just the
+    # capped subset, so a caller can tell the cap is binding.
+    assert meta["candidates"] == 15
+    assert meta["status"] == "skipped_disabled"
+
+
 def test_linkedin_batch_extraction_accepts_clean_subset(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_BEDROCK", "true")
     monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
