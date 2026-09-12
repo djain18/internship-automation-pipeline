@@ -87,6 +87,28 @@ cross_functional_terms:
   - right hand
   - end-to-end
   - end to end
+  - wear many hats
+  - multiple hats
+  - no fixed job description
+  - no fixed jd
+  - whatever needs doing
+  - figure it out
+  - open-ended role
+  - work directly with the ceo
+  - work directly with the co-founder
+  # Added 2026-09-13 from researching real Indian founder's-office postings'
+  # own recurring language (WebSearch across LinkedIn job posts, Prosple,
+  # Beyond Campus's guide to these roles) -- these are phrases real startups
+  # actually use when hiring for this exact role shape, not guessed.
+  - deal with ambiguity
+  - comfortable with ambiguity
+  - thrive in ambiguity
+  - generalist leverage
+  - trusted generalist
+  - whatever it takes
+  - whatever-it-takes
+  - direct founder access
+  - junior chief of staff
 
 specialist_reject:
   - software engineer
