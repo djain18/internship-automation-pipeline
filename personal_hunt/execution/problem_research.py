@@ -328,15 +328,20 @@ def research_deep_problem(
                     if source_item and text in source_item.get("observation", ""):
                         validated_signals.append({"text": text[:200], "url": url})
 
+        supported = bool(payload.get("supported", False))
+        hypothesis = clean_text(payload.get("problem_hypothesis", ""))[:300] if supported else ""
         return {
-            "problem_status": "inference_needs_validation",
+            # Matches research_funding_event's pattern: status must reflect
+            # the model's own supported verdict, not be hardcoded to the
+            # validated outcome regardless of what the model actually said.
+            "problem_status": "inference_needs_validation" if supported else "insufficient_evidence",
             "evidence_count": len(all_evidence),
             "evidence_score": evidence_score,
             "observed_signals": validated_signals,
-            "problem_hypothesis": clean_text(payload.get("problem_hypothesis", ""))[:300],
-            "why_now": clean_text(payload.get("why_now", ""))[:200],
+            "problem_hypothesis": hypothesis,
+            "why_now": clean_text(payload.get("why_now", ""))[:200] if supported else "",
             "confidence": clean_text(payload.get("confidence", "medium")),
-            "supported": bool(payload.get("supported", False)),
+            "supported": supported,
             "llm_status": "ok",
             "published_linkedin_urls": published_linkedin_urls,
         }

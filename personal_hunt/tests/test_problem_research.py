@@ -304,6 +304,46 @@ def test_llm_signal_kept_when_url_and_text_match(monkeypatch) -> None:
     assert result["observed_signals"][0]["url"] == "https://acme.com/about"
 
 
+def test_llm_unsupported_hypothesis_reports_insufficient_evidence(monkeypatch) -> None:
+    """Regression: problem_status was hardcoded to inference_needs_validation
+    regardless of the model's own supported verdict -- a real cloud run
+    (Emergent, evidence limited to homepage pricing copy) showed the model
+    correctly refusing to ground a hypothesis (supported=false, empty
+    problem_hypothesis, per the instruction added after Daksh flagged the
+    resulting prototype tried to rebuild the company's own paid product),
+    but the status still claimed a validated inference. research_funding_event
+    already gets this right (status keyed on supported); this must match."""
+    company = {"company": "Acme", "company_url": "https://acme.com", "lane": "ai"}
+    config = {"deep_research_min_evidence": 1}
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", lambda *a, **k: _mock_evidence())
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *a, **k: [])
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setattr(
+        problem_research,
+        "cached_bedrock_json",
+        lambda **kwargs: (
+            {
+                "observed_signals": [],
+                "problem_hypothesis": "This should never surface unsupported.",
+                "why_now": "This should never surface unsupported either.",
+                "confidence": "low",
+                "supported": False,
+            },
+            {"input_tokens": 10, "output_tokens": 10},
+        ),
+    )
+
+    result = research_deep_problem(
+        company, llm_cache={}, config=config, model_id="model-a", region="ap-south-1"
+    )
+
+    assert result["problem_status"] == "insufficient_evidence"
+    assert result["problem_hypothesis"] == ""
+    assert result["why_now"] == ""
+    assert result["supported"] is False
+
+
 def test_evidence_scoring_by_volume_and_recency() -> None:
     """Evidence score increases with volume and recent dates."""
     today = date.today()
