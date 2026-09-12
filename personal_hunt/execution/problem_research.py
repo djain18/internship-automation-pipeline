@@ -102,6 +102,17 @@ def _fetch_site_and_roles(company_url: str) -> tuple[list[Record], list[str]]:
         return [], []
 
 
+_SOFTWARE_TERMS = (
+    "api", "saas", "software", "platform", "ai", "artificial intelligence",
+    "machine learning", "app", "cloud", "sdk", "algorithm", "automation",
+)
+
+
+def _has_software_terms(evidence_items: list[Record]) -> bool:
+    text = " ".join(item.get("observation", "") for item in evidence_items).casefold()
+    return any(term in text for term in _SOFTWARE_TERMS)
+
+
 def _apply_sector_bonus(lane: str, has_software_terms: bool) -> float:
     """Calculate sector bonus for ranking.
 
@@ -120,6 +131,7 @@ def _score_evidence(
     evidence_items: list[Record],
     current_date: date,
     lane: str,
+    sector_bonus_weight: float = 3.0,
 ) -> float:
     """Score evidence by volume, recency, and sector affinity.
 
@@ -145,8 +157,11 @@ def _score_evidence(
         except ValueError:
             pass
 
-    # Sector: bonus for high-signal lanes
-    sector_bonus = _apply_sector_bonus(lane, False) * 5.0
+    # Sector: bonus for high-signal lanes, or unknown lanes whose own
+    # fetched evidence reads as software/AI (lane is often wrong, not
+    # missing -- a hard rule here would drop good companies the same way
+    # the LinkedIn identity bug once did).
+    sector_bonus = _apply_sector_bonus(lane, _has_software_terms(evidence_items)) * sector_bonus_weight
 
     return volume_score + recency_score + sector_bonus
 
@@ -201,7 +216,8 @@ def research_deep_problem(
 
     # Score evidence for ranking
     lane = company.get("lane", "unknown")
-    evidence_score = _score_evidence(all_evidence, date.today(), lane)
+    sector_bonus_weight = float(config.get("deep_research_sector_bonus", 3.0))
+    evidence_score = _score_evidence(all_evidence, date.today(), lane, sector_bonus_weight)
 
     # Check minimum evidence threshold
     min_evidence = int(config.get("deep_research_min_evidence", 2))
@@ -276,19 +292,23 @@ def research_deep_problem(
             max_tokens=2000,
         )
 
-        # Validate that observed_signals are literal substrings
+        # Validate that observed_signals are literal substrings AND that the
+        # attached URL is one we actually fetched -- text-only checking lets
+        # the model pair a real quote with a fabricated or mismatched URL,
+        # which breaks the provenance the fail-closed gate exists to give.
         validated_signals = []
-        evidence_text = " ".join(
-            item.get("observation", "") for item in all_evidence
-        )
+        known_urls = {item.get("url", "") for item in all_evidence if item.get("url")}
 
         for signal in payload.get("observed_signals", []):
             if isinstance(signal, dict):
                 text = signal.get("text", "")
                 url = signal.get("url", "")
-                # Fail-closed: only accept if text is a literal substring
-                if text and text in evidence_text and url:
-                    validated_signals.append({"text": text[:200], "url": url})
+                if text and url and url in known_urls:
+                    source_item = next(
+                        (item for item in all_evidence if item.get("url") == url), None
+                    )
+                    if source_item and text in source_item.get("observation", ""):
+                        validated_signals.append({"text": text[:200], "url": url})
 
         return {
             "problem_status": "inference_needs_validation",
@@ -337,6 +357,7 @@ def select_discovered_for_research(
     config = config or {}
     run_date = run_date or date.today()
     max_per_run = int(config.get("max_deep_research_per_run", 8))
+    sector_bonus_weight = float(config.get("deep_research_sector_bonus", 3.0))
 
     # Quick pre-filter: reject companies with no company_url
     viable = [
@@ -355,8 +376,10 @@ def select_discovered_for_research(
         company_url = company.get("company_url", "")
         base_score = 5.0 if company_url and company_url.startswith("http") else 0.0
 
-        # Add sector bonus
-        base_score += _apply_sector_bonus(lane, False) * 3.0
+        # Add sector bonus. No evidence fetched yet at this pre-filter stage,
+        # so the unknown+software-terms branch can't fire here -- it only
+        # applies once _score_evidence runs after site/HN evidence exists.
+        base_score += _apply_sector_bonus(lane, False) * sector_bonus_weight
 
         scored.append((company, base_score))
 
