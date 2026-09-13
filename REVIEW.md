@@ -738,3 +738,51 @@ for #10 against the real Ressl AI YC listing returned no closed signal.
 - **rise-web deploy (Vercel) not triggered.** The `/my-hunt` fixes ship only when it deploys.
 - Windows note: `npx` breaks on the `&` in this repo's path. Run
   `node node_modules/vite/bin/vite.js build` instead.
+
+## 2026-09-13 (continued) — Pushed and deployed; job pages read; Gmail fills the Sheet; paid research tested and rejected
+
+Daksh approved the push, allowed opening LinkedIn in Chrome for verification, approved paid
+Firecrawl only if output proved better within the free tier, kept resume metrics as they are, and
+asked for the Sheet's outcome columns to fill automatically.
+
+**Deployed:** 11 commits pushed; Modal app redeployed; rise-web deployed to Vercel production and
+the live `MyHunt` chunk confirmed to contain the new prompt/contact/banner code. Then two more
+commits (`def7ae5`, `c4e90cd`), pushed and redeployed; the cloud `fixture_pipeline` completed on
+the new code.
+
+**Leads checked by hand in Chrome (logged out, no sign-in wall bypassed), 2026-09-13:**
+all six still open. Kplor FO Intern (₹50k/month, PPO ₹12 LPA, 73 comments, founders tagged
+Mukil Vannan, Sanjeeth Baliga). SuprSend "Founder's Office - Internship" LinkedIn job (200+
+applicants; the JD is partnerships, community and cold-outreach experiments; 3 months in office;
+poster Tushar Bhati invites direct reach-out). Sarvam AI Strategy & Operations Intern on Ashby
+(revenue systems, CRM, funnel analysis). Ressl AI GTM Intern on YC (₹40k–1L/month; CEO Arushi
+Gandhi says "do not use AI to write it" and asks about evals). Ethereal Labs FO Intern/Associate
+on binary.so (form open, asks for 1–3 years but allows <1). Auraaison: real but pre-launch site
+("coming soon 2026"), 5 LinkedIn followers.
+
+**Internship deep research — built, measured, not shipped.** Live on those four matches:
+20 credits (982 → 962 on the cloud key; plan resets 2026-09-22), generic hypotheses, the hiring
+post recycled as evidence, and `dev@company.com` from docs.suprsend.com as a contact. Reverted.
+
+**Shipped instead (`def7ae5`):** full job page behind each approved link (Ashby/Greenhouse/Lever
+public APIs, otherwise one robots-respecting GET, never LinkedIn), live runs only, bounded. Every
+prompt now carries the listing verbatim. When a listing asks for no AI-written messages, the
+prompt refuses to draft and both digests flag the card. Contacts: role mailboxes (info@, hr@)
+are no longer ranked as people; site-scraped addresses must be on the company's own domain;
+documentation placeholders are never contacts.
+
+**Gmail → Sheet (`c4e90cd`):** fills sent_at / send_status / reply_outcome / interview_outcome
+from Gmail evidence, never overwriting typed values, recording the message id in
+`outcome_basis`. **Flagged, not active:** needs a gmail.readonly token for the account Daksh
+sends from (`mint_gmail_token.py --readonly`), pasted into the new, currently empty, Modal secret
+`internship-hunt-gmail-read`. `INTERNSHIP_SHEET_ID` and the Sheets token are confirmed present
+in the cloud (presence only, values not read).
+
+**Verified:** 304 personal_hunt tests, Ruff clean, fixture run local and in the cloud, live page
+fetches for Sarvam/Ressl/Ethereal, replay of four real matches with 0 validation errors.
+
+**Not verified:** Gmail sync against a real mailbox (no read token yet); a scheduled live run on
+the new code (next one is 00:30 IST, 2026-09-14). Ressl AI's quoted sentence is still the company
+tagline; the full page in the prompt carries the actual role text. LinkedIn job pages (SuprSend)
+are still not read by the pipeline. Daksh's Chrome permission covers interactive checks, not the
+scheduled scraper.
