@@ -64,20 +64,20 @@ def test_site_email_from_deep_problem_research() -> None:
     dropped every one of them (problem_research.py used to discard the
     scraped list entirely before this fix)."""
     contact = choose_contact({
-        "source_url": "https://example.com/company",
-        "deep_problem_research": {"published_emails": ["founders@example.com"]},
+        "source_url": "https://nebula-ai.in/company",
+        "deep_problem_research": {"published_emails": ["founders@nebula-ai.in"]},
     })
-    assert contact["email"] == "founders@example.com"
+    assert contact["email"] == "founders@nebula-ai.in"
     assert contact["basis"] == "site_published_role_mailbox"
 
 
 def test_site_email_prefers_research_over_deep_research_when_both_present() -> None:
     contact = choose_contact({
-        "source_url": "https://example.com/company",
-        "research": {"published_emails": ["jane@example.com"]},
-        "deep_problem_research": {"published_emails": ["founders@example.com"]},
+        "source_url": "https://nebula-ai.in/company",
+        "research": {"published_emails": ["jane@nebula-ai.in"]},
+        "deep_problem_research": {"published_emails": ["founders@nebula-ai.in"]},
     })
-    assert contact["email"] == "jane@example.com"
+    assert contact["email"] == "jane@nebula-ai.in"
 
 
 def test_linkedin_url_never_constructed_from_name() -> None:

@@ -1188,3 +1188,4 @@ def test_closed_listing_signal_never_opens_linkedin(monkeypatch) -> None:
     monkeypatch.setattr(company_site.requests.Session, "get", fail)
     assert company_site.closed_listing_signal("https://www.linkedin.com/jobs/view/1") == ""
     assert company_site.closed_listing_signal("https://lnkd.in/abc") == ""
+

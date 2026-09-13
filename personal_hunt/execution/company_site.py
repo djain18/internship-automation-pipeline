@@ -10,6 +10,7 @@ appears on a real page.
 
 from __future__ import annotations
 
+import html
 import re
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlsplit
@@ -86,8 +87,14 @@ def _sentences(html_text: str) -> list[str]:
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-    text = clean_text(soup.get_text(" ", strip=True))
-    parts = re.split(r"(?<=[.!?])\s+", text)
+    # Split on line breaks before sentence punctuation: a job page's bullets
+    # carry no full stops, so collapsing whitespace first fused a header onto
+    # its first bullet ("What you will do * Run outbound every day.").
+    parts = [
+        clean_text(part)
+        for line in soup.get_text("\n").splitlines()
+        for part in re.split(r"(?<=[.!?])\s+", clean_text(line).lstrip("*•-– ").strip())
+    ]
     return [part for part in parts if 40 <= len(part) <= 300]
 
 
@@ -255,6 +262,9 @@ def primary_responsibility(description: str) -> str:
         if _OWNERSHIP_PATTERN.search(line.casefold())
         and not any(noise in line.casefold() for noise in FEED_NOISE)
         and not any(noise in line.casefold() for noise in PITCH_NOISE)
+        # Application-form questions ("What are the first two experiments you
+        # would recommend?") use the same verbs but describe no work.
+        and not line.rstrip().endswith("?")
     ]
     if not candidates:
         return ""
@@ -318,25 +328,32 @@ CLOSED_LISTING_PHRASES = (
 _CLOSED_HOSTS_SKIPPED = ("linkedin.com", "lnkd.in")
 
 
-def closed_listing_signal(
+def _skipped_host(host: str) -> bool:
+    return any(host == skipped or host.endswith("." + skipped) for skipped in _CLOSED_HOSTS_SKIPPED)
+
+
+def _page_text(html_text: str) -> str:
+    """Visible page text with line breaks kept, so a bulleted job description
+    still splits into its own sentences."""
+    soup = BeautifulSoup(html_text, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer"]):
+        tag.decompose()
+    lines = (clean_text(line) for line in soup.get_text("\n").splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+def read_public_page(
     url: str,
     user_agent: str = "InternshipResearch/0.1",
     timeout: int = 10,
-    max_bytes: int = 200_000,
+    max_bytes: int = 400_000,
 ) -> str:
-    """The exact closed-listing phrase a job page prints, or "".
-
-    One robots-respecting GET, never raising. LinkedIn is skipped outright:
-    this pipeline may not open it. An empty result means "no closed signal
-    seen", never "confirmed open".
-    """
+    """Visible text of one public page, or "". Robots-respecting, one GET,
+    never raising, never LinkedIn (this pipeline may not open it)."""
 
     target = canonical_url(url)
     parts = urlsplit(target)
-    host = parts.netloc.casefold()
-    if not target.startswith("http") or any(
-        host == skipped or host.endswith("." + skipped) for skipped in _CLOSED_HOSTS_SKIPPED
-    ):
+    if not target.startswith("http") or _skipped_host(parts.netloc.casefold()):
         return ""
     session = requests.Session()
     session.headers["User-Agent"] = user_agent
@@ -347,12 +364,65 @@ def closed_listing_signal(
         response = session.get(target, timeout=timeout, stream=True)
         if response.status_code >= 400:
             return ""
-        body = response.raw.read(max_bytes, decode_content=True).decode(
-            response.encoding or "utf-8", errors="replace"
-        )
+        raw = response.raw.read(max_bytes, decode_content=True)
     except Exception:
         return ""
-    lowered = clean_text(BeautifulSoup(body, "html.parser").get_text(" ")).casefold()
+    # requests assumes ISO-8859-1 for text/html without a charset, which
+    # mangled "Founder’s" on binary.so; job pages are UTF-8 in practice.
+    declared = (response.headers.get("Content-Type") or "").casefold()
+    encoding = response.encoding if "charset=" in declared else "utf-8"
+    return _page_text(raw.decode(encoding or "utf-8", errors="replace"))
+
+
+_ASHBY_JOB = re.compile(r"^https?://jobs\.ashbyhq\.com/([^/]+)/([0-9a-f-]{36})", re.I)
+_GREENHOUSE_JOB = re.compile(r"^https?://(?:boards|job-boards)\.greenhouse\.io/([^/]+)/jobs/(\d+)", re.I)
+_LEVER_JOB = re.compile(r"^https?://jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})", re.I)
+
+
+def fetch_listing_text(url: str, timeout: int = 15) -> str:
+    """The full job description behind an apply or source link, or "".
+
+    The digest's listings often carry only a post or a title. The page the
+    link opens holds the real description -- SuprSend's "map the ecosystem,
+    get us listed where buyers look, track reply rates", Ressl AI's "do not use
+    AI to write it" -- which is what a specific outreach needs and what a
+    Firecrawl news search did not find (2026-09-13 comparison: generic
+    hypotheses and a docs-site placeholder address). Ashby, Greenhouse and
+    Lever render client-side, so their public posting APIs are read instead of
+    the page; everything else is one robots-respecting GET. Free, no key.
+    """
+
+    target = canonical_url(url)
+    try:
+        if match := _ASHBY_JOB.match(target):
+            board = requests.get(
+                f"https://api.ashbyhq.com/posting-api/job-board/{match.group(1)}", timeout=timeout
+            ).json()
+            job = next((item for item in board.get("jobs") or [] if item.get("id") == match.group(2)), None)
+            return str(job.get("descriptionPlain") or "") if job else ""
+        if match := _GREENHOUSE_JOB.match(target):
+            job = requests.get(
+                f"https://boards-api.greenhouse.io/v1/boards/{match.group(1)}/jobs/{match.group(2)}",
+                timeout=timeout,
+            ).json()
+            return _page_text(html.unescape(str(job.get("content") or "")))
+        if match := _LEVER_JOB.match(target):
+            job = requests.get(
+                f"https://api.lever.co/v0/postings/{match.group(1)}/{match.group(2)}", timeout=timeout
+            ).json()
+            return "\n".join(
+                filter(None, [str(job.get("descriptionPlain") or ""), str(job.get("additionalPlain") or "")])
+            )
+    except Exception:
+        return ""
+    return read_public_page(target, timeout=timeout)
+
+
+def closed_listing_signal(url: str, user_agent: str = "InternshipResearch/0.1", timeout: int = 10) -> str:
+    """The exact closed-listing phrase a job page prints, or "". An empty
+    result means "no closed signal seen", never "confirmed open"."""
+
+    lowered = read_public_page(url, user_agent=user_agent, timeout=timeout).casefold()
     return next((phrase for phrase in CLOSED_LISTING_PHRASES if phrase in lowered), "")
 
 
