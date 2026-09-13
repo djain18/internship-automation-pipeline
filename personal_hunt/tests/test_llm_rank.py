@@ -289,6 +289,94 @@ def test_linkedin_batch_extraction_requires_exact_evidence_quote(monkeypatch) ->
     assert output[0]["apply_url"] == "https://signal.ai/jobs/1"
 
 
+def test_linkedin_extraction_accepts_distant_fields(monkeypatch) -> None:
+    """The employer is named in the opening line and the role details sit ~880
+    characters later. Verbatim text from Auraaison's real 2026-09-12 post, which
+    the old single-300-char-window validator could not resolve."""
+
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = (
+        "We’re hiring at Auraaison. We’re looking for a Founder’s Office "
+        "Intern — but we’re not looking for someone who simply wants another "
+        "internship on their resume. " + ("Filler about ownership and curiosity. " * 18)
+        + "Role: Founder’s Office Intern Location: Bengaluru / Remote Duration: 2-3 "
+        "months Type: Internship. Send your resume to admin@auraaison.com."
+    )
+    quote = "Role: Founder’s Office Intern Location: Bengaluru / Remote"
+    assert text.index("Auraaison") + 300 < text.index(quote), "fields must be far apart"
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-1",
+                        "company": "Auraaison",
+                        # Straight apostrophe against the post's curly one.
+                        "title": "Founder's Office Intern",
+                        "location": "Bengaluru / Remote",
+                        "apply_url": "",
+                        "evidence_quote": quote,
+                    }
+                ]
+            },
+            {"calls": 1},
+        ),
+    )
+    records = [
+        {
+            "id": "post-1",
+            "source": "linkedin_posts_apify",
+            "company": "",
+            "title": "",
+            "location": "",
+            "description": text,
+            "source_url": "https://www.linkedin.com/posts/auraaisonn_hiring-activity-1",
+        }
+    ]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["resolved"] == 1
+    assert output[0]["company"] == "Auraaison"
+    assert output[0]["title"] == "Founder's Office Intern"
+    assert output[0]["extraction_status"] == "llm_evidence_validated"
+
+
+def test_linkedin_extraction_rejects_empty_company(monkeypatch) -> None:
+    """An empty company used to pass (\"\" is a substring of everything), marking
+    the record resolved with no employer and failing downstream instead."""
+
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    text = "Hiring a Growth Intern in Bengaluru. Apply now."
+    monkeypatch.setattr(
+        llm_rank,
+        "cached_bedrock_json",
+        lambda **_kwargs: (
+            {
+                "records": [
+                    {
+                        "id": "post-1",
+                        "company": "",
+                        "title": "Growth Intern",
+                        "location": "Bengaluru",
+                        "apply_url": "",
+                        "evidence_quote": text,
+                    }
+                ]
+            },
+            {"calls": 1},
+        ),
+    )
+    records = [{"id": "post-1", "source": "linkedin_posts_apify", "description": text}]
+    output, meta = llm_rank.extract_linkedin_hiring_fields(records, {})
+    assert meta["resolved"] == 0
+    assert not output[0].get("company")
+
+
 def test_linkedin_batch_extraction_rejects_unquoted_fields(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_BEDROCK", "true")
     monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "model-a")
