@@ -77,6 +77,7 @@ function CopyButton({ value, label = "Copy" }) {
 function MatchDetail({ item }) {
   if (!item) return null;
   const outreach = item.outreach || {};
+  const contact = item.selected_contact || {};
   const research = item.research || {};
   const evidence = research.evidence_ledger || research.evidence || [];
   return (
@@ -123,14 +124,31 @@ function MatchDetail({ item }) {
       )}
 
       <section className="mt-6">
+        <h3 className="text-sm font-semibold">Contact</h3>
+        {contact.email ? (
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border p-4 text-sm">
+            <div className="min-w-0">
+              <div className="break-all font-medium text-foreground">{contact.name ? `${contact.name} · ` : ""}{contact.email}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {contact.role || "Published address"} · {contact.confidence || "unrated"} confidence
+                {contact.source_url && (<> · <a href={contact.source_url} target="_blank" rel="noreferrer" className="text-accent">where it was published</a></>)}
+              </div>
+            </div>
+            <CopyButton value={contact.email} label="Copy email" />
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">No public address found. The prompt below asks Claude Code to find the founder or hiring lead's public channel, with its source.</p>
+        )}
+      </section>
+
+      <section className="mt-6">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold">Manual outreach draft</h3>
-          <CopyButton value={`Subject: ${outreach.subject || ""}\n\n${outreach.email_body || ""}`} label="Copy email" />
+          <h3 className="text-sm font-semibold">
+            {outreach.send_status === "research_first_needs_human_review" ? "Research-first prompt for Claude Code" : "Email prompt for Claude Code"}
+          </h3>
+          <CopyButton value={outreach.claude_prompt} label="Copy prompt" />
         </div>
-        <div className="mt-3 rounded-lg bg-secondary/70 p-4 text-sm leading-6 text-foreground">
-          <div className="font-medium">{outreach.subject || "Draft unavailable"}</div>
-          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{outreach.email_body || "No validated email draft was produced."}</p>
-        </div>
+        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-secondary/70 p-4 text-xs leading-5 text-muted-foreground">{outreach.claude_prompt || "No prompt was produced for this match."}</pre>
         {outreach.linkedin_note && (
           <div className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-border p-4">
             <p className="text-sm leading-6 text-muted-foreground">{outreach.linkedin_note}</p>

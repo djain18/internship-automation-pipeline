@@ -122,12 +122,17 @@ def test_outreach_leads_with_the_observed_problem() -> None:
     assert draft["send_status"] == "draft_needs_human_review"
 
 
-def test_outreach_is_blocked_when_no_solution_is_grounded() -> None:
+def test_outreach_without_a_grounded_solution_asks_for_research_first() -> None:
+    """No grounded solution used to mean no prompt at all, which left real
+    Founder's Office matches with nothing to act on. The prompt now makes a
+    sourced observation the precondition for any draft instead."""
     draft = draft_outreach(
         {"company": "Acme", "title": "Intern", "research": {"solution_concept": ""}}
     )
-    assert draft["send_status"] == "blocked_insufficient_evidence"
-    assert draft["claude_prompt"] == ""
+    assert draft["send_status"] == "research_first_needs_human_review"
+    assert "research first" in draft["claude_prompt"]
+    assert "Do not draft" in draft["claude_prompt"]
+    assert "evidence brief" not in draft["linkedin_note"]
 
 
 def test_published_site_address_is_used_when_the_record_has_no_contact() -> None:
@@ -305,3 +310,110 @@ def test_office_fetch_respects_robots_and_never_raises(monkeypatch) -> None:
     _fake_session(monkeypatch, "User-agent: *\nDisallow: /")
     assert fetch_office_evidence("https://acme.com") is None
     assert fetch_office_evidence("not a url") is None
+
+
+# --- 2026-09-13: grounded observations for internship records -------------
+
+
+def test_primary_responsibility_reads_real_post_verbs() -> None:
+    """Verbatim sentences from real approved records the old verb list missed."""
+
+    assert primary_responsibility(
+        "Work directly with the founder across AI automation, product operations, growth, "
+        "and zero to one special projects."
+    ).startswith("Work directly with the founder")
+    assert primary_responsibility(
+        "We're hiring for: Founder's Office Intern. You'll work at the intersection of "
+        "strategy, operations, technology, and growth, helping solve some of the most "
+        "important challenges of Kplor."
+    ).startswith("You'll work at the intersection")
+
+
+def test_primary_responsibility_prefers_the_work_over_a_longer_pitch() -> None:
+    text = (
+        "You\u2019ll be working very closely with the Founder, involved in conversations, "
+        "ideas, decisions, research, brainstorming, and building things. "
+        "If you want exposure to what actually happens behind the scenes while building an "
+        "AI company, not just watching from the sidelines, we\u2019d love to hear from you "
+        "and we mean that sincerely today."
+    )
+    assert primary_responsibility(text).startswith("You\u2019ll be working very closely")
+
+
+def test_primary_responsibility_never_quotes_recruiter_noise() -> None:
+    text = (
+        "HR agencies - we're handling these hires in-house for now, so please don't spam "
+        "us and hold off on the outreach."
+    )
+    assert primary_responsibility(text) == ""
+
+
+def test_primary_responsibility_word_boundary_blocks_runway() -> None:
+    assert primary_responsibility("We have eighteen months of runway and a great ownership culture.") == ""
+
+
+def test_deterministic_research_never_builds_on_a_restated_listing() -> None:
+    record = {
+        "company": "SuprSend",
+        "title": "Founder's Office Intern",
+        "source_url": "https://example.com/post",
+        "description": "Business roles open. Link in comments.",
+    }
+    research = deterministic_research(record)
+    assert research["observed_problem_signal"] == ""
+    assert research["inference"] == ""
+    assert research["why_it_matters"] == ""
+    assert research["inference_basis"] == "none"
+
+
+def test_deterministic_research_quotes_the_listing_when_it_describes_work() -> None:
+    record = {
+        "company": "AgentNest",
+        "title": "Special Projects Intern",
+        "source_url": "https://example.com/post",
+        "description": "Partner with founders on AI agent launches, product operations, GTM, and cross-functional execution.",
+    }
+    research = deterministic_research(record)
+    assert research["observed_problem_signal"].startswith('The listing states: "Partner with founders')
+    assert research["inference_basis"] == "quoted_responsibility"
+
+
+def test_llm_research_merge_rejects_ungrounded_observation() -> None:
+    from research import merge_llm_research
+
+    record = {
+        "description": "Partner with founders on AI agent launches, product operations, GTM, and cross-functional execution.",
+    }
+    base = deterministic_research({**record, "company": "AgentNest", "title": "Intern", "source_url": "https://x"})
+    paraphrase = merge_llm_research(
+        base,
+        {"observed_problem_signal": "AgentNest struggles to coordinate agent launches.", "inference": "Chaos."},
+        record,
+    )
+    assert paraphrase["observed_problem_signal"] == base["observed_problem_signal"]
+
+    quoted = merge_llm_research(
+        base,
+        {
+            "observed_problem_signal": 'The role says: "Partner with founders on AI agent launches, product operations"',
+            "inference": "Launch coordination sits with one intern.",
+        },
+        record,
+    )
+    assert quoted["observed_problem_signal"].startswith("The role says")
+    assert quoted["inference"] == "Launch coordination sits with one intern."
+
+
+def test_llm_research_merge_clears_inference_without_any_observation() -> None:
+    from research import merge_llm_research
+
+    record = {"description": "Business roles open. Link in comments."}
+    base = deterministic_research({**record, "company": "X", "title": "Intern", "source_url": "https://x"})
+    merged = merge_llm_research(
+        base,
+        {"observed_problem_signal": "X published or was listed for Intern.", "inference": "Needs systems.", "solution_concept": "A dashboard."},
+        record,
+    )
+    assert merged["observed_problem_signal"] == ""
+    assert merged["inference"] == ""
+    assert merged["solution_concept"] == ""

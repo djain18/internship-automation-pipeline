@@ -49,6 +49,18 @@ def _section(title: str, records: list[Record]) -> str:
                 "",
             ]
         )
+        # The prompt was generated for every approved match and rendered for
+        # none of them -- only discovered/funded companies' problem briefs
+        # printed one, so the digest's main section never gave Daksh anything
+        # to act on beyond a link.
+        outreach = item.get("outreach") or {}
+        if outreach.get("claude_prompt"):
+            label = (
+                "Research-first prompt (paste into Claude Code)"
+                if outreach.get("send_status") == "research_first_needs_human_review"
+                else "Email prompt (paste into Claude Code)"
+            )
+            lines.extend([f"**{label}:**", "", "```", outreach["claude_prompt"], "```", ""])
     return "\n".join(lines)
 
 
@@ -828,6 +840,23 @@ def render_html_digest(run: Record) -> str:
             quote=True,
         )
         source = html.escape(str(item.get("source_url") or target), quote=True)
+        # Gmail renders only this HTML, so an email address that lived only in
+        # the markdown digest never reached Daksh.
+        contact = item.get("selected_contact") or {}
+        contact_email = html.escape(str(contact.get("email") or ""))
+        contact_html = (
+            f'<div style="margin-top:6px;font-size:13px;color:#2a2e33">Contact: '
+            f'<a href="mailto:{contact_email}" style="color:#2a2e33">{contact_email}</a>'
+            f'<span style="color:#8b9294"> · {html.escape(str(contact.get("confidence") or "unrated"))} confidence</span></div>'
+            if contact_email
+            else '<div style="margin-top:6px;font-size:12px;color:#8b9294">No public contact found yet</div>'
+        )
+        has_prompt = bool((item.get("outreach") or {}).get("claude_prompt"))
+        prompt_html = (
+            f' · <a href="{html.escape(site_url, quote=True)}" style="color:#6366f1;text-decoration:none">Copy Claude Code prompt</a>'
+            if has_prompt
+            else ""
+        )
         rows.append(
             f"""
             <tr>
@@ -835,7 +864,8 @@ def render_html_digest(run: Record) -> str:
                 <div style="font-size:16px;font-weight:600;color:#2a2e33">{title}</div>
                 <div style="margin-top:4px;font-size:14px;color:#6b7375">{company} · {location}</div>
                 <div style="margin-top:8px;font-size:12px;color:#6b7375">Score {score}/100 · Kimi fit {fit}/100 · {resume}</div>
-                <div style="margin-top:10px;font-size:13px"><a href="{source}" style="color:#6366f1;text-decoration:none">View source</a></div>
+                {contact_html}
+                <div style="margin-top:10px;font-size:13px"><a href="{source}" style="color:#6366f1;text-decoration:none">View source</a>{prompt_html}</div>
               </td>
               <td style="padding:18px 20px;border-top:1px solid #e5e7eb;text-align:right;vertical-align:middle;white-space:nowrap">
                 <a href="{target}" style="display:inline-block;border-radius:999px;background:#6366f1;color:#fff;padding:9px 14px;font-size:13px;font-weight:600;text-decoration:none">Apply</a>

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from typing import Any
 
 from company_site import fetch_site_evidence, primary_responsibility
-from models import Record, canonical_url, clean_text, llm_cache_key
+from models import Record, canonical_url, clean_text, fold_text, grounded_in, llm_cache_key
 
 
 def evidence_ledger(record: Record) -> list[Record]:
@@ -23,6 +24,9 @@ def evidence_ledger(record: Record) -> list[Record]:
                     f"{record.get('title')}."
                 ),
                 "confidence": record.get("source_confidence", "medium"),
+                # This line only restates that a listing exists. Flagged so
+                # nothing downstream mistakes it for an observed problem signal.
+                "restates_listing": True,
             }
         )
     for item in record.get("evidence") or []:
@@ -31,6 +35,7 @@ def evidence_ledger(record: Record) -> list[Record]:
         if any(existing["url"] == item.get("url") for existing in ledger):
             if item.get("observation"):
                 ledger[0]["observation"] = clean_text(item.get("observation"))
+                ledger[0].pop("restates_listing", None)
             continue
         ledger.append(
             {
@@ -60,11 +65,14 @@ def evidence_ledger(record: Record) -> list[Record]:
 
 def deterministic_research(record: Record) -> Record:
     ledger = evidence_ledger(record)
-    role = clean_text(record.get("title"))
-    company = clean_text(record.get("company"))
+    # Only a real observation qualifies. "X published or was listed for Y" and
+    # "A public listing associates X with Y" restate that a job post exists;
+    # _observed_signal_for_prompt treated either as a signal, so an outreach
+    # prompt could be built on a tautology.
     observation = (
-        ledger[0]["observation"] if ledger and ledger[0]["observation"]
-        else f"A public listing associates {company} with the {role} opportunity."
+        ledger[0]["observation"]
+        if ledger and ledger[0]["observation"] and not ledger[0].get("restates_listing")
+        else ""
     )
     # What the company wrote it needs someone to own IS the operational gap. A
     # solution built on the listing's own sentence is grounded; the lane-keyed
@@ -80,18 +88,31 @@ def deterministic_research(record: Record) -> Record:
     else:
         solution = ""
         solution_basis = "insufficient_evidence"
+    # No responsibility sentence means nothing real was observed about the work,
+    # so there is nothing to infer from. The previous constants -- keyed on the
+    # title alone -- were byte-identical on every record (Kplor and SuprSend got
+    # the same sentence on run_21ae706418041f9a) and went straight into the
+    # outreach prompt as "What I am inferring", which is exactly how a prompt
+    # built on nothing produces generic copy no humaniser can rescue. An empty
+    # inference is honest and lets build_email_prompt say so.
+    inference = (
+        "The listing puts that whole span of work on one intern, so the handoffs "
+        "between those areas likely have no single owner yet."
+        if responsibility
+        else ""
+    )
     return {
         "status": "provisional" if ledger else "research_pending",
         "evidence": ledger,
         "evidence_confidence": "high" if len(ledger) >= 2 else "medium" if ledger else "low",
         "observed_problem_signal": observation,
-        "inference": (
-            f"The breadth of {role} may create a need for clearer cross-functional "
-            "priorities and lightweight operating systems."
-        ),
+        "inference": inference,
+        "inference_basis": "quoted_responsibility" if responsibility else "none",
         "why_it_matters": (
             "Small founder-led teams lose speed when ownership, evidence, and recurring "
             "handoffs are not visible."
+            if responsibility
+            else ""
         ),
         "solution_concept": solution,
         "solution_basis": solution_basis,
@@ -101,6 +122,68 @@ def deterministic_research(record: Record) -> Record:
             "confirmed before claiming this is a real company problem."
         ),
     }
+
+
+LLM_RESEARCH_KEYS = (
+    "observed_problem_signal",
+    "inference",
+    "why_it_matters",
+    "solution_concept",
+    "uncertainty",
+)
+
+# What the research model is told about the observation. Both research paths
+# share it so the single-record and batch prompts cannot drift.
+OBSERVATION_RULE = (
+    "observed_problem_signal must be one sentence copied verbatim from the "
+    "description or an evidence observation, wrapped in double quotes -- never a "
+    "paraphrase, and never a restatement that the company posted a role. If no "
+    "sentence describes the work, leave observed_problem_signal, inference, "
+    "why_it_matters and solution_concept all empty."
+)
+
+
+def _quoted_spans(text: str) -> list[str]:
+    return [span for span in re.findall(r'["“]([^"”]{20,})["”]', text)]
+
+
+def merge_llm_research(base: Record, row: dict[str, Any], record: Record) -> Record:
+    """Overlay model research on deterministic research, keeping only a
+    grounded observation.
+
+    Both research paths used to merge every non-empty model field over the
+    deterministic result wholesale. The model echoed the evidence ledger's
+    "X published or was listed for Y" back as observed_problem_signal (SuprSend,
+    run_21ae706418041f9a), and an ungrounded paraphrase replaced a real quoted
+    responsibility just as easily. The observation is the one field an outreach
+    prompt stands on, so a model value survives only when its quoted text is
+    verbatim in the listing or in evidence this pipeline fetched. Without a
+    grounded observation there is nothing to infer from, so the inference-
+    shaped fields are cleared rather than kept as free-floating judgement.
+    """
+    generated = {key: clean_text(row.get(key)) for key in LLM_RESEARCH_KEYS if row.get(key)}
+    source = fold_text(
+        " ".join(
+            [
+                str(record.get("description", "")),
+                *(
+                    str(item.get("observation", ""))
+                    for item in base.get("evidence") or []
+                    if isinstance(item, dict) and not item.get("restates_listing")
+                ),
+            ]
+        )
+    )
+    signal = generated.pop("observed_problem_signal", "")
+    spans = _quoted_spans(signal) or ([signal] if signal else [])
+    if spans and all(grounded_in(span, source) for span in spans):
+        generated["observed_problem_signal"] = signal
+    merged = {**base, **generated}
+    if not merged.get("observed_problem_signal"):
+        for key in ("inference", "why_it_matters", "solution_concept"):
+            merged[key] = ""
+    return merged
+
 
 
 def _strip_fences(text: str) -> str:
@@ -251,7 +334,7 @@ def research_record(
                     "object with observed_problem_signal, inference, why_it_matters, "
                     "solution_concept, uncertainty. No markdown fences, no preamble, "
                     "no commentary outside the JSON. Never add facts, metrics, "
-                    "people, URLs, or funding claims."
+                    "people, URLs, or funding claims. " + OBSERVATION_RULE
                 ),
             "record": {
                 "company": record.get("company"),
@@ -277,20 +360,8 @@ def research_record(
         )
     except Exception as exc:
         return {**base, "llm_status": "failed", "llm_error": str(exc)[:300]}
-    allowed = {
-        key: clean_text(generated.get(key))
-        for key in (
-            "observed_problem_signal",
-            "inference",
-            "why_it_matters",
-            "solution_concept",
-            "uncertainty",
-        )
-        if generated.get(key)
-    }
     return {
-        **base,
-        **allowed,
+        **merge_llm_research(base, generated if isinstance(generated, dict) else {}, record),
         "llm_status": "ok",
         "model_id": model_id,
         "model_usage": usage,
@@ -331,7 +402,8 @@ def research_records(
             '{"records":[{"id":"...","observed_problem_signal":"",'
             '"inference":"","why_it_matters":"","solution_concept":"",'
             '"uncertainty":""}]}. Include every ID exactly once. Never add facts, '
-            "metrics, people, URLs, or funding claims. Leave unsupported fields empty."
+            "metrics, people, URLs, or funding claims. Leave unsupported fields empty. "
+            + OBSERVATION_RULE
         ),
         "records": supplied,
     }
@@ -362,18 +434,10 @@ def research_records(
             for record in records
         ]
     output: list[Record] = []
-    allowed_keys = (
-        "observed_problem_signal",
-        "inference",
-        "why_it_matters",
-        "solution_concept",
-        "uncertainty",
-    )
     for index, record in enumerate(records):
         row = by_id[str(record["id"])]
         result = {
-            **bases[record["id"]],
-            **{key: clean_text(row.get(key)) for key in allowed_keys if row.get(key)},
+            **merge_llm_research(bases[record["id"]], row, record),
             "llm_status": "ok",
             "model_id": model_id,
         }
