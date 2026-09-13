@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from typing import Any
 
 from models import Record, json_dumps
@@ -355,7 +356,37 @@ def _table(matrix: list[list[Any]]) -> list[Record]:
     return [dict(zip(headers, row)) for row in matrix[1:]]
 
 
-def summarize_outcomes(outreach_rows: list[Record], opportunity_rows: list[Record]) -> Record:
+# Follow-up days after a manual send, matching outreach._followups. Each is
+# due for a two-day window so a missed scheduled run does not skip it.
+FOLLOWUP_DAYS = (3, 8, 14)
+FOLLOWUP_WINDOW_DAYS = 2
+
+
+def _followup_due(row: Record, today: date) -> Record | None:
+    """The follow-up step due today for a sent, unanswered row, if any."""
+    sent_at = str(row.get("sent_at") or "").strip()[:10]
+    reply = str(row.get("reply_outcome") or "").strip().casefold()
+    if not sent_at or reply not in NO_OUTCOME_VALUES:
+        return None
+    try:
+        age = (today - date.fromisoformat(sent_at)).days
+    except ValueError:
+        return None
+    for day in FOLLOWUP_DAYS:
+        if day <= age < day + FOLLOWUP_WINDOW_DAYS:
+            return {
+                "opportunity_id": str(row.get("opportunity_id") or ""),
+                "company": str(row.get("company") or ""),
+                "contact_email": str(row.get("contact_email") or ""),
+                "day": day,
+                "days_since_sent": age,
+            }
+    return None
+
+
+def summarize_outcomes(
+    outreach_rows: list[Record], opportunity_rows: list[Record], today: date | None = None
+) -> Record:
     """Lifetime application outcomes from the human-owned Outreach columns.
 
     source_yield has always carried manually_applied/replied/interviewed, and
@@ -370,7 +401,12 @@ def summarize_outcomes(outreach_rows: list[Record], opportunity_rows: list[Recor
     }
     totals = {"applied": 0, "replied": 0, "interviewed": 0}
     by_source: dict[str, Record] = {}
+    followups_due: list[Record] = []
     for row in outreach_rows:
+        if today is not None:
+            due = _followup_due(row, today)
+            if due:
+                followups_due.append(due)
         status = str(row.get("send_status") or "").strip().casefold()
         reply = str(row.get("reply_outcome") or "").strip().casefold()
         interview = str(row.get("interview_outcome") or "").strip().casefold()
@@ -386,10 +422,10 @@ def summarize_outcomes(outreach_rows: list[Record], opportunity_rows: list[Recor
         for key, value in counts.items():
             totals[key] += value
             bucket[key] += value
-    return {**totals, "by_source": by_source}
+    return {**totals, "by_source": by_source, "followups_due": followups_due}
 
 
-def read_outcomes(spreadsheet_id: str | None = None) -> Record:
+def read_outcomes(spreadsheet_id: str | None = None, today: date | None = None) -> Record:
     """Read the Outreach and Opportunities tabs and summarise outcomes.
     Read-only, with the credential publish_run already uses."""
     spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
@@ -402,7 +438,7 @@ def read_outcomes(spreadsheet_id: str | None = None) -> Record:
             values.get(spreadsheetId=spreadsheet_id, range=f"'{tab}'!A1:ZZ").execute().get("values", [])
         )
 
-    return summarize_outcomes(read("Outreach"), read("Opportunities"))
+    return summarize_outcomes(read("Outreach"), read("Opportunities"), today)
 
 
 def publish_run(run: Record, spreadsheet_id: str | None = None) -> dict[str, int]:

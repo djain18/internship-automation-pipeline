@@ -515,6 +515,7 @@ def apply_outcomes(run: Record, summary: Record) -> Record:
     manually_applied/replied/interviewed in source_yield (lifetime, not today)."""
     run["outcomes"] = {key: int(summary.get(key, 0) or 0) for key in ("applied", "replied", "interviewed")}
     run["outcomes_status"] = "ok"
+    run["followups_due"] = list(summary.get("followups_due") or [])
     by_source = summary.get("by_source") or {}
     for bucket in run.get("source_yield", []) or []:
         counts = by_source.get(bucket.get("source"), {})
@@ -1353,7 +1354,7 @@ def main() -> int:
         # lifetime outcomes Daksh recorded in the Sheet. A failure only costs
         # the outcome line; it never blocks the run.
         try:
-            apply_outcomes(run, read_outcomes())
+            apply_outcomes(run, read_outcomes(today=run_date))
         except Exception as exc:
             run["outcomes_status"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
     output_root.mkdir(parents=True, exist_ok=True)
