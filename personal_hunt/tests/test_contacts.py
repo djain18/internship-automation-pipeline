@@ -1,3 +1,4 @@
+import contacts
 from contacts import attach_contact, choose_contact
 
 
@@ -175,3 +176,69 @@ def test_attach_contact_keeps_research_required_when_hunter_finds_nothing(monkey
     result = attach_contact(record, hunter_ctx)
     assert result["status"] == "contact_research_required"
     assert hunter_ctx["statuses"] == ["no_match"]
+
+
+def test_listing_published_email_becomes_the_contact() -> None:
+    """Verbatim tail of Auraaison's real 2026-09-12 Founder's Office Intern
+    post. admin@ is in EXCLUDED_PREFIXES for site-scraped addresses, but the
+    post names it as the application channel, so it is the contact."""
+
+    record = {
+        "company": "Auraaison",
+        "source_url": "https://www.linkedin.com/posts/auraaisonn_hiring-activity-1",
+        "description": (
+            "Role: Founder's Office Intern Location: Bengaluru / Remote. "
+            "Send your resume along with a short note to admin@auraaison.com "
+            'with the subject "Founders Office".'
+        ),
+    }
+    contact = contacts.choose_contact(record)
+    assert contact["email"] == "admin@auraaison.com"
+    assert contact["basis"] == "listing_published_role_mailbox"
+    assert contact["verification_status"] == "published_by_source"
+    assert contact["confidence"] == "medium"
+    assert contact["source_url"] == record["source_url"]
+
+
+def test_listing_email_fills_a_record_that_already_has_a_linkedin_url() -> None:
+    """A name or LinkedIn URL used to skip the published-address lookup, so a
+    record with a profile but no email still reached Daksh as
+    contact_research_required."""
+
+    record = {
+        "company": "Ethereal Labs",
+        "source_url": "https://www.linkedin.com/posts/ethereallabspvtltd_hiring-activity-2",
+        "description": "We are hiring an intern in Bengaluru. Apply at careers@ethereallabs.in",
+        "contact": {"name": "Aarav", "role": "Founder"},
+        "research": {
+            "published_linkedin_urls": [
+                {"url": "https://www.linkedin.com/in/aarav-x", "source_url": "https://ethereallabs.in/team"}
+            ]
+        },
+    }
+    contact = contacts.choose_contact(record)
+    assert contact["email"] == "careers@ethereallabs.in"
+    assert contact["basis"] == "listing_published_role_mailbox"
+    assert contact["name"] == "Aarav"
+
+
+def test_listing_noise_addresses_are_never_used() -> None:
+    record = {
+        "company": "Noise Co",
+        "source_url": "https://example.com/job",
+        "description": "Intern in Bengaluru. Do not reply to noreply@noise.co or legal@noise.co.",
+    }
+    assert contacts.listing_emails(record) == []
+    assert contacts.choose_contact(record)["status"] == "contact_research_required"
+
+
+def test_site_named_address_still_outranks_a_listing_mailbox() -> None:
+    record = {
+        "company": "Both Co",
+        "source_url": "https://example.com/job",
+        "description": "Apply at careers@both.co",
+        "research": {"published_emails": ["priya@both.co"]},
+    }
+    contact = contacts.choose_contact(record)
+    assert contact["email"] == "priya@both.co"
+    assert contact["basis"] == "site_published_direct"
