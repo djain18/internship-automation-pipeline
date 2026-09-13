@@ -70,3 +70,34 @@ def test_send_self_digest_builds_multipart_message(monkeypatch):
     assert parsed.is_multipart()
     assert {part.get_content_type() for part in parsed.walk()} >= {"text/plain", "text/html"}
 
+
+
+def test_html_digest_shows_contact_and_prompt_link_on_a_match() -> None:
+    run = _run()
+    run["digest_primary"][0]["selected_contact"] = {"email": "admin@example.com", "confidence": "medium"}
+    run["digest_primary"][0]["outreach"] = {"claude_prompt": "# prompt"}
+    html_body = digest.render_html_digest(run)
+    assert "admin@example.com" in html_body
+    assert "Copy Claude Code prompt" in html_body
+
+
+def test_html_digest_empty_day_explains_itself_instead_of_an_empty_table() -> None:
+    run = _run()
+    run["digest_primary"] = []
+    run["primary"] = [{"id": "x", "digest_approved": False}]
+    run["eligible_count"] = 3
+    html_body = digest.render_html_digest(run)
+    assert "<table" not in html_body
+    assert "3 passed the filters and 1 was withheld" in html_body
+
+
+def test_html_digest_surfaces_failed_sources_spotted_leads_and_staleness() -> None:
+    run = _run()
+    run["source_health"] = [{"source_id": "yc_bengaluru", "status": "failed"}, {"source_id": "wwr", "status": "ok"}]
+    run["spotted_leads"] = [{"source_url": "https://www.linkedin.com/posts/x"}]
+    run["staleness_warning"] = "Latest artifact is 2 days old."
+    html_body = digest.render_html_digest(run)
+    assert "Sources that failed this run: yc_bengaluru" in html_body
+    assert "wwr" not in html_body
+    assert "https://www.linkedin.com/posts/x" in html_body
+    assert "Latest artifact is 2 days old." in html_body
