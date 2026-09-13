@@ -91,8 +91,12 @@ def _latest_live() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Latest run could not be loaded") from exc
     if run.get("run_kind") != "live" or run.get("run_id") != pointer.get("run_id"):
         raise HTTPException(status_code=503, detail="Latest run pointer failed validation")
-    if not run.get("digest_usable"):
-        raise HTTPException(status_code=503, detail="Latest run did not pass its model gate")
+    # A failed Kimi gate used to 503 the whole page. The pointer is written on
+    # every live run, so one Bedrock outage hid the funding signals, the
+    # verification tray, the send queue and source health for the day -- none
+    # of which depend on Kimi. Nothing unapproved is exposed by serving it:
+    # digest_primary only ever holds records that passed the gate. The page
+    # shows the failure as a banner (run.digestUsable) instead of an error.
     return run
 
 
