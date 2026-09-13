@@ -18,6 +18,28 @@ LINKEDIN_EXTRACTION_LIMIT = 10
 # to `Unterminated string` at char ~11970 (≈3500 output tokens exactly), i.e.
 # 10 records x 300-char quote sits right on the ceiling. 5 halves it.
 LINKEDIN_EXTRACTION_BATCH_SIZE = 5
+# The location words a post must state for the role to be in scope. One
+# definition shared by the extraction candidate filter and the validator so
+# the two can never drift apart.
+LOCATION_TERMS = ("bengaluru", "bangalore", "remote", "hybrid")
+# Curly punctuation folded to ASCII before any exact-substring check. A post
+# written with U+2019 and a model echoing U+0027 are the same text; without
+# this, "Founder's Office Intern" never matches "Founder's Office Intern".
+_PUNCTUATION_FOLD = str.maketrans(
+    {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"}
+)
+
+
+def _fold(value: Any) -> str:
+    """Comparison form: tags stripped, whitespace collapsed, curly punctuation
+    flattened, case folded."""
+    return clean_text(value).translate(_PUNCTUATION_FOLD).casefold()
+
+
+def _grounded(value: str, post: str) -> bool:
+    """True when a non-empty extracted value appears verbatim in the post."""
+    folded = _fold(value)
+    return bool(folded) and folded in post
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -74,8 +96,12 @@ def _extraction_batch_content(candidates: list[Record]) -> dict[str, Any]:
             "Extract only explicitly stated hiring fields. Return raw JSON as "
             '{"records":[{"id":"...","company":"","title":"","location":"",'
             '"apply_url":"","evidence_quote":""}]}. Include every ID exactly once. '
-            "evidence_quote must be an exact substring containing the employer, internship "
-            "title, and location, no longer than 300 characters. Leave fields empty when the post does not prove them."
+            "company, title and location must each be copied verbatim from the post; do not "
+            "normalise, expand or abbreviate them. They do not have to sit near each other -- "
+            "the employer is usually named in the opening line and the role details hundreds of "
+            "characters later. evidence_quote must be an exact substring of the post, no longer "
+            "than 300 characters, that proves the internship role. "
+            "Leave a field empty when the post does not state it."
         ),
         "records": [
             # 3000 chars: the 2026-09-11 live run truncated a 20x6000 batch
@@ -91,19 +117,30 @@ def _apply_extraction_result(record: Record, result: dict[str, Any] | None) -> t
     if result is None:
         return item, False
     text = str(record.get("description", ""))
+    post = _fold(text)
     quote = clean_text(result.get("evidence_quote"))
     company = clean_text(result.get("company"))
     title = clean_text(result.get("title"))
     location = clean_text(result.get("location"))
-    quote_lower = quote.casefold()
+    # Every field is grounded against the WHOLE post, not one shared 300-char
+    # window. Requiring employer + role + location inside a single quote made
+    # a normally-written hiring post unresolvable: Auraaison's Founder's Office
+    # Intern post says "We're hiring at Auraaison." at char 0 and
+    # "Role: Founder's Office Intern Location: Bengaluru / Remote" at char ~880.
+    # No 300-char substring can hold both, so the model had to return either an
+    # empty field or a quote missing the company, and either failed closed.
+    # Across five consecutive live runs that rejected 67-84 of every 100 paid
+    # posts (resolved 16/28/31/27/33), including the single best-fit Bengaluru
+    # Founder's Office internship in the pool. Adjacency was never evidence;
+    # each claim being a verbatim substring of the real post is.
+    stated_terms = [term for term in LOCATION_TERMS if term in _fold(location)]
     valid = bool(
-        quote
-        and quote_lower in text.casefold()
-        and company.casefold() in quote_lower
-        and "intern" in title.casefold()
-        and "intern" in quote_lower
-        and any(term in location.casefold() for term in ("bengaluru", "bangalore", "remote", "hybrid"))
-        and any(term in quote_lower for term in ("bengaluru", "bangalore", "remote", "hybrid"))
+        _grounded(quote, post)
+        and _grounded(company, post)
+        and "intern" in _fold(title)
+        and _grounded(title, post)
+        and stated_terms
+        and any(term in post for term in stated_terms)
     )
     if not valid:
         return item, False
@@ -152,7 +189,7 @@ def extract_linkedin_hiring_fields(
         )
         and any(
             term in str(item.get("description", "")).casefold()
-            for term in ("bengaluru", "bangalore", "remote", "hybrid")
+            for term in LOCATION_TERMS
         )
     ]
     candidates = all_candidates[:run_limit]
