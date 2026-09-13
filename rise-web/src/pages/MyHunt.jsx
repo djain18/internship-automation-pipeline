@@ -239,6 +239,13 @@ export default function MyHunt() {
           <Metric label="Apify this month" value={`$${Number(payload.apify?.month_spend_usd || 0).toFixed(2)}`} detail="$5.00 hard stop" />
         </section>
 
+        {payload.run?.digestUsable === false && (
+          <div className="mt-5 flex items-start gap-3 rounded-xl border border-border bg-background p-4 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--accent-warm))]" />
+            <div><div className="font-medium">Kimi scoring failed on this run</div><div className="mt-1 text-muted-foreground">No internship could be approved, so Matches is empty for that reason, not because nothing was found. Funding, verification leads and source health below are unaffected.</div></div>
+          </div>
+        )}
+
         {failedSources.length > 0 && (
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-border bg-background p-4 text-sm">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--accent-warm))]" />

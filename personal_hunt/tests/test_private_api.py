@@ -109,3 +109,20 @@ def test_private_api_returns_sanitized_live_run(monkeypatch, tmp_path):
     assert response.json()["cacheStatistics"] == {"hits": 4}
     assert response.json()["sendQueue"] == []
     assert response.json()["sendStreakDays"] == 0
+
+
+def test_failed_model_gate_still_serves_the_run(tmp_path, monkeypatch):
+    _write_live(tmp_path)
+    run_path = tmp_path / "2026-09-10" / "run_live.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["digest_usable"] = False
+    run["digest_primary"] = []
+    run["funding_primary"] = [{"company": "Graph AI", "headline": "raises seed"}]
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    monkeypatch.setattr(private_api, "OUTPUT_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(private_api, "_verify_token", lambda _token: {"email": "dakshinjain187@gmail.com", "email_verified": True})
+    response = TestClient(private_api.app).get("/api/personal/latest", headers={"Authorization": "Bearer ok"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["digestUsable"] is False
+    assert body["funding"]["primary"][0]["company"] == "Graph AI"
