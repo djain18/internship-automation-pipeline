@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from copy import deepcopy
 from datetime import date, datetime, timedelta
@@ -69,23 +70,36 @@ from sheets import publish_run
 from state import LocalState
 
 
+# Title word families per resume, checked in this order: the role's function
+# before its domain, so "AI Growth Intern" is a growth role and "Growth
+# Operations Intern" is not an ops one. Word boundaries matter -- a bare "ai"
+# substring is inside "retail" and "maintenance".
+RESUME_TITLE_ROUTES = (
+    ("Daksh-Jain-founders_office", r"founder|chief of staff|generalist|special projects|strategy|business operations|ceo'?s office"),
+    ("Daksh-Jain-gtm", r"growth|gtm|go[- ]to[- ]market|marketing|sales|business development|partnerships"),
+    ("Daksh-Jain-ai_automation", r"ai|automation|llm|agents?|genai|prompt"),
+    ("Daksh-Jain-ops", r"operations|ops|supply chain|d2c|retail|logistics|category"),
+)
+
+
 def route_resume(record: Record) -> str:
-    title = str(record.get("title", "")).casefold()
-    text = f"{title} {record.get('description', '')}".casefold()
-    if any(
-        term in title
-        for term in ("founder", "chief of staff", "generalist", "special projects")
-    ):
-        return "Daksh-Jain-founders_office"
-    if any(term in text for term in ("growth", "gtm", "go-to-market")):
-        return "Daksh-Jain-gtm"
-    if record.get("lane") == "ai" and any(
-        term in text for term in ("automation", "ai", "llm")
-    ):
+    """Pick the resume variant from the job title, and only the title.
+
+    The description used to decide. It was searched for "growth", which nearly
+    every startup JD contains ("high-growth", "growth-stage"), so across 1,458
+    real records 471 routed to the GTM resume and 40 to Founder's Office. The
+    live misfire that mattered: Sarvam AI's "Strategy and Operations Intern" --
+    a founder's-office-shaped role -- was handed Daksh-Jain-gtm. The title is
+    what the employer chose to call the role; the lane is only a tiebreak when
+    the title names no function at all ("Intern", "Business Intern").
+    """
+    title = clean_text(record.get("title")).replace("’", "'").casefold()
+    for resume, pattern in RESUME_TITLE_ROUTES:
+        if re.search(rf"\b(?:{pattern})\b", title):
+            return resume
+    if record.get("lane") == "ai":
         return "Daksh-Jain-ai_automation"
-    if record.get("lane") == "consumer" or any(
-        term in text for term in ("operations", "supply chain", "d2c", "retail")
-    ):
+    if record.get("lane") == "consumer":
         return "Daksh-Jain-ops"
     return "Daksh-Jain-Master"
 
