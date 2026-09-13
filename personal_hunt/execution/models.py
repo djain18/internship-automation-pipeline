@@ -26,6 +26,26 @@ def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Curly punctuation folded to ASCII before any exact-substring check. A post
+# written with U+2019 and a model echoing U+0027 are the same text; without
+# this, "Founder’s Office Intern" never matches "Founder's Office Intern".
+_PUNCTUATION_FOLD = str.maketrans(
+    {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"}
+)
+
+
+def fold_text(value: Any) -> str:
+    """Comparison form: tags stripped, whitespace collapsed, curly punctuation
+    flattened, case folded."""
+    return clean_text(value).translate(_PUNCTUATION_FOLD).casefold()
+
+
+def grounded_in(value: Any, source: str) -> bool:
+    """True when a non-empty value appears verbatim in already-folded source."""
+    folded = fold_text(value)
+    return bool(folded) and folded in source
+
+
 def repair_mojibake(text: str) -> str:
     """Undo UTF-8 bytes that were decoded as cp1252 upstream (e.g. an
     apostrophe arriving as "Founderâ€™s Office", or a rupee sign arriving

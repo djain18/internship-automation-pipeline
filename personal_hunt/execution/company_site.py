@@ -185,9 +185,35 @@ def fetch_site_evidence(
 # Verbs a posting uses when it describes work someone will own. The sentence
 # that carries one is the closest thing a listing has to a statement of the
 # operational gap the company is hiring to close.
+# Verb stems, not whole words: the regex below re-attaches inflections, so
+# "own" also covers owns/owned/owning. Doubling verbs carry a second stem
+# ("run" + "runn") because the doubled consonant is part of the inflected form.
+#
+# Widened 2026-09-13. The old list plus an exact `f"{verb} "` substring test
+# matched a quotable responsibility sentence in only 3 of the 13 records that
+# have ever reached a digest. Every miss was a verb the list did not carry or
+# an inflection the space-suffix test could not see:
+#   "Work directly with the founder across AI automation..."   (Nebula AI)
+#   "Partner with founders on AI agent launches..."            (AgentNest)
+#   "You'll work at the intersection of strategy, operations"  (Kplor)
+#   "involved in ... and building things from the ground up"   (Auraaison)
+# Those misses are what forced deterministic_research onto its tautological
+# fallback observation ("X published or was listed for Y"), which is what every
+# outreach prompt was then built on.
 OWNERSHIP_VERBS = (
-    "own", "manage", "build", "coordinate", "track", "run", "streamline",
-    "scale", "improve", "automate", "drive", "set up", "support",
+    "own", "manag", "build", "coordinat", "track", "run", "runn", "streamlin",
+    "scal", "improv", "automat", "driv", "set up", "support", "work", "partner",
+    "lead", "launch", "execut", "ship", "shipp", "handl", "creat", "research",
+    "collaborat", "assist", "help", "analys", "analyz", "report", "prepar",
+)
+
+# stem + one inflection + a word boundary. The boundary is what keeps "run"
+# from matching "runway" and "own" from matching "ownership" mid-word, which a
+# bare `\w{0,3}` suffix would have let through.
+_OWNERSHIP_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(verb).replace(r"\ ", r"\s+") for verb in OWNERSHIP_VERBS)
+    + r")(?:e|es|ed|ing|s|en)?\b"
 )
 
 
@@ -197,20 +223,49 @@ OWNERSHIP_VERBS = (
 FEED_NOISE = ("days ago", "day ago", "hours ago", "apply now", "posted on")
 
 
+# Sentences that use an ownership verb but describe the ad, not the work.
+# Widening OWNERSHIP_VERBS made these reachable: a real run picked "HR agencies
+# - we're handling these hires in-house for now, so please don't spam us" as
+# SuprSend's primary responsibility, which would then be quoted verbatim into
+# the outreach prompt as "The listing states: ...".
+PITCH_NOISE = (
+    "hr agencies", "spam", "love to hear from you", "tag them", "share this",
+    "know someone", "dm me", "drop your", "comment below", "send your resume",
+    "send your cv", "stipend:", "ppo:", "ctc", "referral", "repost",
+)
+
+# Markers that a sentence is describing the role's own work. Preferred over a
+# merely longer sentence, because the longest qualifying line is usually the
+# closing pitch ("If you want exposure to what actually happens behind the
+# scenes...") rather than the responsibility.
+RESPONSIBILITY_MARKERS = (
+    "you'll", "you will", "you’ll", "the intern", "as an intern", "role:",
+    "responsibilit", "what you", "your day", "work directly", "partner with",
+    "working directly", "assist the", "support the", "you would", "day-to-day",
+    "day to day",
+)
+
+
 def primary_responsibility(description: str) -> str:
     """The listing's own words for what the role will do. Never paraphrased."""
 
     candidates = [
         line
         for line in _sentences(str(description or "").replace(chr(65533), " "))
-        if any(f"{verb} " in line.casefold() for verb in OWNERSHIP_VERBS)
+        if _OWNERSHIP_PATTERN.search(line.casefold())
         and not any(noise in line.casefold() for noise in FEED_NOISE)
+        and not any(noise in line.casefold() for noise in PITCH_NOISE)
     ]
     if not candidates:
         return ""
-    # The longest qualifying sentence is the one that actually describes the
-    # work; the first is often a header that happens to contain a verb.
-    return max(candidates, key=len)
+    # A sentence that names the role's own work beats a merely longer one. Only
+    # when none does is length the best available signal, as before.
+    described = [
+        line
+        for line in candidates
+        if any(marker in line.casefold() for marker in RESPONSIBILITY_MARKERS)
+    ]
+    return max(described or candidates, key=len)
 
 OFFICE_PATHS = ("", "/about", "/about-us", "/contact", "/contact-us", "/careers")
 

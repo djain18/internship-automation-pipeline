@@ -4,7 +4,7 @@ import json
 import os
 from typing import Any
 
-from models import Record, clean_text
+from models import Record, clean_text, fold_text, grounded_in
 from research import cached_bedrock_json
 
 
@@ -22,24 +22,6 @@ LINKEDIN_EXTRACTION_BATCH_SIZE = 5
 # definition shared by the extraction candidate filter and the validator so
 # the two can never drift apart.
 LOCATION_TERMS = ("bengaluru", "bangalore", "remote", "hybrid")
-# Curly punctuation folded to ASCII before any exact-substring check. A post
-# written with U+2019 and a model echoing U+0027 are the same text; without
-# this, "Founder's Office Intern" never matches "Founder's Office Intern".
-_PUNCTUATION_FOLD = str.maketrans(
-    {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"}
-)
-
-
-def _fold(value: Any) -> str:
-    """Comparison form: tags stripped, whitespace collapsed, curly punctuation
-    flattened, case folded."""
-    return clean_text(value).translate(_PUNCTUATION_FOLD).casefold()
-
-
-def _grounded(value: str, post: str) -> bool:
-    """True when a non-empty extracted value appears verbatim in the post."""
-    folded = _fold(value)
-    return bool(folded) and folded in post
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -117,7 +99,7 @@ def _apply_extraction_result(record: Record, result: dict[str, Any] | None) -> t
     if result is None:
         return item, False
     text = str(record.get("description", ""))
-    post = _fold(text)
+    post = fold_text(text)
     quote = clean_text(result.get("evidence_quote"))
     company = clean_text(result.get("company"))
     title = clean_text(result.get("title"))
@@ -133,12 +115,12 @@ def _apply_extraction_result(record: Record, result: dict[str, Any] | None) -> t
     # posts (resolved 16/28/31/27/33), including the single best-fit Bengaluru
     # Founder's Office internship in the pool. Adjacency was never evidence;
     # each claim being a verbatim substring of the real post is.
-    stated_terms = [term for term in LOCATION_TERMS if term in _fold(location)]
+    stated_terms = [term for term in LOCATION_TERMS if term in fold_text(location)]
     valid = bool(
-        _grounded(quote, post)
-        and _grounded(company, post)
-        and "intern" in _fold(title)
-        and _grounded(title, post)
+        grounded_in(quote, post)
+        and grounded_in(company, post)
+        and "intern" in fold_text(title)
+        and grounded_in(title, post)
         and stated_terms
         and any(term in post for term in stated_terms)
     )

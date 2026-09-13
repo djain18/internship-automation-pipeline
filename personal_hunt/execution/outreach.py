@@ -300,6 +300,91 @@ def build_email_prompt(record: Record) -> str:
     )
 
 
+_RESEARCH_FIRST_PROMPT_FALLBACK = """# {company_name}: research first, then draft the outreach email
+
+The listing did not describe the work in a sentence I could quote, so there is
+no observed problem to build an email on yet. Do the research before writing.
+
+## Verified facts (do not re-derive; do not contradict without new evidence)
+
+- Company: {company_name}
+- Role: {role_title}
+- Location: {location}
+- Listing: {source_url}
+- Apply link: {apply_url}
+- Contact: {contact_line}
+- Resume to attach: {resume_basename}
+
+## Step 1 - find one real, specific observation
+
+Search {company_name}'s own website, careers page, founder posts, product
+changelog and recent news. Find ONE thing that points at operational work this
+intern would touch: a stated goal, a recent launch, a hiring push, a public
+complaint, a process they describe. For it, give me:
+
+- the exact quote, the URL it came from, and today's date;
+- what you infer from it, labelled as inference, kept separate from the quote;
+- what is still uncertain.
+
+If you cannot find anything specific and sourced, stop and tell me. Do not draft
+an email built on the job title alone.
+
+## Step 2 - draft the email
+
+Only once Step 1 found a sourced observation. Write a cold email from Daksh to
+the contact above. Copy rules:
+
+{copy_rules}
+
+Never use these words: {forbidden_words}.
+Never use these phrases: {forbidden_phrases}.
+Never invent a metric, a familiarity, or an artifact that does not exist.
+Never state the inference as a fact, or promise an unmeasured outcome.
+
+## Before you finish
+
+Run the drafted email through the /humanizer skill so it does not read like
+AI-generated text. Show me the observation with its source, then the final
+email; I will send it manually.
+"""
+
+
+def build_research_first_prompt(record: Record) -> str:
+    """The prompt for a record whose listing never describes the work.
+
+    build_email_prompt refuses those (correctly -- a prompt built on a job
+    title invents its premise), and that refusal used to be the end of the
+    road: all four approved matches on run_21ae706418041f9a, including
+    SuprSend's and Kplor's Founder's Office internships, reached Daksh with no
+    prompt at all. The per-record research the pipeline cannot afford (the
+    Firecrawl free plan is already spent on funded companies) is exactly what
+    Daksh's own Claude Code session can do, so this hands it the verified facts
+    and makes a sourced observation the precondition for any draft.
+    """
+    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
+    bits = [clean_text(contact.get("name")), clean_text(contact.get("email"))]
+    contact_line = " / ".join(bit for bit in bits if bit) or (
+        "none found yet -- find the founder or hiring lead's public channel, with its source"
+    )
+    if contact.get("email") and contact.get("source_url"):
+        contact_line += f" (published at {clean_text(contact.get('source_url'))})"
+    template = load_prompt_template("research_first_prompt.txt", _RESEARCH_FIRST_PROMPT_FALLBACK)
+    return _fill(
+        template,
+        _RESEARCH_FIRST_PROMPT_FALLBACK,
+        company_name=clean_text(record.get("company")) or "the company",
+        role_title=clean_text(record.get("title")) or "internship opportunity",
+        location=clean_text(record.get("location")) or "Bengaluru",
+        source_url=clean_text(record.get("source_url")) or "not recorded",
+        apply_url=clean_text(record.get("apply_url") or record.get("source_url")) or "not recorded",
+        contact_line=contact_line,
+        resume_basename=clean_text(record.get("resume")) or "Daksh-Jain-Master",
+        copy_rules="\n".join(EMAIL_COPY_RULES),
+        forbidden_words=", ".join(FORBIDDEN_WORDS),
+        forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
+    )
+
+
 def draft_problem_led_email(record: Record) -> Record:
     """Draft a problem-led cold email for companies with deep research and prototype.
 
@@ -328,15 +413,19 @@ def draft_problem_led_email(record: Record) -> Record:
     # It is short and structurally simple (name, one observation, one ask),
     # which is exactly where a template reads fine; the email is where the
     # mail-merge sameness actually showed.
+    # "built a prototype" is only true once one exists. prompt_generation writes
+    # a prompt for a prototype, not the prototype, so without a built artifact
+    # the note says what is actually true.
+    built = "built a prototype" if artifact else "sketched a small prototype idea"
     linkedin_note = _fit_note(
         f"Hi {contact_name} - I found a specific problem in {company}'s operations "
-        f"and built a prototype. Seeking an onsite internship from November 2026. Worth exploring?"
+        f"and {built}. Seeking an onsite internship from November 2026. Worth exploring?"
     )
 
     # LinkedIn message (after connection accepted)
     linkedin_message = (
         f"Thanks for connecting. I mapped the operational gap I found at {company} "
-        f"and built a small prototype to explore it. Happy to walk through it if you're interested."
+        f"and {built} to explore it. Happy to walk through it if you're interested."
     )
 
     claude_prompt = build_email_prompt(record)
@@ -373,51 +462,63 @@ def draft_outreach(record: Record) -> Record:
     strategy_id = choose_strategy(record)
     artifact = _approved_artifact(record)
 
-    # LinkedIn connection note (under 300 chars)
-    linkedin_note = (
-        f"Hi {contact_name} - the {title} work at {company} caught my attention. "
-        "I mapped the public context into a short evidence brief and one small "
-        "idea. I'm seeking a six-month Bengaluru generalist internship from "
-        "November 2026. Useful if I share it?"
-    )
-    if len(linkedin_note) > 300:
-        linkedin_note = _fit_note(
-            f"Hi {contact_name} - the {title} work at {company} caught my "
-            "attention. I mapped the public context into a short brief and one "
-            "idea. Seeking a six-month Bengaluru internship from November 2026. "
-            "Share it?"
+    # LinkedIn connection note (under 300 chars). It may only mention a brief
+    # when there is evidence to write one from: the old note promised "a short
+    # evidence brief and one small idea" on every record, including the ones
+    # blocked for having no evidence -- an invented artifact.
+    if solution:
+        linkedin_note = (
+            f"Hi {contact_name} - the {title} work at {company} caught my attention. "
+            "I mapped the public context into a short evidence brief and one small "
+            "idea. I'm seeking a six-month Bengaluru generalist internship from "
+            "November 2026. Useful if I share it?"
         )
-
-    # LinkedIn message (after connection accepted)
-    linkedin_message = (
-        f"Thanks for connecting. I mapped some of the context around the {title} role "
-        f"and found an interesting angle. Happy to share if you'd like to see it."
-    )
+        if len(linkedin_note) > 300:
+            linkedin_note = _fit_note(
+                f"Hi {contact_name} - the {title} work at {company} caught my "
+                "attention. I mapped the public context into a short brief and one "
+                "idea. Seeking a six-month Bengaluru internship from November 2026. "
+                "Share it?"
+            )
+        linkedin_message = (
+            f"Thanks for connecting. I mapped some of the context around the {title} role "
+            f"and found an interesting angle. Happy to share if you'd like to see it."
+        )
+    else:
+        linkedin_note = _fit_note(
+            f"Hi {contact_name} - I saw the {title} opening at {company}. I'm a "
+            "Bengaluru BCA student with founder's office and ops experience, looking "
+            "for a six-month internship from November 2026. Open to a quick chat?"
+        )
+        linkedin_message = (
+            f"Thanks for connecting. I'd like to be considered for the {title} role - "
+            "happy to share my resume and the founder's office work I've done."
+        )
 
     # Legacy followups for backwards compatibility
     followups = _followups(record, company)
 
-    if not solution:
+    claude_prompt = build_email_prompt(record) if solution else ""
+    if not claude_prompt:
         return {
             "email_subject": "founder office idea",
-            "claude_prompt": "",
+            "claude_prompt": build_research_first_prompt(record),
             "linkedin_note": linkedin_note,
             "linkedin_message": linkedin_message,
             "followups": followups,
-            "send_status": "blocked_insufficient_evidence",
-            "artifact_mention_allowed": False,
+            "send_status": "research_first_needs_human_review",
+            "artifact_mention_allowed": bool(artifact),
             "strategy_id": strategy_id,
             "draft_source": "generic_opportunity",
         }
 
-    claude_prompt = build_email_prompt(record)
     return {
         "email_subject": "founder office idea",
         "claude_prompt": claude_prompt,
         "linkedin_note": linkedin_note,
         "linkedin_message": linkedin_message,
         "followups": followups,
-        "send_status": "draft_needs_human_review" if claude_prompt else "blocked_no_evidence",
+        "send_status": "draft_needs_human_review",
         "artifact_mention_allowed": bool(artifact),
         "strategy_id": strategy_id,
         "draft_source": "generic_opportunity",
@@ -514,6 +615,7 @@ def validate_outreach(draft: Record) -> list[str]:
     if draft.get("send_status") not in {
         "draft_needs_human_review", "approved_manual_send",
         "blocked_insufficient_evidence", "blocked_no_evidence",
+        "research_first_needs_human_review",
     }:
         errors.append("invalid_send_status")
 

@@ -224,8 +224,11 @@ def test_claude_prompt_never_generated_without_a_real_signal() -> None:
         "research": {"solution_concept": "a workflow audit."},  # no observed_problem_signal
     }
     draft = draft_outreach(record)
-    assert draft["claude_prompt"] == ""
-    assert draft["send_status"] == "blocked_no_evidence"
+    # Never an email prompt built on nothing: the only prompt is one that
+    # makes a sourced observation the precondition for drafting.
+    assert "What I actually observed" not in draft["claude_prompt"]
+    assert "Step 1 - find one real, specific observation" in draft["claude_prompt"]
+    assert draft["send_status"] == "research_first_needs_human_review"
     assert validate_outreach(draft) == []
 
 
