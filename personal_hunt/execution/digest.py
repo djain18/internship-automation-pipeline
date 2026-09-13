@@ -150,7 +150,12 @@ def _problem_section(records: list[Record]) -> str:
     return "\n".join(lines)
 
 
-def _watchlist_status_line(company: Record, discovered_by_id: dict[str, Record], health_by_id: dict[str, Record]) -> str:
+def _watchlist_status_line(
+    company: Record,
+    discovered_by_id: dict[str, Record],
+    health_by_id: dict[str, Record],
+    yield_by_source: dict[str, Record] | None = None,
+) -> str:
     """One status per watchlist company, from whichever signal actually ran.
 
     deep_problem_research only exists when watchlist.yml's deep_research
@@ -164,13 +169,30 @@ def _watchlist_status_line(company: Record, discovered_by_id: dict[str, Record],
         if evidence_count:
             return f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
         return "no activity observed"
-    board = health_by_id.get(watchlist_source_id(company["company"]))
+    source_id = watchlist_source_id(company["company"])
+    board = health_by_id.get(source_id)
     if board is None:
-        return "no board configured"
+        # "no board configured" printed for all three companies on every
+        # fixture run, including Emergent and Lyzr, whose boards are fetched on
+        # every live run. Only a company with no board_url truly has none, and
+        # that line should say what to do instead.
+        if company.get("board_url") == "":
+            return "no public job board -- watch the founders' own posts"
+        return "board not fetched this run"
     if board.get("status") != "ok":
         return f"board fetch {board.get('status', 'unknown')}"
     count = int(board.get("record_count", 0) or 0)
-    return f"{count} open role{'s' if count != 1 else ''} on board" if count else "no open roles on board"
+    if not count:
+        return "no open roles on board"
+    # A raw role count says nothing about whether to act. The source's own
+    # yield row says how many of those roles passed Daksh's filters.
+    eligible = int(((yield_by_source or {}).get(source_id) or {}).get("eligible", 0) or 0)
+    return f"{count} open role{'s' if count != 1 else ''}, {eligible} fit{'s' if eligible == 1 else ''} your filters"
+
+
+def _yield_by_source(run: Record) -> dict[str, Record]:
+    rows = run.get("source_yield") or []
+    return {str(row.get("source")): row for row in rows if isinstance(row, dict)}
 
 
 def _watchlist_movement_section(run: Record) -> str:
@@ -186,8 +208,9 @@ def _watchlist_movement_section(run: Record) -> str:
 
     discovered_by_id = {item["funding_event_id"]: item for item in run.get("discovered_for_research", [])}
     health_by_id = {item["source_id"]: item for item in run.get("source_health", [])}
+    yield_by_source = _yield_by_source(run)
     for company in watchlist_companies:
-        status = _watchlist_status_line(company, discovered_by_id, health_by_id)
+        status = _watchlist_status_line(company, discovered_by_id, health_by_id, yield_by_source)
         lines.append(f"- **{company.get('company', 'Unknown')}**: {status}")
 
     lines.append("")
@@ -674,10 +697,11 @@ def _watchlist_movement_html(run: Record) -> str:
         return ""
     discovered_by_id = {item["funding_event_id"]: item for item in run.get("discovered_for_research", [])}
     health_by_id = {item["source_id"]: item for item in run.get("source_health", [])}
+    yield_by_source = _yield_by_source(run)
     items: list[str] = []
     for company in watchlist_companies:
         name = html.escape(str(company.get("company") or "Unknown"))
-        status = _watchlist_status_line(company, discovered_by_id, health_by_id)
+        status = _watchlist_status_line(company, discovered_by_id, health_by_id, yield_by_source)
         items.append(
             f'<li style="margin:0 0 8px"><strong>{name}</strong>: {html.escape(status)}</li>'
         )

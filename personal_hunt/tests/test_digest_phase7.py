@@ -53,7 +53,7 @@ def test_watchlist_movement_section_shows_activity_summary():
     assert "Emergent" in rendered
     assert "3 signals found" in rendered
     assert "Lyzr AI" in rendered
-    assert "4 open roles on board" in rendered
+    assert "4 open roles, 0 fit your filters" in rendered
     assert "AEOS" in rendered
     assert "board fetch failed" in rendered
 
@@ -402,7 +402,7 @@ def test_digest_quiet_day_with_no_discovered_companies(tmp_path: Path, monkeypat
     assert "Emergent" in rendered
     assert any(
         phrase in rendered.lower()
-        for phrase in ("open role", "no board configured", "board fetch")
+        for phrase in ("open role", "board not fetched", "no public job board", "board fetch")
     )
 
     # HTML digest must stay honest on a quiet day too, not just plain text.
@@ -410,3 +410,15 @@ def test_digest_quiet_day_with_no_discovered_companies(tmp_path: Path, monkeypat
     assert "Problem briefs" in html_rendered
     assert "No companies cleared deep research today" in html_rendered
     assert "No companies were researched" in rendered
+
+
+def test_watchlist_line_separates_no_board_from_not_fetched() -> None:
+    from digest import _watchlist_status_line
+
+    no_board = {"company": "AEOS", "funding_event_id": "w1", "board_url": ""}
+    has_board = {"company": "Emergent", "funding_event_id": "w2", "board_url": "https://boards.example/jobs"}
+    assert _watchlist_status_line(no_board, {}, {}).startswith("no public job board")
+    assert _watchlist_status_line(has_board, {}, {}) == "board not fetched this run"
+    health = {"watchlist_emergent": {"status": "ok", "record_count": 34}}
+    yields = {"watchlist_emergent": {"eligible": 1}}
+    assert _watchlist_status_line(has_board, {}, health, yields) == "34 open roles, 1 fits your filters"
