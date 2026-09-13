@@ -786,3 +786,14 @@ the new code (next one is 00:30 IST, 2026-09-14). Ressl AI's quoted sentence is 
 tagline; the full page in the prompt carries the actual role text. LinkedIn job pages (SuprSend)
 are still not read by the pipeline. Daksh's Chrome permission covers interactive checks, not the
 scheduled scraper.
+
+## 2026-09-13 (continued) — Gmail read token activated
+
+Daksh minted the gmail.readonly token; it was loaded into `internship-hunt-gmail-read` and the
+local file deleted. Checked in the cloud: scope gmail.readonly, refresh token present, account
+dakshjainn02@gmail.com. A dry run against the real Outreach tab (30 rows) proposed 0 changes.
+All 26 Sent-folder hits for Outreach company names were the pipeline's own self-digests, so
+the sync now excludes self-addressed mail from the sync (commit "Never match Daksh's self-sent
+digests..."), pushed and deployed. Open: confirm which account Daksh sends outreach from. Form
+applications (Ashby/YC/binary.so) leave no email trail and stay manual. First scheduled run on
+all of today's code: 00:30 IST, 2026-09-14, not yet observed.
