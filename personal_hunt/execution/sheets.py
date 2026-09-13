@@ -25,6 +25,7 @@ TAB_SCHEMAS: dict[str, list[str]] = {
         "contact_email", "contact_status", "subject", "claude_prompt", "linkedin_note",
         "send_status", "mailsuite_status", "next_action", "sent_at",
         "reply_outcome", "interview_outcome", "strategy_id", "human_quality_rating",
+        "outcome_basis",
     ],
     "Artifacts": [
         "id", "opportunity_id", "company", "artifact_status", "evidence_pack_path",
@@ -439,6 +440,43 @@ def read_outcomes(spreadsheet_id: str | None = None, today: date | None = None) 
         )
 
     return summarize_outcomes(read("Outreach"), read("Opportunities"), today)
+
+
+def sync_outcomes_from_gmail(spreadsheet_id: str | None = None, today: date | None = None) -> Record:
+    """Fill empty Outreach outcome cells from Gmail evidence.
+
+    Returns a status row. "not_authorised" until GMAIL_OUTCOMES_TOKEN_JSON
+    holds a gmail.readonly token for the account Daksh sends outreach from.
+    """
+    from gmail_outcomes import GmailSearch, gmail_read_service, outcome_updates
+
+    service_gmail = gmail_read_service()
+    if service_gmail is None:
+        return {"status": "not_authorised", "updated_rows": 0}
+    spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
+    if not spreadsheet_id:
+        raise RuntimeError("INTERNSHIP_SHEET_ID is required")
+    service = _service()
+    ensure_tabs(service, spreadsheet_id)
+    values = service.spreadsheets().values()
+    matrix = values.get(spreadsheetId=spreadsheet_id, range="'Outreach'!A1:ZZ").execute().get("values", [])
+    if not matrix or not matrix[0]:
+        return {"status": "ok", "updated_rows": 0}
+    headers = [str(header) for header in matrix[0]]
+    rows = _table(matrix)
+    updates = outcome_updates(rows, GmailSearch(service_gmail), today or date.today())
+    row_number = {str(row.get("id")): index + 2 for index, row in enumerate(rows)}
+    data = []
+    for row_id, change in updates.items():
+        for column, value in change.items():
+            if column in headers and row_id in row_number:
+                cell = f"'Outreach'!{_column_name(headers.index(column) + 1)}{row_number[row_id]}"
+                data.append({"range": cell, "values": [[value]]})
+    if data:
+        values.batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"valueInputOption": "RAW", "data": data}
+        ).execute()
+    return {"status": "ok", "updated_rows": len(updates), "updated_cells": len(data)}
 
 
 def publish_run(run: Record, spreadsheet_id: str | None = None) -> dict[str, int]:

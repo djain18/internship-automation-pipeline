@@ -89,6 +89,11 @@ pipeline_secrets = [
     # Firecrawl is scoped to the funded-company resolution path only
     # (resolve_company_url_via_search); internship research stays free.
     modal.Secret.from_name("firecrawl-key"),
+    # 2026-09-13: gmail.readonly token for the Sheet outcome sync
+    # (gmail_outcomes.py). Created empty; the sync is a no-op until Daksh runs
+    # `python personal_hunt/execution/mint_gmail_token.py --readonly` with the
+    # account he sends outreach from and the token is pasted in.
+    modal.Secret.from_name("internship-hunt-gmail-read"),
 ]
 
 
