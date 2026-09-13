@@ -418,6 +418,23 @@ def _cost_section(run: Record) -> str:
     usage = run.get("llm_usage", {}) or {}
     cache = run.get("cache_statistics", {}) or {}
     lines = ["## Run cost and source yield", ""]
+    outcomes = run.get("outcomes")
+    if outcomes:
+        replied_sources = [
+            f"{item.get('source')} ({item.get('replied', 0)})"
+            for item in run.get("source_yield", []) or []
+            if item.get("replied")
+        ]
+        lines.append(
+            f"- Outcomes to date (from the Sheet): applied {outcomes.get('applied', 0)}, "
+            f"replied {outcomes.get('replied', 0)}, interviewed {outcomes.get('interviewed', 0)}."
+            + (f" Replies came from: {', '.join(replied_sources)}." if replied_sources else "")
+        )
+    else:
+        lines.append(
+            "- Outcomes: not read this run. Record send_status/sent_at, reply_outcome and "
+            "interview_outcome in the Sheet's Outreach tab to track what works."
+        )
     lines.append(
         f"- LLM: {usage.get('calls', 0)} calls, {usage.get('cache_hits', 0)} cache hits, "
         f"{usage.get('total_tokens', 0)} tokens in {usage.get('elapsed_ms', 0)}ms. "
