@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fetch_sources import watchlist_source_id
 from models import Record
+from outreach import asks_for_no_ai
 
 
 def _section(title: str, records: list[Record]) -> str:
@@ -54,6 +55,9 @@ def _section(title: str, records: list[Record]) -> str:
         # printed one, so the digest's main section never gave Daksh anything
         # to act on beyond a link.
         outreach = item.get("outreach") or {}
+        no_ai = asks_for_no_ai(item)
+        if no_ai:
+            lines.extend([f'**The employer asks for no AI-written messages ("{no_ai}"). Write this one yourself.**', ""])
         if outreach.get("claude_prompt"):
             label = (
                 "Research-first prompt (paste into Claude Code)"
@@ -940,6 +944,11 @@ def render_html_digest(run: Record) -> str:
             if contact_email
             else '<div style="margin-top:6px;font-size:12px;color:#8b9294">No public contact found yet</div>'
         )
+        if asks_for_no_ai(item):
+            contact_html += (
+                '<div style="margin-top:6px;font-size:12px;font-weight:600;color:#9a3412">'
+                "Employer asks for no AI-written messages. Write this one yourself.</div>"
+            )
         has_prompt = bool((item.get("outreach") or {}).get("claude_prompt"))
         prompt_html = (
             f' · <a href="{html.escape(site_url, quote=True)}" style="color:#6366f1;text-decoration:none">Copy Claude Code prompt</a>'

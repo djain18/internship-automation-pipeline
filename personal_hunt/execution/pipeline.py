@@ -42,7 +42,7 @@ from artifacts import create_artifacts
 from build_prompt import build_prompts_for_companies
 from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
-from company_site import closed_listing_signal, fetch_office_evidence
+from company_site import closed_listing_signal, fetch_listing_text, fetch_office_evidence
 from firecrawl_research import resolve_company_url_via_search
 from contacts import attach_contact, choose_contact
 from dedupe import deduplicate
@@ -66,7 +66,7 @@ from problem_research import research_deep_problem, select_discovered_for_resear
 from watchlist_prompts import write_watchlist_prompts
 from research import research_funding_event, research_records
 from score import score_many, select_balanced
-from sheets import publish_run, read_outcomes
+from sheets import publish_run, read_outcomes, sync_outcomes_from_gmail
 from state import LocalState
 
 
@@ -104,14 +104,43 @@ def route_resume(record: Record) -> str:
     return "Daksh-Jain-Master"
 
 
+def attach_listing_pages(records: list[Record], max_fetches: int, reader: Any = None) -> None:
+    """Read the full job page behind each approved record's link.
+
+    Many approved records carry only a hiring post or a feed snippet; the
+    link they point to holds the real description. On 2026-09-13 the pages
+    behind four real matches said far more than any research pass had found:
+    Sarvam AI's revenue-ops scope, Ressl AI's "do not use AI to write it".
+    Free and robots-respecting, never LinkedIn; bounded per run. The text is
+    stored beside the description, never merged into it, so identity and
+    dedupe hashes are unchanged.
+    """
+    reader = reader or fetch_listing_text
+    fetched = 0
+    for item in records:
+        if fetched >= max_fetches or item.get("listing_page_text"):
+            continue
+        for url in dict.fromkeys(filter(None, [item.get("apply_url"), item.get("source_url")])):
+            text = reader(str(url))
+            fetched += 1
+            if clean_text(text):
+                item["listing_page_text"] = text[:8000]
+                item["listing_page_url"] = str(url)
+                break
+            if fetched >= max_fetches:
+                break
+
+
 def enrich_selected(
     records: list[Record],
     output_root: Path,
     max_artifacts: int,
     llm_cache: dict[str, Any] | None = None,
     hunter_ctx: dict[str, Any] | None = None,
+    scoring: dict[str, Any] | None = None,
 ) -> list[Record]:
     output = deepcopy(records)
+    attach_listing_pages(output, int((scoring or {}).get("max_listing_page_fetches_per_run", 12)))
     research_results = research_records(output, cache=llm_cache)
     for item, research in zip(output, research_results, strict=True):
         item["research"] = research
@@ -934,6 +963,8 @@ def run_pipeline(
         int(config["scoring"]["max_artifacts"]),
         llm_cache,
         hunter_ctx=hunter_ctx,
+        # Job pages are only read on live runs; fixtures never touch the network.
+        scoring=config["scoring"] if validate_links else {**config["scoring"], "max_listing_page_fetches_per_run": 0},
     )
     enriched_by_id = {item["id"]: item for item in enriched}
     primary = [enriched_by_id.get(item["id"], item) for item in primary]
@@ -1379,6 +1410,12 @@ def main() -> int:
         # Read before the digest is written, so today's email carries the
         # lifetime outcomes Daksh recorded in the Sheet. A failure only costs
         # the outcome line; it never blocks the run.
+        # Gmail first, so what Daksh sent or received since the last run is in
+        # the Sheet before outcomes are read back. Not authorised = no-op.
+        try:
+            run["gmail_outcome_sync"] = sync_outcomes_from_gmail(today=run_date)
+        except Exception as exc:
+            run["gmail_outcome_sync"] = {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         try:
             apply_outcomes(run, read_outcomes(today=run_date))
         except Exception as exc:

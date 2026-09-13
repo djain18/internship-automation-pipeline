@@ -230,7 +230,8 @@ def _observed_signal_for_prompt(record: Record) -> tuple[str, bool]:
         research.get("primary_responsibility")
     )
     if signal:
-        source_url = clean_text(record.get("source_url"))
+        # The quote may come from the job page behind the link, not the post.
+        source_url = clean_text(research.get("observation_url")) or clean_text(record.get("source_url"))
         return (_quote_with_source(signal, source_url), True)
     return ("", False)
 
@@ -280,7 +281,7 @@ def build_email_prompt(record: Record) -> str:
     solution_concept = clean_text(research.get("solution_concept")) or inference
 
     template = load_prompt_template("email_prompt.txt", _EMAIL_PROMPT_FALLBACK)
-    return _fill(
+    return with_listing_context(record, _fill(
         template,
         _EMAIL_PROMPT_FALLBACK,
         company_name=clean_text(record.get("company")) or "the company",
@@ -297,7 +298,7 @@ def build_email_prompt(record: Record) -> str:
         copy_rules="\n".join(EMAIL_COPY_RULES),
         forbidden_words=", ".join(FORBIDDEN_WORDS),
         forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
-    )
+    ))
 
 
 _RESEARCH_FIRST_PROMPT_FALLBACK = """# {company_name}: research first, then draft the outreach email
@@ -369,7 +370,7 @@ def build_research_first_prompt(record: Record) -> str:
     if contact.get("email") and contact.get("source_url"):
         contact_line += f" (published at {clean_text(contact.get('source_url'))})"
     template = load_prompt_template("research_first_prompt.txt", _RESEARCH_FIRST_PROMPT_FALLBACK)
-    return _fill(
+    return with_listing_context(record, _fill(
         template,
         _RESEARCH_FIRST_PROMPT_FALLBACK,
         company_name=clean_text(record.get("company")) or "the company",
@@ -382,7 +383,58 @@ def build_research_first_prompt(record: Record) -> str:
         copy_rules="\n".join(EMAIL_COPY_RULES),
         forbidden_words=", ".join(FORBIDDEN_WORDS),
         forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
-    )
+    ))
+
+
+# Phrases an employer uses to say applicants must not send AI-written
+# messages. Ressl AI's live GTM Intern page (2026-09-13): "I can not emphasise
+# enough how negatively we view usage of AI in any kind of comms content ...
+# do not use AI to write it".
+NO_AI_PHRASES = (
+    "do not use ai", "don't use ai", "dont use ai", "without using ai", "without ai",
+    "not written by ai", "no ai-generated", "no ai generated", "not ai-generated",
+    "usage of ai in any kind of comms", "negatively we view usage of ai",
+    "no chatgpt", "don't use chatgpt", "do not use chatgpt",
+)
+LISTING_CONTEXT_CHARS = 3500
+
+
+def asks_for_no_ai(record: Record) -> str:
+    """The exact no-AI phrase the listing uses, or ""."""
+    text = " ".join(
+        str(record.get(key) or "") for key in ("description", "listing_page_text")
+    ).replace("’", "'").casefold()
+    return next((phrase for phrase in NO_AI_PHRASES if phrase in text), "")
+
+
+def with_listing_context(record: Record, prompt: str) -> str:
+    """Prepend the employer's no-AI request when there is one, and append the
+    listing's own text so Claude Code works from what the employer actually
+    wrote, not from one sentence the pipeline picked."""
+    if not prompt:
+        return prompt
+    parts: list[str] = []
+    phrase = asks_for_no_ai(record)
+    if phrase:
+        parts.append(
+            "## Read first: this employer asked for no AI-written messages\n\n"
+            f'The listing says "{phrase}". Do NOT draft the email. Help me with research '
+            "notes only (what to mention, what to ask), and I will write the message "
+            "myself in my own words.\n"
+        )
+    parts.append(prompt.rstrip())
+    body = str(record.get("listing_page_text") or record.get("description") or "").strip()
+    if body:
+        url = clean_text(record.get("listing_page_url") or record.get("source_url")) or "not recorded"
+        clipped = body[:LISTING_CONTEXT_CHARS]
+        if len(body) > LISTING_CONTEXT_CHARS:
+            clipped = clipped.rsplit("\n", 1)[0] + "\n[... listing continues at the URL above]"
+        parts.append(
+            f"## The listing, verbatim (source: {url})\n\n"
+            "Quote only from this text or from sources you open yourself.\n\n"
+            f"{clipped}"
+        )
+    return "\n\n".join(parts) + "\n"
 
 
 def draft_problem_led_email(record: Record) -> Record:

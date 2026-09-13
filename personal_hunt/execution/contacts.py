@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from models import Record, canonical_url, clean_text
 
@@ -48,12 +49,15 @@ def listing_emails(record: Record) -> list[str]:
     contact_research_required. The post URL is the provenance -- this is a
     public professional channel the employer published itself, not a guess.
     """
-    text = str(record.get("description", ""))
+    # The job page behind the link counts as the listing too.
+    text = f"{record.get('description', '')} {record.get('listing_page_text', '')}"
     found: list[str] = []
     for match in _EMAIL_PATTERN.findall(text):
         email = match.strip(".,;:)'\"").casefold()
         lowered = email.casefold()
         if any(lowered.startswith(prefix) for prefix in LISTING_NOISE_PREFIXES):
+            continue
+        if lowered.rsplit("@", 1)[-1] in PLACEHOLDER_EMAIL_DOMAINS:
             continue
         if email not in found:
             found.append(email)
@@ -64,9 +68,37 @@ def _mailbox_kind(email: str) -> str:
     lowered = email.casefold().strip()
     if any(lowered.startswith(prefix) for prefix in EXCLUDED_PREFIXES):
         return "excluded"
-    if any(lowered.startswith(prefix) for prefix in ALLOWED_FALLBACK_PREFIXES):
+    # ROLE_MAILBOXES was defined and never consulted, so info@kplor.com came
+    # back "named" and ranked as a person (live comparison, 2026-09-13).
+    if any(lowered.startswith(prefix) for prefix in (*ALLOWED_FALLBACK_PREFIXES, *ROLE_MAILBOXES)):
         return "generic_fallback"
     return "named"
+
+
+# Documentation and template pages print these as examples.
+PLACEHOLDER_EMAIL_DOMAINS = {
+    "example.com", "example.org", "company.com", "domain.com", "email.com",
+    "yourcompany.com", "yourdomain.com", "test.com", "sentry.io",
+}
+
+
+def _registrable_domain(host: str) -> str:
+    labels = host.casefold().removeprefix("www.").split(".")
+    keep = 3 if len(labels) >= 3 and labels[-2] in {"co", "com", "org", "net", "ac"} else 2
+    return ".".join(labels[-keep:])
+
+
+def _belongs_to_site(email: str, company_url: str) -> bool:
+    """A site-scraped address counts only on the company's own domain.
+
+    The deep-research comparison resolved SuprSend to docs.suprsend.com and
+    took dev@company.com -- an example in their API docs -- as the contact.
+    """
+    domain = email.rsplit("@", 1)[-1].casefold()
+    host = urlsplit(canonical_url(company_url)).netloc
+    if host:
+        return _registrable_domain(domain) == _registrable_domain(host)
+    return domain not in PLACEHOLDER_EMAIL_DOMAINS
 
 
 def _published_source_url(record: Record, kind: str, source_url: str) -> str:
@@ -96,6 +128,7 @@ def _site_email(record: Record) -> tuple[str, str]:
             *(research.get("published_emails") or []),
             *(deep_research.get("published_emails") or []),
         ]
+        if _belongs_to_site(clean_text(item), str(record.get("company_url") or ""))
     ]
     listing = listing_emails(record)
     if not published and not listing:

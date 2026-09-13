@@ -10,6 +10,15 @@ from company_site import fetch_site_evidence, primary_responsibility
 from models import Record, canonical_url, clean_text, fold_text, grounded_in, llm_cache_key
 
 
+def listing_text(record: Record) -> str:
+    """The post or feed description plus the full job page behind its link,
+    when one was read. What the research model reads and what its quotes are
+    checked against."""
+    return " ".join(
+        filter(None, [str(record.get("description", "")), str(record.get("listing_page_text", ""))])
+    )
+
+
 def evidence_ledger(record: Record) -> list[Record]:
     ledger: list[Record] = []
     if record.get("source_url"):
@@ -78,6 +87,11 @@ def deterministic_research(record: Record) -> Record:
     # solution built on the listing's own sentence is grounded; the lane-keyed
     # strings this replaced were the same three lines on every record.
     responsibility = primary_responsibility(record.get("description", ""))
+    observation_url = clean_text(record.get("source_url"))
+    if not responsibility and record.get("listing_page_text"):
+        # The post named no work, but the job page it links to may.
+        responsibility = primary_responsibility(record.get("listing_page_text", ""))
+        observation_url = clean_text(record.get("listing_page_url")) or observation_url
     if responsibility:
         observation = f'The listing states: "{responsibility}"'
         solution = (
@@ -106,6 +120,7 @@ def deterministic_research(record: Record) -> Record:
         "evidence": ledger,
         "evidence_confidence": "high" if len(ledger) >= 2 else "medium" if ledger else "low",
         "observed_problem_signal": observation,
+        "observation_url": observation_url if observation else "",
         "inference": inference,
         "inference_basis": "quoted_responsibility" if responsibility else "none",
         "why_it_matters": (
@@ -165,7 +180,7 @@ def merge_llm_research(base: Record, row: dict[str, Any], record: Record) -> Rec
     source = fold_text(
         " ".join(
             [
-                str(record.get("description", "")),
+                listing_text(record),
                 *(
                     str(item.get("observation", ""))
                     for item in base.get("evidence") or []
@@ -340,7 +355,7 @@ def research_record(
                 "company": record.get("company"),
                 "title": record.get("title"),
                 "lane": record.get("lane"),
-                "description": str(record.get("description", ""))[:12000],
+                "description": listing_text(record)[:12000],
                 "evidence": base["evidence"],
             },
         }
@@ -391,7 +406,7 @@ def research_records(
             "company": record.get("company"),
             "title": record.get("title"),
             "lane": record.get("lane"),
-            "description": str(record.get("description", ""))[:12000],
+            "description": listing_text(record)[:12000],
             "evidence": bases[record["id"]].get("evidence", []),
         }
         for record in sorted(records, key=lambda item: str(item["id"]))
