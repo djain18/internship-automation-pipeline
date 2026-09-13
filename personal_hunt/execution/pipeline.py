@@ -66,7 +66,7 @@ from problem_research import research_deep_problem, select_discovered_for_resear
 from watchlist_prompts import write_watchlist_prompts
 from research import research_funding_event, research_records
 from score import score_many, select_balanced
-from sheets import publish_run
+from sheets import publish_run, read_outcomes
 from state import LocalState
 
 
@@ -508,6 +508,20 @@ def select_weekly_targets(
         reverse=True,
     )
     return candidates[: int(scoring.get("weekly_target_max_items", 3))]
+
+
+def apply_outcomes(run: Record, summary: Record) -> Record:
+    """Write lifetime Sheet outcomes onto the run: a total, and each source's
+    manually_applied/replied/interviewed in source_yield (lifetime, not today)."""
+    run["outcomes"] = {key: int(summary.get(key, 0) or 0) for key in ("applied", "replied", "interviewed")}
+    run["outcomes_status"] = "ok"
+    by_source = summary.get("by_source") or {}
+    for bucket in run.get("source_yield", []) or []:
+        counts = by_source.get(bucket.get("source"), {})
+        bucket["manually_applied"] = int(counts.get("applied", 0))
+        bucket["replied"] = int(counts.get("replied", 0))
+        bucket["interviewed"] = int(counts.get("interviewed", 0))
+    return run
 
 
 def _empty_yield_bucket(source: str) -> Record:
@@ -1334,6 +1348,14 @@ def main() -> int:
         deliveries={} if args.no_state or args.dry_run else state.digest_deliveries(),
         scoring=config["scoring"],
     )
+    if args.publish_sheets and not args.dry_run:
+        # Read before the digest is written, so today's email carries the
+        # lifetime outcomes Daksh recorded in the Sheet. A failure only costs
+        # the outcome line; it never blocks the run.
+        try:
+            apply_outcomes(run, read_outcomes())
+        except Exception as exc:
+            run["outcomes_status"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
     output_root.mkdir(parents=True, exist_ok=True)
     json_path = output_root / f"{run['run_id']}.json"
     digest_path = output_root / f"{run['run_id']}-digest.md"

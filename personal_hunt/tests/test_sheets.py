@@ -87,3 +87,35 @@ def test_sheet_validator_rejects_missing_or_duplicate_required_headers() -> None
     assert not result["valid"]
     assert result["missing_headers"] == ["status"]
     assert result["duplicate_headers"] == ["company"]
+
+
+def test_outcomes_are_summarised_per_source_from_human_columns() -> None:
+    from sheets import summarize_outcomes
+
+    opportunities = [
+        {"id": "opp-1", "source": "linkedin_posts_apify"},
+        {"id": "opp-2", "source": "yc_bengaluru"},
+        {"id": "opp-3", "source": "yc_bengaluru"},
+    ]
+    outreach = [
+        {"opportunity_id": "opp-1", "send_status": "sent_manually", "reply_outcome": "positive", "interview_outcome": "scheduled"},
+        {"opportunity_id": "opp-2", "send_status": "draft_needs_human_review", "sent_at": "2026-09-14", "reply_outcome": "no_reply"},
+        {"opportunity_id": "opp-3", "send_status": "draft_needs_human_review"},
+    ]
+    summary = summarize_outcomes(outreach, opportunities)
+    assert (summary["applied"], summary["replied"], summary["interviewed"]) == (2, 1, 1)
+    assert summary["by_source"]["linkedin_posts_apify"] == {"applied": 1, "replied": 1, "interviewed": 1}
+    assert summary["by_source"]["yc_bengaluru"] == {"applied": 1, "replied": 0, "interviewed": 0}
+
+
+def test_apply_outcomes_fills_source_yield_and_digest_line() -> None:
+    from digest import _cost_section
+    from pipeline import apply_outcomes
+
+    run = {"source_yield": [{"source": "yc_bengaluru", "manually_applied": 0, "replied": 0, "interviewed": 0}]}
+    apply_outcomes(run, {"applied": 3, "replied": 1, "interviewed": 0, "by_source": {"yc_bengaluru": {"applied": 3, "replied": 1, "interviewed": 0}}})
+    assert run["source_yield"][0]["replied"] == 1
+    assert run["outcomes"] == {"applied": 3, "replied": 1, "interviewed": 0}
+    line = _cost_section(run)
+    assert "applied 3, replied 1, interviewed 0" in line
+    assert "Replies came from: yc_bengaluru (1)" in line

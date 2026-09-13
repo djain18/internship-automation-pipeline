@@ -344,6 +344,67 @@ def rows_from_run(run: Record) -> dict[str, list[Record]]:
     }
 
 
+APPLIED_SEND_STATUSES = {"applied", "sent", "sent_manually"}
+NO_OUTCOME_VALUES = {"", "none", "no_reply", "no_interview", "pending"}
+
+
+def _table(matrix: list[list[Any]]) -> list[Record]:
+    if not matrix or not matrix[0]:
+        return []
+    headers = [str(header) for header in matrix[0]]
+    return [dict(zip(headers, row)) for row in matrix[1:]]
+
+
+def summarize_outcomes(outreach_rows: list[Record], opportunity_rows: list[Record]) -> Record:
+    """Lifetime application outcomes from the human-owned Outreach columns.
+
+    source_yield has always carried manually_applied/replied/interviewed, and
+    nothing ever filled them: build_source_yield read those fields off the
+    day's scraped records, which never have them -- they only exist in the
+    Sheet, where Daksh records what happened. Without them there is no way to
+    learn which sources or which kinds of outreach actually produce replies.
+    A row counts as applied when its send_status says so or it has a sent_at.
+    """
+    source_by_id = {
+        str(row.get("id")): str(row.get("source") or "unknown") for row in opportunity_rows
+    }
+    totals = {"applied": 0, "replied": 0, "interviewed": 0}
+    by_source: dict[str, Record] = {}
+    for row in outreach_rows:
+        status = str(row.get("send_status") or "").strip().casefold()
+        reply = str(row.get("reply_outcome") or "").strip().casefold()
+        interview = str(row.get("interview_outcome") or "").strip().casefold()
+        counts = {
+            "applied": int(status in APPLIED_SEND_STATUSES or bool(str(row.get("sent_at") or "").strip())),
+            "replied": int(reply not in NO_OUTCOME_VALUES),
+            "interviewed": int(interview not in NO_OUTCOME_VALUES),
+        }
+        if not any(counts.values()):
+            continue
+        source = source_by_id.get(str(row.get("opportunity_id")), "unknown")
+        bucket = by_source.setdefault(source, {"applied": 0, "replied": 0, "interviewed": 0})
+        for key, value in counts.items():
+            totals[key] += value
+            bucket[key] += value
+    return {**totals, "by_source": by_source}
+
+
+def read_outcomes(spreadsheet_id: str | None = None) -> Record:
+    """Read the Outreach and Opportunities tabs and summarise outcomes.
+    Read-only, with the credential publish_run already uses."""
+    spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
+    if not spreadsheet_id:
+        raise RuntimeError("INTERNSHIP_SHEET_ID is required")
+    values = _service().spreadsheets().values()
+
+    def read(tab: str) -> list[Record]:
+        return _table(
+            values.get(spreadsheetId=spreadsheet_id, range=f"'{tab}'!A1:ZZ").execute().get("values", [])
+        )
+
+    return summarize_outcomes(read("Outreach"), read("Opportunities"))
+
+
 def publish_run(run: Record, spreadsheet_id: str | None = None) -> dict[str, int]:
     spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
     if not spreadsheet_id:
