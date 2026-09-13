@@ -583,6 +583,41 @@ def _worth_a_look_section(run: Record) -> str:
     return "\n".join(lines)
 
 
+def _followup_text(item: Record) -> str:
+    if int(item.get("day", 0)) >= 14:
+        return (
+            "close the loop: one short line saying you will stop here, and that you are "
+            "still happy to help if the timing changes"
+        )
+    return (
+        "send only if you have something new and cited (a launch, a post, a result); "
+        "otherwise skip this one"
+    )
+
+
+def _followups_section(run: Record) -> str:
+    """Follow-ups due today, from sent_at dates Daksh recorded in the Sheet.
+
+    outreach._followups has drafted day 3/8/14 follow-ups on every record since
+    the start and none of them ever reached Daksh -- nothing knew when he had
+    actually sent anything. Most replies to cold outreach come after the first
+    message, so an unsurfaced follow-up is a reply that never happens.
+    """
+    due = run.get("followups_due") or []
+    if not due and not run.get("outcomes"):
+        return ""
+    lines = ["## Follow-ups due today", ""]
+    if not due:
+        return "\n".join(lines + ["None due. Record sent_at in the Sheet's Outreach tab when you send.", ""])
+    for item in due:
+        lines.append(
+            f"- **{item.get('company')}** (day {item.get('day')}, sent {item.get('days_since_sent')} days ago"
+            + (f", {item.get('contact_email')}" if item.get("contact_email") else "")
+            + f"): {_followup_text(item)}."
+        )
+    return "\n".join(lines + [""])
+
+
 def _send_queue_section(run: Record) -> str:
     queue = run.get("send_queue", []) or []
     stale = run.get("stale_queue", []) or []
@@ -682,6 +717,7 @@ def render_digest(run: Record) -> str:
             _spotted_section(run.get("spotted_leads", [])),
             _glance_section(run.get("glance_queue", [])),
             _send_queue_section(run),
+            _followups_section(run),
             _weekly_target_section(run.get("weekly_targets", [])),
             _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),
             _funding_section(
@@ -1011,6 +1047,30 @@ def render_html_digest(run: Record) -> str:
           <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(queue_items)}</ul>
         </div>"""
 
+    followup_items = [
+        f'<li style="margin:0 0 10px"><strong>{html.escape(str(item.get("company") or ""))}</strong>'
+        f'<div style="margin-top:3px;color:#6b7375">Day {int(item.get("day", 0))} &middot; sent {int(item.get("days_since_sent", 0))} days ago'
+        + (f' &middot; {html.escape(str(item.get("contact_email")))}' if item.get("contact_email") else "")
+        + f'</div><div style="margin-top:3px;color:#8b9294">{html.escape(_followup_text(item))}</div></li>'
+        for item in run.get("followups_due") or []
+    ]
+    followups_block = (
+        f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#f5f3ff">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Follow-ups due today</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(followup_items)}</ul>
+        </div>"""
+        if followup_items
+        else ""
+    )
+    outcomes = run.get("outcomes") or {}
+    outcomes_line = (
+        f'<div style="margin-top:10px;font-size:12px;color:#6b7375">To date: applied {int(outcomes.get("applied", 0))} '
+        f'&middot; replied {int(outcomes.get("replied", 0))} &middot; interviewed {int(outcomes.get("interviewed", 0))}</div>'
+        if outcomes
+        else ""
+    )
+
     discovered = run.get("discovered_for_research", [])
     watchlist_html = _watchlist_movement_html(run)
     problem_briefs_html = _problem_briefs_html(discovered, site_url)
@@ -1079,6 +1139,7 @@ def render_html_digest(run: Record) -> str:
       {matches_html}
       {worth_a_look_block}
       {queue_block}
+      {followups_block}
       {spotted_block}
       {unverified_block}
       {problem_briefs_html}
@@ -1087,6 +1148,7 @@ def render_html_digest(run: Record) -> str:
       {signal_block}
       <div style="padding:22px 28px;border-top:1px solid #e5e7eb">
         <a href="{html.escape(site_url, quote=True)}" style="display:inline-block;border-radius:999px;background:#2a2e33;color:#fff;padding:11px 18px;font-size:14px;font-weight:600;text-decoration:none">Open my hunt</a>
+        {outcomes_line}
         <div style="margin-top:14px;font-size:12px;line-height:18px;color:#8b9294">Research leads only. Verify every source and send applications or outreach manually.</div>
       </div>
     </div>

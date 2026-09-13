@@ -119,3 +119,35 @@ def test_apply_outcomes_fills_source_yield_and_digest_line() -> None:
     line = _cost_section(run)
     assert "applied 3, replied 1, interviewed 0" in line
     assert "Replies came from: yc_bengaluru (1)" in line
+
+
+def test_followups_due_on_day_3_8_14_only_for_unanswered_sends() -> None:
+    from datetime import date
+
+    from sheets import summarize_outcomes
+
+    today = date(2026, 9, 20)
+    rows = [
+        {"opportunity_id": "a", "company": "Kplor", "sent_at": "2026-09-17"},                 # day 3
+        {"opportunity_id": "b", "company": "SuprSend", "sent_at": "2026-09-12T10:00:00"},     # day 8
+        {"opportunity_id": "c", "company": "Sarvam AI", "sent_at": "2026-09-05"},             # day 15 -> 14 window
+        {"opportunity_id": "d", "company": "Replied Co", "sent_at": "2026-09-17", "reply_outcome": "positive"},
+        {"opportunity_id": "e", "company": "Too Soon", "sent_at": "2026-09-19"},
+        {"opportunity_id": "f", "company": "Bad Date", "sent_at": "next week"},
+    ]
+    due = summarize_outcomes(rows, [], today)["followups_due"]
+    assert [(item["company"], item["day"]) for item in due] == [("Kplor", 3), ("SuprSend", 8), ("Sarvam AI", 14)]
+
+
+def test_followups_render_in_both_digests() -> None:
+    from digest import render_html_digest, _followups_section
+
+    run = {
+        "run_date": "2026-09-20", "digest_primary": [], "digest_remote_fallback": [], "primary": [],
+        "remote_fallback": [], "source_health": [], "outcomes": {"applied": 2, "replied": 0, "interviewed": 0},
+        "followups_due": [{"company": "Kplor", "day": 14, "days_since_sent": 14, "contact_email": "a@kplor.com"}],
+    }
+    assert "close the loop" in _followups_section(run)
+    html_body = render_html_digest(run)
+    assert "Follow-ups due today" in html_body
+    assert "To date: applied 2" in html_body
