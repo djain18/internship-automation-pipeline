@@ -24,6 +24,41 @@ EXCLUDED_PREFIXES = (
     "no-reply@", "privacy@", "legal@", "security@", "billing@",
 )
 
+# Prefixes that are never a hiring channel even when a listing prints them.
+# Deliberately shorter than EXCLUDED_PREFIXES: that list exists for addresses
+# scraped off a company site, where admin@/hr@/info@ is a webmaster or a
+# billing queue. A hiring post that writes "send your resume to admin@..." is
+# naming its application channel, and dropping it there threw away the real
+# contact (Auraaison's Founder's Office Intern post, 2026-09-12).
+LISTING_NOISE_PREFIXES = (
+    "noreply@", "no-reply@", "donotreply@", "privacy@", "legal@",
+    "security@", "billing@", "press@", "media@", "pr@", "abuse@",
+)
+
+_EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+
+
+def listing_emails(record: Record) -> list[str]:
+    """Addresses the listing itself published, in the order it published them.
+
+    26% of the LinkedIn hiring posts this pipeline already pays for print an
+    application address in the post body (admin@auraaison.com,
+    careers@ethereallabs.in, hr@anumak.com). Nothing read them, so records
+    that shipped a usable contact still reached Daksh as
+    contact_research_required. The post URL is the provenance -- this is a
+    public professional channel the employer published itself, not a guess.
+    """
+    text = str(record.get("description", ""))
+    found: list[str] = []
+    for match in _EMAIL_PATTERN.findall(text):
+        email = match.strip(".,;:)'\"").casefold()
+        lowered = email.casefold()
+        if any(lowered.startswith(prefix) for prefix in LISTING_NOISE_PREFIXES):
+            continue
+        if email not in found:
+            found.append(email)
+    return found
+
 
 def _mailbox_kind(email: str) -> str:
     lowered = email.casefold().strip()
@@ -34,8 +69,17 @@ def _mailbox_kind(email: str) -> str:
     return "named"
 
 
+def _published_source_url(record: Record, kind: str, source_url: str) -> str:
+    """Where a published address was actually read. A listing-sourced address
+    is cited to the listing, not to a company page that may never have been
+    fetched."""
+    if kind.startswith("listing_"):
+        return canonical_url(record.get("source_url")) or source_url
+    return canonical_url(record.get("company_url")) or source_url
+
+
 def _site_email(record: Record) -> tuple[str, str]:
-    """The best address published on the company's own site, if any.
+    """The best published address for this record, if any.
 
     Returns (email, kind). A personal-looking address beats a shared mailbox,
     because a shared mailbox rarely reaches the person who decides. Reads
@@ -53,15 +97,21 @@ def _site_email(record: Record) -> tuple[str, str]:
             *(deep_research.get("published_emails") or []),
         ]
     ]
-    if not published:
+    listing = listing_emails(record)
+    if not published and not listing:
         return "", ""
-    direct = [
-        item
-        for item in published
-        if _mailbox_kind(item) == "named"
-    ]
+    # A named person on the company's own site is the strongest published
+    # address. Below that, the address the listing names for THIS role beats a
+    # generic mailbox scraped off a site footer, because the listing's address
+    # is the channel the employer asked applicants to use.
+    direct = [item for item in published if _mailbox_kind(item) == "named"]
     if direct:
         return direct[0], "site_published_direct"
+    listing_named = [item for item in listing if _mailbox_kind(item) == "named"]
+    if listing_named:
+        return listing_named[0], "listing_published_direct"
+    if listing:
+        return listing[0], "listing_published_role_mailbox"
     fallback = [item for item in published if _mailbox_kind(item) == "generic_fallback"]
     if fallback:
         return fallback[0], "site_published_role_mailbox"
@@ -177,10 +227,10 @@ def choose_contact(record: Record) -> Record:
     linkedin = _extract_provenanced_linkedin(record)
     source_url = canonical_url(raw.get("source_url") or record.get("source_url"))
     access_date = record.get("discovered_at") or record.get("access_date")
+    site_email, kind = _site_email(record)
     if not any((raw.get("name"), email, linkedin)):
         # Nothing came with the record. Fall back to what the company itself
-        # published on a page this pipeline actually fetched and can cite.
-        site_email, kind = _site_email(record)
+        # published -- on a page this pipeline fetched, or in the listing text.
         if not site_email:
             return {
                 "status": "contact_research_required",
@@ -193,21 +243,23 @@ def choose_contact(record: Record) -> Record:
             "role": "published company address",
             "email": site_email,
             "linkedin": "",
-            "source_url": canonical_url(record.get("company_url")) or source_url,
+            "source_url": _published_source_url(record, kind, source_url),
             "access_date": access_date,
             "verification_status": "published_by_source",
             "basis": kind,
             # Published by the company, but not confirmed as the right person.
             "confidence": "medium",
             "contact_priority": (
-                "preferred_named" if kind == "site_published_direct" else "fallback_generic"
+                "preferred_named"
+                if kind in {"site_published_direct", "listing_published_direct"}
+                else "fallback_generic"
             ),
         }
     status = clean_text(raw.get("verification_status") or "unverified").casefold()
     mailbox_kind = _mailbox_kind(email) if email else "named"
     if mailbox_kind == "excluded":
         email = ""
-        if not any((raw.get("name"), linkedin)):
+        if not any((raw.get("name"), linkedin, site_email)):
             return {
                 "status": "contact_research_required",
                 "confidence": "low",
@@ -217,7 +269,19 @@ def choose_contact(record: Record) -> Record:
     if mailbox_kind == "generic_fallback" and status not in TRUSTED_STATUSES:
         email = ""
         mailbox_kind = "unverified_generic"
+    basis = "record_contact"
     confidence = "high" if status in TRUSTED_STATUSES else "low"
+    # A record carrying a name or a LinkedIn URL but no usable email used to
+    # skip the published-address lookup entirely, because that lookup lived
+    # inside the "nothing came with the record" branch. The listing's own
+    # application address is exactly what such a record is missing. Confidence
+    # stays medium, matching the other published-address branch: the employer
+    # published it, but nobody confirmed it reaches the right person.
+    if not email and site_email:
+        email = site_email
+        basis = kind
+        mailbox_kind = _mailbox_kind(site_email)
+        confidence = "medium"
     role_str = clean_text(raw.get("role") or "hiring contact")
     role_score = _role_priority(role_str)
 
@@ -241,8 +305,10 @@ def choose_contact(record: Record) -> Record:
         "linkedin": linkedin,
         "source_url": source_url,
         "access_date": access_date,
-        "verification_status": status,
-        "basis": "record_contact",
+        "verification_status": (
+            "published_by_source" if basis != "record_contact" else status
+        ),
+        "basis": basis,
         "confidence": confidence,
         "contact_priority": priority,
     }
