@@ -121,6 +121,27 @@ def test_resume_routing_prioritizes_role_family() -> None:
     ) == "Daksh-Jain-gtm"
 
 
+def test_resume_routing_reads_the_title_not_the_description() -> None:
+    """Real misroutes: the description's "high-growth" used to send a
+    strategy role to the GTM resume, and a bare "ai" substring matched
+    "retail"."""
+    assert route_resume(
+        {
+            "title": "Strategy and Operations Intern",
+            "description": "Join one of India's fastest high-growth AI labs.",
+            "lane": "ai",
+        }
+    ) == "Daksh-Jain-founders_office"
+    assert route_resume(
+        {"title": "Retail Operations Intern", "description": "growth growth growth", "lane": ""}
+    ) == "Daksh-Jain-ops"
+    assert route_resume(
+        {"title": "AI Growth Intern", "description": "", "lane": "ai"}
+    ) == "Daksh-Jain-gtm"
+    assert route_resume({"title": "Intern", "description": "growth", "lane": ""}) == "Daksh-Jain-Master"
+    assert route_resume({"title": "Business Intern", "description": "", "lane": "consumer"}) == "Daksh-Jain-ops"
+
+
 def test_self_digest_is_sent_once_per_live_run(monkeypatch, tmp_path: Path) -> None:
     state = LocalState(tmp_path / "state.json")
     sent_subjects: list[str] = []
