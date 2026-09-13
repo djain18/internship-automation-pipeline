@@ -421,6 +421,9 @@ def _watchlist_to_companies(watchlist_config: dict[str, Any]) -> list[Record]:
                 "lane": clean_text(company_cfg.get("lane", "unknown")),
                 "funding_event_id": company_id,
                 "source": "watchlist",
+                # Lets the digest tell "no public board exists" apart from
+                # "a board exists but was not fetched this run".
+                "board_url": clean_text(company_cfg.get("board_url", "")),
             }
         )
     return output
