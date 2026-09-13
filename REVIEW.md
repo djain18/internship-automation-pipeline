@@ -667,3 +667,74 @@ output inspected by eye twice -- once to confirm the doubled-quote bug, once aft
 - Sheets publish, Gmail self-digest, and the funded-company end-to-end chain were not re-verified
   live in this session; those paths are exercised by the existing test suite and the 2026-09-13
   (continued, above) entry's live run, not by anything new here.
+
+## 2026-09-13 (continued) — Pipeline reviewed from Daksh's side; ten ranked fixes
+
+Reviewed the whole flow as Daksh would live it: the email, `/my-hunt`, the prompts, the resume
+choice. Diagnosis came from the stored run artifacts, not assumption. The headline: discovery
+finds real, on-target roles (Kplor, SuprSend, Sarvam AI, Ressl AI on `run_21ae706418041f9a`),
+but most paid leads died before approval, and the ones that got through reached Daksh with no
+contact, no prompt, and sometimes the wrong resume.
+
+Ranked by how much each raises the number of leads reaching Daksh and his odds of converting one.
+
+**Most important**
+1. `c95c1c5` LinkedIn extraction required employer, title and location in one 300-character
+   quote. Real posts name the employer in line one and the role ~880 characters later
+   (Auraaison). Five consecutive live runs resolved 16/28/31/27/33 of ~100 paid posts. Each
+   field is now grounded against the whole post; an empty company no longer counts as resolved.
+2. `19b4e2b` 26% of qualified hiring posts print an application address in the body, and
+   nothing read it. `contacts.listing_emails()` now does, cited to the listing URL. Records with
+   a name or LinkedIn profile but no email also get the lookup now. 2 → 4 of 13 digested
+   records have an email.
+3. `6d3ce45` Every "problem" was a template ("The breadth of {role} may create a need..."), the
+   observation fallback restated that a job was posted, and Kimi's research merge could overwrite
+   a real quote with a paraphrase. The verb matcher now finds a quotable work sentence in 8/13
+   digested records (was 3/13); an observation from Kimi survives only if its quote is verbatim.
+   Records with no observation get a research-first Claude Code prompt instead of nothing. The
+   LinkedIn notes stopped claiming a brief or a prototype that did not exist. Prompts and
+   contacts now render in the markdown digest, the HTML email and `/my-hunt`. `/my-hunt` had been
+   reading `outreach.subject`/`email_body`, which no draft emits, so it said "No validated email
+   draft" on every match. Replay of `run_21ae7064`: 4 blocked → 0 blocked, 1 grounded prompt,
+   3 research-first.
+4. `3812101` The resume was chosen from the description ("high-growth" → GTM resume on 471 of
+   1,458 records). It is now chosen from the title only. Sarvam AI "Strategy and Operations
+   Intern" moves from GTM to Founder's Office.
+
+**Less important**
+5. `ced22d0` The HTML email now explains a zero-match day instead of rendering an empty table.
+   It also shows failed sources, staleness and spotted leads, with actionable sections first.
+6. `f9c5a2b` The watchlist line says "N open roles, M fit your filters", "board not fetched
+   this run", or "no public job board -- watch the founders' posts". It no longer prints "no
+   board configured" for boards that are fetched live.
+7. `cd610e5` `/api/personal/latest` no longer 503s when the Kimi gate fails. The page shows a
+   banner and keeps funding, verification and source health visible.
+
+**Least important**
+8. `90ccb70` `manually_applied`/`replied`/`interviewed` were 0 on every run because nothing
+   read the Sheet's human-owned Outreach columns. Publish runs now read them (read-only, same
+   credential) and the digest prints lifetime outcomes and which sources got replies.
+9. `e264955` Day 3/8/14 follow-ups, drafted since the start and never shown, now appear as
+   "Follow-ups due today", from the Sheet's `sent_at`.
+10. `16f6f5c` Send-queue roles whose page says "position filled" / "no longer accepting" (200
+    status, so the HEAD link check misses them) move to "Probably closed". Live runs only, at
+    most quota+3 GETs, robots-respecting, never LinkedIn. `execution/hunt_core` was left
+    unedited because it is shared with public Rise.
+
+**Verified:** personal_hunt suite passes throughout (tests added for every change; seven
+existing expectations updated where the contract changed on purpose), Ruff clean, rise-web
+`npm test` 4/4 and `vite build` succeed, fixture pipeline run after each commit. The live GET
+for #10 against the real Ressl AI YC listing returned no closed signal.
+
+**Skipped or unverified:**
+- **Nothing pushed or redeployed.** Ten commits on local `main`. No live cloud run exercises
+  any of this yet. After deploy, read the first run's `linkedin_posts_apify_extraction` row
+  to confirm resolved/attempted rises above ~0.3.
+- **Live Sheet read for #8/#9 not run.** `INTERNSHIP_SHEET_ID` is only in the Modal secret.
+- **#10 positive path is unit-tested only.** No known-closed listing was available to test.
+- **Per-record deep research for internships was not enabled.** It would push Firecrawl past
+  its 1,000/month free plan, which funded companies already use. That needs Daksh's decision on
+  a paid tier. The research-first prompt covers the gap with his own Claude Code session.
+- **rise-web deploy (Vercel) not triggered.** The `/my-hunt` fixes ship only when it deploys.
+- Windows note: `npx` breaks on the `&` in this repo's path. Run
+  `node node_modules/vite/bin/vite.js build` instead.
