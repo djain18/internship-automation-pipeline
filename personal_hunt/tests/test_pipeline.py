@@ -1155,3 +1155,36 @@ def test_deep_research_published_emails_reach_the_selected_contact(
     )
     assert resolvable["selected_contact"]["email"] == "founders@resolvable.example"
     assert resolvable["selected_contact"]["basis"] == "site_published_role_mailbox"
+
+
+def test_closed_listing_leaves_the_queue_and_the_next_entry_takes_its_slot() -> None:
+    from pipeline import attach_send_loop
+
+    run = _queue_run()
+    seen: list[str] = []
+
+    def closed_check(url: str) -> str:
+        seen.append(url)
+        return "this position has been filled" if url.startswith("https://b.") else ""
+
+    attach_send_loop(
+        run, run_date=date(2026, 9, 11), first_seen={}, sent_ids={"a"},
+        deliveries={}, scoring={"daily_send_quota": 2, "stale_after_days": 3},
+        closed_check=closed_check,
+    )
+    assert [entry["id"] for entry in run["send_queue"]] == ["c", "d"]
+    assert [(entry["id"], entry["closed_signal"]) for entry in run["closed_queue"]] == [
+        ("b", "this position has been filled")
+    ]
+    assert len(seen) == 3
+
+
+def test_closed_listing_signal_never_opens_linkedin(monkeypatch) -> None:
+    import company_site
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("LinkedIn must never be fetched")
+
+    monkeypatch.setattr(company_site.requests.Session, "get", fail)
+    assert company_site.closed_listing_signal("https://www.linkedin.com/jobs/view/1") == ""
+    assert company_site.closed_listing_signal("https://lnkd.in/abc") == ""
