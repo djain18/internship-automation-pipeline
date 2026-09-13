@@ -6,9 +6,11 @@ def test_outreach_is_short_human_and_never_send_ready() -> None:
         "company": "Nebula AI",
         "title": "Founder Office Intern",  # Use plain ascii
         "location": "Bengaluru",
+        "source_url": "https://example.com/job",
         "selected_contact": {"name": "Aarav"},
         "research": {
             "solution_concept": "an evidence-led workflow audit with a human approval gate.",
+            "observed_problem_signal": "The listing asks for cross-functional ownership.",
             "uncertainty": "the internal workflow has not been confirmed.",
         },
         "artifact_status": "generated_unverified",
@@ -19,12 +21,17 @@ def test_outreach_is_short_human_and_never_send_ready() -> None:
     assert validate_outreach(draft) == []
     assert draft["send_status"] == "draft_needs_human_review"
     assert not draft["artifact_mention_allowed"]
+    # No more pre-written email body -- a paste-ready Claude Code prompt
+    # takes its place. Daksh drafts the real email himself with /humanizer.
+    assert "claude_prompt" in draft
+    assert "Nebula AI" in draft["claude_prompt"]
+    assert "/humanizer" in draft["claude_prompt"]
     assert [item["day"] for item in draft["followups"]] == [3, 8, 14]
     assert draft["followups"][0]["status"] == "suppressed_no_new_cited_value"
     assert draft["followups"][1]["status"] == "suppressed_no_new_cited_value"
 
 
-def test_artifact_is_mentioned_only_when_real_and_human_approved() -> None:
+def test_artifact_mention_allowed_requires_human_approval() -> None:
     base = {
         "company": "Nebula AI", "title": "Operations Intern", "location": "Bengaluru",
         "research": {"solution_concept": "an operations workflow audit."},
@@ -33,9 +40,7 @@ def test_artifact_is_mentioned_only_when_real_and_human_approved() -> None:
     blocked = draft_outreach(base)
     approved = draft_outreach({**base, "artifact_human_approved": True})
     assert not blocked["artifact_mention_allowed"]
-    assert "artifacts/audit.md" not in blocked["email_body"]
     assert approved["artifact_mention_allowed"]
-    assert "artifacts/audit.md" in approved["email_body"]
 
 
 def test_strategy_and_followups_are_evidence_derived() -> None:
@@ -58,10 +63,12 @@ def test_strategy_and_followups_are_evidence_derived() -> None:
 
 
 def test_validator_blocks_fake_marketing_phrase() -> None:
+    """Tone checks still run on whatever Daksh's own prose remains --
+    the LinkedIn note/message -- now that the email body is gone."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "I hope this email finds you well. " + "useful " * 85,
-        "linkedin_note": "Short note",
+        "linkedin_note": "I hope this email finds you well.",
+        "linkedin_message": "Short note",
         "send_status": "draft_needs_human_review",
     }
     assert any(error.startswith("forbidden_phrase") for error in validate_outreach(draft))
@@ -71,8 +78,7 @@ def test_validator_blocks_em_dash() -> None:
     """Drafts with em dashes fail validation."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "This is interesting—something I found. " + "content " * 20,
-        "linkedin_note": "Short note",
+        "linkedin_note": "This is interesting—something I found.",
         "send_status": "draft_needs_human_review",
     }
     errors = validate_outreach(draft)
@@ -84,30 +90,17 @@ def test_validator_blocks_emoji() -> None:
     for emoji in ("😊", "🚀", "✨", "✅", "⚡"):
         draft = {
             "email_subject": "founder office idea",
-            "email_body": f"Great opportunity {emoji} check this out. " + "content " * 20,
-            "linkedin_note": "Short note",
+            "linkedin_note": f"Great opportunity {emoji} check this out.",
             "send_status": "draft_needs_human_review",
         }
         assert "punctuation:emoji" in validate_outreach(draft), emoji
-
-
-def test_validator_catches_inline_header_bullets() -> None:
-    """The bullet-header check runs on the raw body, which keeps its newlines."""
-    draft = {
-        "email_subject": "founder office idea",
-        "email_body": "Some intro text here.\n- Scope: one prototype\nClosing line.",
-        "linkedin_note": "Short note",
-        "send_status": "draft_needs_human_review",
-    }
-    assert "inline_header_bullets" in validate_outreach(draft)
 
 
 def test_validator_blocks_forbidden_word_delve() -> None:
     """Drafts with 'delve' fail validation."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "I want to delve into this opportunity. " + "content " * 20,
-        "linkedin_note": "Short note",
+        "linkedin_note": "I want to delve into this opportunity.",
         "send_status": "draft_needs_human_review",
     }
     errors = validate_outreach(draft)
@@ -118,32 +111,11 @@ def test_validator_blocks_linkedin_note_over_300_chars() -> None:
     """LinkedIn connection notes over 300 characters fail validation."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "This is a test. " * 10,
         "linkedin_note": "x" * 301,
         "send_status": "draft_needs_human_review",
     }
     errors = validate_outreach(draft)
     assert any("linkedin_note_too_long" in err for err in errors)
-
-
-def test_validator_blocks_three_item_list() -> None:
-    """Drafts with three-item lists fail validation."""
-    draft = {
-        "email_subject": "founder office idea",
-        # Need 80-110 words. Include numbered list that should fail
-        "email_body": ("I have been researching your company and found a great opportunity for the role. "
-                       "I understand the work involves strategic planning and operations oversight. "
-                       "Here is my detailed approach for managing the responsibilities effectively. "
-                       "I can support the team across several important dimensions.\n"
-                       "1. First thing - primary focus area\n"
-                       "2. Second thing - secondary area\n"
-                       "3. Third thing - additional area\n"
-                       "I believe this structured approach will help the team succeed."),
-        "linkedin_note": "Short note",
-        "send_status": "draft_needs_human_review",
-    }
-    errors = validate_outreach(draft)
-    assert any("three_item_list" in err for err in errors), f"Expected three_item_list error, got: {errors}"
 
 
 def test_problem_led_company_gets_problem_led_outreach() -> None:
@@ -165,21 +137,26 @@ def test_problem_led_company_gets_problem_led_outreach() -> None:
     draft = draft_outreach(record)
     assert draft["send_status"] == "draft_needs_human_review"
     assert draft["draft_source"] == "problem_led"
-    assert "prototype" in draft["email_body"].casefold()
-    assert draft["email_body"]  # Should have content
+    assert draft["claude_prompt"]
+    assert "messy content workflow" in draft["claude_prompt"]
 
 
-def test_outreach_produces_three_artifacts() -> None:
-    """Outreach produces email, connection note, and message."""
+def test_outreach_produces_a_prompt_and_two_linkedin_artifacts() -> None:
+    """Outreach produces a Claude Code prompt, connection note, and message."""
     record = {
         "company": "Test Corp",
         "title": "Founder's Office Intern",
         "location": "Bengaluru",
+        "source_url": "https://example.com/job",
         "selected_contact": {"name": "Test"},
-        "research": {"solution_concept": "a workflow audit."},
+        "research": {
+            "solution_concept": "a workflow audit.",
+            "observed_problem_signal": "The listing asks for broad ownership.",
+        },
     }
     draft = draft_outreach(record)
-    assert "email_body" in draft
+    assert "claude_prompt" in draft
+    assert draft["claude_prompt"]
     assert "email_subject" in draft
     assert "linkedin_note" in draft
     assert "linkedin_message" in draft
@@ -201,8 +178,10 @@ def test_linkedin_note_never_truncates_mid_sentence() -> None:
     assert note.rstrip()[-1] in ".?!"
 
 
-def test_quoted_evidence_does_not_trip_forbidden_words() -> None:
-    """A company's own word choice inside a quote is evidence, not AI tone."""
+def test_claude_prompt_carries_the_real_observed_signal() -> None:
+    """The prompt must ground Claude Code in the actual quote, not a
+    paraphrase -- so a company's own word choice ("robust") is expected to
+    appear verbatim, the same way it always was evidence, not AI tone."""
     record = {
         "company": "Lyzr AI",
         "selected_contact": {"name": "Aarav"},
@@ -215,18 +194,83 @@ def test_quoted_evidence_does_not_trip_forbidden_words() -> None:
         "prompt_generation": {"prompt_text": "Build a delivery-load tracker."},
     }
     draft = draft_outreach(record)
-    assert "robust" in draft["email_body"]
+    assert "robust enterprise agents" in draft["claude_prompt"]
     assert validate_outreach(draft) == []
 
 
-def test_daksh_own_prose_still_fails_on_forbidden_word() -> None:
-    """The quoted-span carve-out must not disable the check everywhere."""
+def test_claude_prompt_never_double_quotes_a_signal_that_already_quotes_itself() -> None:
+    """deterministic_research's own observation reads 'The listing states:
+    "..."' -- wrapping that again in quotes nested them and read as broken,
+    exactly the AI-slop look this feature exists to avoid."""
+    record = {
+        "company": "Acme", "title": "Intern", "source_url": "https://acme.com/job",
+        "research": {
+            "solution_concept": "a workflow audit.",
+            "observed_problem_signal": 'The listing states: "You will own weekly revenue reporting."',
+        },
+    }
+    draft = draft_outreach(record)
+    assert '""' not in draft["claude_prompt"]
+    assert 'The listing states: "You will own weekly revenue reporting."' in draft["claude_prompt"]
+
+
+def test_claude_prompt_never_generated_without_a_real_signal() -> None:
+    """A prompt built on nothing real would hand Claude Code a blank canvas
+    to invent facts on -- exactly what this pipeline exists to prevent. The
+    draft is blocked, not silently marked ready with an empty prompt."""
+    record = {
+        "company": "No Evidence Co",
+        "selected_contact": {"name": "Someone"},
+        "research": {"solution_concept": "a workflow audit."},  # no observed_problem_signal
+    }
+    draft = draft_outreach(record)
+    assert draft["claude_prompt"] == ""
+    assert draft["send_status"] == "blocked_no_evidence"
+    assert validate_outreach(draft) == []
+
+
+def test_validator_still_catches_a_three_item_list_in_the_linkedin_prose() -> None:
+    """The structural checks pointed at email_subject once the email body was
+    removed, which made them unfireable -- a 2-4 word subject can never hold a
+    bulleted list. They must run on the prose Daksh actually sends."""
     draft = {
         "email_subject": "founder office idea",
-        "email_body": "I want to leverage this. " + "content " * 20,
+        "linkedin_message": (
+            "Thanks for connecting. I mapped three things:\n"
+            "- First thing\n"
+            "- Second thing\n"
+            "- Third thing\n"
+        ),
         "linkedin_note": "Short note",
-        "quoted_span": "We build enterprise agents",
         "send_status": "draft_needs_human_review",
     }
-    assert any("leverage" in error for error in validate_outreach(draft))
+    errors = validate_outreach(draft)
+    assert any("three_item_list" in error for error in errors)
 
+
+def test_malformed_email_template_falls_back_instead_of_crashing_the_run(
+    tmp_path, monkeypatch
+) -> None:
+    """templates/email_prompt.txt is hand-editable; one stray brace used to
+    raise straight out of draft_outreach, which run_pipeline calls in an
+    unguarded loop -- a text-file typo would have taken down the whole run."""
+    import outreach
+
+    monkeypatch.setattr(
+        outreach,
+        "load_prompt_template",
+        lambda *_a, **_k: "# {company_name}\n\nA stray {brace} nobody supplies.",
+    )
+    record = {
+        "company": "Acme",
+        "title": "Intern",
+        "source_url": "https://acme.com/job",
+        "research": {
+            "solution_concept": "a workflow audit.",
+            "observed_problem_signal": "The listing asks for broad ownership.",
+        },
+    }
+    draft = draft_outreach(record)
+    assert draft["send_status"] == "draft_needs_human_review"
+    assert "Acme" in draft["claude_prompt"]
+    assert "/humanizer" in draft["claude_prompt"]

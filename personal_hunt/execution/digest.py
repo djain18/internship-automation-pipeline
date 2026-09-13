@@ -7,6 +7,7 @@ import os
 from email.message import EmailMessage
 from pathlib import Path
 
+from fetch_sources import watchlist_source_id
 from models import Record
 
 
@@ -16,6 +17,19 @@ def _section(title: str, records: list[Record]) -> str:
         return "\n".join(lines + ["No qualifying records.", ""])
     for index, item in enumerate(records, 1):
         contact = item.get("selected_contact", {})
+        contact_lines = [
+            f"- Contact: {contact.get('name') or contact.get('email') or contact.get('status', 'unknown')}",
+        ]
+        # A site-scraped or Hunter-found address often has no name (kind
+        # "site_published_role_mailbox", or a bare "generic_fallback" pick),
+        # so the line above alone rendered "available" with the email
+        # nowhere in the digest -- printing it never reached Daksh.
+        if contact.get("email"):
+            contact_lines.append(f"- Contact email: {contact['email']}")
+        if contact.get("source_url"):
+            contact_lines.append(f"- Contact source: {contact['source_url']}")
+        if contact.get("contact_priority"):
+            contact_lines.append(f"- Contact priority: {contact['contact_priority']}")
         lines.extend(
             [
                 f"### {index}. {item['company']} - {item['title']}",
@@ -28,7 +42,7 @@ def _section(title: str, records: list[Record]) -> str:
                 f"- Posted: {item.get('posted_date')} ({item.get('posted_date_basis')})",
                 f"- Verification: {item.get('verification_status')} / {item.get('source_confidence')}",
                 f"- Source: {item.get('source_url')}",
-                f"- Contact: {contact.get('name') or contact.get('status', 'unknown')}",
+                *contact_lines,
                 f"- Resume: {item.get('resume')}",
                 f"- Evidence pack: {item.get('evidence_pack_path', 'not generated')}",
                 "- Human action: open sources, verify inference, review draft",
@@ -124,37 +138,45 @@ def _problem_section(records: list[Record]) -> str:
     return "\n".join(lines)
 
 
-def _watchlist_movement_section(discovered: list[Record]) -> str:
-    """Summary of activity at each watchlist company.
+def _watchlist_status_line(company: Record, discovered_by_id: dict[str, Record], health_by_id: dict[str, Record]) -> str:
+    """One status per watchlist company, from whichever signal actually ran.
 
-    Watchlist companies are those with company_url_basis == "watchlist".
-    This section provides a one-line status per watchlist company so Daksh
-    can see at a glance what changed since yesterday.
+    deep_problem_research only exists when watchlist.yml's deep_research
+    flag is on for this run; otherwise the company's own job-board fetch
+    (which always runs -- see watchlist_board_sources) is the real, free
+    signal of movement.
     """
-    watchlist_companies = [
-        item for item in discovered
-        if item.get("company_url_basis") == "watchlist"
-    ]
+    researched = discovered_by_id.get(company["funding_event_id"])
+    if researched is not None:
+        evidence_count = (researched.get("deep_problem_research") or {}).get("evidence_count", 0)
+        if evidence_count:
+            return f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
+        return "no activity observed"
+    board = health_by_id.get(watchlist_source_id(company["company"]))
+    if board is None:
+        return "no board configured"
+    if board.get("status") != "ok":
+        return f"board fetch {board.get('status', 'unknown')}"
+    count = int(board.get("record_count", 0) or 0)
+    return f"{count} open role{'s' if count != 1 else ''} on board" if count else "no open roles on board"
 
+
+def _watchlist_movement_section(run: Record) -> str:
+    """Summary of activity at each watchlist company, so Daksh can see at a
+    glance what changed since yesterday."""
+    watchlist_companies = run.get("watchlist_companies", [])
     lines = ["## Watchlist movement", ""]
 
     if not watchlist_companies:
-        lines.append("No watchlist companies present this run.")
+        lines.append("No watchlist companies configured.")
         lines.append("")
         return "\n".join(lines)
 
-    for item in watchlist_companies:
-        company = item.get("company", "Unknown")
-        deep_research = item.get("deep_problem_research") or {}
-
-        # Build a one-line status based on what we found
-        evidence_count = deep_research.get("evidence_count", 0)
-        if evidence_count == 0:
-            status = "no activity observed"
-        else:
-            status = f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
-
-        lines.append(f"- **{company}**: {status}")
+    discovered_by_id = {item["funding_event_id"]: item for item in run.get("discovered_for_research", [])}
+    health_by_id = {item["source_id"]: item for item in run.get("source_health", [])}
+    for company in watchlist_companies:
+        status = _watchlist_status_line(company, discovered_by_id, health_by_id)
+        lines.append(f"- **{company.get('company', 'Unknown')}**: {status}")
 
     lines.append("")
     return "\n".join(lines)
@@ -269,12 +291,23 @@ def _problem_brief_block(company: Record) -> list[str]:
     elif send_status == "blocked_validation":
         lines.append(f"*Blocked by humanizer rules: {'; '.join(validation_errors)}*")
     else:
-        # Email draft
-        email_body = outreach.get("email_body", "")
-        if email_body:
-            lines.append("**Email (cold outreach):**")
+        # Paste-ready Claude Code prompt in place of a pre-written email --
+        # Kimi never wrote outreach copy, the old email_body was a hardcoded
+        # f-string template with the company name swapped in, which read as
+        # mail-merge slop. Daksh drafts the real email himself with this.
+        claude_prompt = outreach.get("claude_prompt", "")
+        if claude_prompt:
+            lines.append("**Email prompt (paste into Claude Code):**")
             lines.append("")
-            lines.append(email_body)
+            lines.append("```")
+            lines.append(claude_prompt)
+            lines.append("```")
+            lines.append("")
+        elif send_status == "blocked_no_evidence":
+            lines.append(
+                "*No email prompt generated: no real observed signal to ground it in. "
+                "LinkedIn note/message below are still drafted.*"
+            )
             lines.append("")
 
         # LinkedIn note (connection request)
@@ -589,7 +622,7 @@ def render_digest(run: Record) -> str:
             "",
             _worth_a_look_section(run),
             # Phase 7: Section 2 - Watchlist movement summary (NEW)
-            _watchlist_movement_section(discovered),
+            _watchlist_movement_section(run),
             # Phase 7: Section 3 - Problem briefs for all researched companies (NEW)
             _problem_briefs_section(discovered),
             # Phase 7: Section 4 - Verification, funding, health (existing sections)
@@ -619,28 +652,22 @@ def render_digest(run: Record) -> str:
     )
 
 
-def _watchlist_movement_html(discovered: list[Record]) -> str:
+def _watchlist_movement_html(run: Record) -> str:
     """HTML counterpart of _watchlist_movement_section -- the plain-text
     digest and the HTML digest must show the same content, since Gmail
     renders the HTML part when both are present and a section only added
     to render_digest would never reach the actual inbox."""
-    watchlist_companies = [
-        item for item in discovered if item.get("company_url_basis") == "watchlist"
-    ]
+    watchlist_companies = run.get("watchlist_companies", [])
     if not watchlist_companies:
         return ""
+    discovered_by_id = {item["funding_event_id"]: item for item in run.get("discovered_for_research", [])}
+    health_by_id = {item["source_id"]: item for item in run.get("source_health", [])}
     items: list[str] = []
-    for item in watchlist_companies:
-        company = html.escape(str(item.get("company") or "Unknown"))
-        deep_research = item.get("deep_problem_research") or {}
-        evidence_count = deep_research.get("evidence_count", 0)
-        status = (
-            "no activity observed"
-            if not evidence_count
-            else f"{evidence_count} signal{'s' if evidence_count != 1 else ''} found"
-        )
+    for company in watchlist_companies:
+        name = html.escape(str(company.get("company") or "Unknown"))
+        status = _watchlist_status_line(company, discovered_by_id, health_by_id)
         items.append(
-            f'<li style="margin:0 0 8px"><strong>{company}</strong>: {html.escape(status)}</li>'
+            f'<li style="margin:0 0 8px"><strong>{name}</strong>: {html.escape(status)}</li>'
         )
     return f"""
         <div style="padding:20px 28px;border-top:1px solid #e5e7eb">
@@ -741,9 +768,17 @@ def _problem_briefs_html(discovered: list[Record], site_url: str) -> str:
             drafts_html = f'<div style="margin-top:8px;font-size:12px;color:#8b9294">Outreach blocked by humanizer rules: {errs}</div>'
         else:
             parts = []
-            if outreach.get("email_body"):
+            claude_prompt = outreach.get("claude_prompt", "")
+            if not claude_prompt and send_status == "blocked_no_evidence":
                 parts.append(
-                    f'<div style="margin-top:8px;font-size:12px"><strong>Email:</strong> {html.escape(str(outreach["email_body"]))}</div>'
+                    '<div style="margin-top:8px;font-size:12px;color:#8b9294">No email prompt generated: '
+                    'no real observed signal to ground it in.</div>'
+                )
+            if claude_prompt:
+                parts.append(
+                    '<div style="margin-top:8px;font-size:12px"><strong>Email prompt (paste into Claude Code):</strong></div>'
+                    f'<pre style="margin-top:4px;padding:10px;background:#f5f5f5;border-radius:8px;'
+                    f'font-size:11px;white-space:pre-wrap;overflow-wrap:break-word">{html.escape(str(claude_prompt))}</pre>'
                 )
             if outreach.get("linkedin_note"):
                 parts.append(
@@ -906,7 +941,7 @@ def render_html_digest(run: Record) -> str:
         </div>"""
 
     discovered = run.get("discovered_for_research", [])
-    watchlist_html = _watchlist_movement_html(discovered)
+    watchlist_html = _watchlist_movement_html(run)
     problem_briefs_html = _problem_briefs_html(discovered, site_url)
 
     count = len(records)

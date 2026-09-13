@@ -21,7 +21,7 @@ TAB_SCHEMAS: dict[str, list[str]] = {
     ],
     "Outreach": [
         "id", "opportunity_id", "company", "contact_name", "contact_role",
-        "contact_email", "contact_status", "subject", "email_body", "linkedin_note",
+        "contact_email", "contact_status", "subject", "claude_prompt", "linkedin_note",
         "send_status", "mailsuite_status", "next_action", "sent_at",
         "reply_outcome", "interview_outcome", "strategy_id", "human_quality_rating",
     ],
@@ -267,8 +267,11 @@ def rows_from_run(run: Record) -> dict[str, list[Record]]:
                 "contact_role": contact.get("role"),
                 "contact_email": contact.get("email"),
                 "contact_status": contact.get("verification_status") or contact.get("status"),
-                "subject": draft.get("subject"),
-                "email_body": draft.get("email_body"),
+                # draft's own key is "email_subject" -- reading "subject"
+                # (neither draft function has ever emitted that key) meant
+                # this column was silently blank on every real run.
+                "subject": draft.get("email_subject"),
+                "claude_prompt": draft.get("claude_prompt"),
                 "linkedin_note": draft.get("linkedin_note"),
                 "send_status": draft.get("send_status"),
                 "mailsuite_status": "not_sent",

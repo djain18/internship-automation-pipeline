@@ -1,7 +1,67 @@
 from __future__ import annotations
 
 import re
+
+from build_prompt import load_prompt_template
 from models import Record, clean_text
+
+# Shared with watchlist_prompts.py's one-shot deep-dive prompts, so the copy
+# rules Claude Code is told to follow are defined once, not retyped per
+# feature and left to drift.
+EMAIL_COPY_RULES = (
+    "- Email body: 80-110 words.",
+    "- Subject: 2-4 lowercase words, no clickbait, emoji, fake reply prefix, "
+    "or the recipient's first name.",
+    "- One primary link.",
+    "- LinkedIn note: 250-300 characters where possible.",
+    "- Write like a thoughtful peer, not a vendor.",
+    "- Lead with their situation, not Daksh's biography.",
+)
+
+_EMAIL_PROMPT_FALLBACK = """# {company_name}: draft the outreach email
+
+## Verified facts
+
+- Company: {company_name}
+- Role: {role_title}
+- Location: {location}
+- Contact: {contact_name} ({contact_role})
+- Apply link: {apply_url}
+- Resume to attach: {resume_basename}
+
+## What I actually observed
+
+{observed_signal}
+
+## What I am inferring (kept separate from the observation above)
+
+{inference}
+
+## What is still uncertain
+
+{uncertainty}
+
+## Solution idea
+
+{solution_concept}
+
+## Draft the email
+
+Write a cold email from Daksh to {contact_name} using the observation and
+inference above. Copy rules:
+
+{copy_rules}
+
+Never use these words: {forbidden_words}.
+Never use these phrases: {forbidden_phrases}.
+Never invent a metric, a familiarity, or an artifact that does not exist.
+Never state the inference as a fact, or promise an unmeasured outcome.
+
+## Before you finish
+
+Run the drafted email through the /humanizer skill so it does not read like
+AI-generated text. Show me the final email; I will send it manually.
+"""
 
 # Humanizer rules - hard-fail checks for outreach quality
 FORBIDDEN_PUNCTUATION = {
@@ -130,20 +190,6 @@ def _fit_note(note: str, limit: int = 300) -> str:
     return cut[: cut.rfind(" ")].rstrip(" ,;:-") + "."
 
 
-def _clause(problem: str) -> str:
-    """Trim the quoted responsibility to a clause an email can carry."""
-
-    text = clean_text(problem).lstrip("-").strip()
-    for prefix in ("You will ", "you will ", "Role: ", "- Role: "):
-        text = text.removeprefix(prefix)
-    words = text.split()
-    clause = " ".join(words[:14])
-    if len(words) > 14 and "," in clause:
-        # Cutting at a word boundary left "...shaping new products across."
-        clause = clause[: clause.rfind(",")]
-    return clause.rstrip(".,;:").casefold()
-
-
 def _recipient(record: Record) -> str:
     contact = record.get("selected_contact", {})
     name = clean_text(contact.get("name"))
@@ -159,6 +205,99 @@ def _is_problem_led_company(record: Record) -> bool:
     deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
     prompt_gen = record.get("prompt_generation") if isinstance(record.get("prompt_generation"), dict) else {}
     return bool(deep_research.get("observed_signals") and prompt_gen.get("prompt_text"))
+
+
+def _observed_signal_for_prompt(record: Record) -> tuple[str, bool]:
+    """(text, has_real_signal) -- the one thing build_email_prompt refuses to
+    proceed without. A prompt built on nothing real is worse than no prompt:
+    it hands Claude Code a blank canvas to invent facts on, which is exactly
+    what this pipeline exists to prevent."""
+    deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
+    signals = deep_research.get("observed_signals") or []
+    if signals and isinstance(signals[0], dict) and signals[0].get("text"):
+        text = clean_text(signals[0]["text"])
+        url = clean_text(signals[0].get("url"))
+        return (_quote_with_source(text, url), True)
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    # observed_problem_signal first: the LLM research path (research.py's
+    # cached_bedrock_json merge) can overwrite solution_concept without ever
+    # touching primary_responsibility, so checking only the latter would
+    # return no signal on a real, LLM-researched record that draft_outreach's
+    # own gate had already accepted. primary_responsibility is the fallback
+    # for a record built without going through deterministic_research/LLM
+    # research at all (e.g. a hand-built record from an older source).
+    signal = clean_text(research.get("observed_problem_signal")) or clean_text(
+        research.get("primary_responsibility")
+    )
+    if signal:
+        source_url = clean_text(record.get("source_url"))
+        return (_quote_with_source(signal, source_url), True)
+    return ("", False)
+
+
+def _quote_with_source(text: str, url: str) -> str:
+    """Wrap in quotes for the prompt, unless the text already carries its
+    own (e.g. 'The listing states: "..."'), which would otherwise nest
+    quotes and read as broken -- exactly the AI-slop look this exists to
+    avoid."""
+    wrapped = text if '"' in text else f'"{text}"'
+    return f"{wrapped} (source: {url})" if url else wrapped
+
+
+def _fill(template: str, fallback: str, **values: str) -> str:
+    """str.format the disk template, falling back to the embedded one when it
+    cannot be filled. templates/email_prompt.txt is hand-editable, and one
+    stray brace or renamed placeholder in it raises KeyError/ValueError out of
+    draft_outreach, which run_pipeline calls in an unguarded loop -- a typo in
+    a text file would take down the whole run. load_prompt_template already
+    promises a missing file degrades instead of crashing; a malformed one is
+    the same failure mode."""
+    try:
+        return template.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return fallback.format(**values)
+
+
+def build_email_prompt(record: Record) -> str:
+    """A self-contained, paste-ready Claude Code prompt in place of a
+    pre-written email body. Kimi never wrote outreach copy -- draft_outreach
+    and draft_problem_led_email were hardcoded Python f-strings that just
+    swapped the company name in, which read as mail-merge slop. Daksh drafts
+    every email himself in Claude Code with /humanizer instead; this hands
+    that conversation everything it needs with no other file access."""
+    observed_signal, has_signal = _observed_signal_for_prompt(record)
+    if not has_signal:
+        return ""
+
+    deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
+
+    inference = clean_text(deep_research.get("problem_hypothesis")) or clean_text(research.get("solution_concept"))
+    uncertainty = clean_text(research.get("uncertainty")) or (
+        "Not yet validated -- this is inference from public information, not confirmed internally."
+    )
+    solution_concept = clean_text(research.get("solution_concept")) or inference
+
+    template = load_prompt_template("email_prompt.txt", _EMAIL_PROMPT_FALLBACK)
+    return _fill(
+        template,
+        _EMAIL_PROMPT_FALLBACK,
+        company_name=clean_text(record.get("company")) or "the company",
+        role_title=clean_text(record.get("title")) or "internship opportunity",
+        location=clean_text(record.get("location")) or "Bengaluru",
+        contact_name=contact.get("name") or "there",
+        contact_role=clean_text(contact.get("role")) or "hiring contact",
+        apply_url=clean_text(record.get("apply_url") or record.get("source_url") or record.get("company_url")),
+        resume_basename=clean_text(record.get("resume")) or "Daksh-Jain-Master",
+        observed_signal=observed_signal,
+        inference=inference or "None drawn -- observation alone was not enough to infer a specific problem.",
+        uncertainty=uncertainty,
+        solution_concept=solution_concept or "None yet -- draft one grounded in the observation above.",
+        copy_rules="\n".join(EMAIL_COPY_RULES),
+        forbidden_words=", ".join(FORBIDDEN_WORDS),
+        forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
+    )
 
 
 def draft_problem_led_email(record: Record) -> Record:
@@ -178,55 +317,17 @@ def draft_problem_led_email(record: Record) -> Record:
 
     if not problem_hypothesis or not observed_signals:
         return {
-            "email_body": "",
+            "claude_prompt": "",
             "linkedin_note": "",
             "linkedin_message": "",
             "send_status": "blocked_insufficient_evidence",
             "draft_source": "problem_led",
         }
 
-    # Build problem statement from first signal, truncated by word count (not
-    # characters) so the final body can be steered into validate_outreach's
-    # required 80-110 word range regardless of how long the real quote is.
-    signal_words = _words(clean_text(observed_signals[0].get("text", "")))
-
-    # 2026-09-13: say what the prototype actually does, not just that one
-    # exists -- the draft previously never mentioned the prototype's
-    # content. First ~10 words of what_to_build only (never the full
-    # LLM paragraph), so the fixed word budget below stays predictable
-    # instead of the 80-110 range depending on how verbose that call was.
-    what_to_build_words = _words(clean_text(prompt_gen.get("what_to_build") or ""))
-    what_to_build_phrase = " ".join(what_to_build_words[:10])
-    # An appositive works regardless of whether what_to_build's own first
-    # words happen to be a verb phrase or a noun phrase -- the LLM output
-    # isn't constrained to either shape.
-    prototype_clause = f" ({what_to_build_phrase})" if what_to_build_phrase else ""
-
-    intro = f"Hi {contact_name}, I've been researching {company} and found a concrete operational gap worth flagging:"
-    ask = (
-        f"I put together a small working prototype{prototype_clause} instead of just "
-        "describing the idea, since a runnable demo says more than a pitch. I'm looking "
-        "for a six-month onsite generalist internship in Bengaluru starting November "
-        "2026, where I can pick up real cross-functional work like this. Would it be "
-        "useful to walk through the prototype together sometime this week?"
-    )
-    fixed_word_count = len(_words(intro)) + len(_words(ask))
-
-    quote_budget = max(6, min(len(signal_words), 108 - fixed_word_count))
-    signal_quote = " ".join(signal_words[:quote_budget])
-    if len(signal_words) > quote_budget:
-        signal_quote += "..."
-
-    body = f"{intro} {signal_quote}. {ask}"
-
-    # If the real quote was short, the body can still land under 80 words;
-    # top up with a grounded, non-invented closing line rather than padding
-    # with filler that would trip the humanizer's own rules.
-    padding = " I focused on what's publicly visible rather than guessing at internals."
-    if len(_words(body)) < 80:
-        body = f"{body}{padding}"
-
-    # LinkedIn connection note
+    # LinkedIn connection note -- still hand-drafted here, unlike the email.
+    # It is short and structurally simple (name, one observation, one ask),
+    # which is exactly where a template reads fine; the email is where the
+    # mail-merge sameness actually showed.
     linkedin_note = _fit_note(
         f"Hi {contact_name} - I found a specific problem in {company}'s operations "
         f"and built a prototype. Seeking an onsite internship from November 2026. Worth exploring?"
@@ -238,27 +339,26 @@ def draft_problem_led_email(record: Record) -> Record:
         f"and built a small prototype to explore it. Happy to walk through it if you're interested."
     )
 
+    claude_prompt = build_email_prompt(record)
     return {
-        "email_body": body,
+        "claude_prompt": claude_prompt,
         "email_subject": f"{company.lower()} prototype idea",
         "linkedin_note": linkedin_note,
         "linkedin_message": linkedin_message,
-        "send_status": "draft_needs_human_review",
+        # A prompt built on nothing real hands Claude Code a blank canvas to
+        # invent facts on -- if build_email_prompt refused, this draft is
+        # blocked too, not silently "ready for review" with an empty prompt.
+        "send_status": "draft_needs_human_review" if claude_prompt else "blocked_no_evidence",
         "draft_source": "problem_led",
         "artifact_path": artifact,
-        # The humanizer rules police Daksh's own prose. This span is a verbatim
-        # quote from the company's own fetched page, so its wording is evidence,
-        # not style -- a company that describes its platform as "robust" would
-        # otherwise hard-fail every draft built on its own words.
-        "quoted_span": signal_quote,
     }
 
 
 def draft_outreach(record: Record) -> Record:
     """Draft outreach for an opportunity record (generic version).
 
-    Returns dict with email_body, email_subject, linkedin_note, linkedin_message, send_status.
-    Also supports legacy "followups" for backwards compatibility with testing.
+    Returns dict with claude_prompt, email_subject, linkedin_note, linkedin_message,
+    send_status. Also supports legacy "followups" for backwards compatibility with testing.
     """
     # Check if this is a problem-led company (with deep research)
     if _is_problem_led_company(record):
@@ -267,32 +367,11 @@ def draft_outreach(record: Record) -> Record:
     # Generic internship listing outreach
     company = clean_text(record.get("company"))
     title = clean_text(record.get("title"))
-    location = clean_text(record.get("location")) or "Bengaluru"
     contact_name = _recipient(record)
     research = record.get("research", {})
     solution = clean_text(research.get("solution_concept"))
-    problem = clean_text(research.get("primary_responsibility"))
     strategy_id = choose_strategy(record)
     artifact = _approved_artifact(record)
-
-    opening = (
-        f"your {title} listing in {location} asks for someone to "
-        f"{_clause(problem)}"
-        if problem
-        else f"your {title} opening in {location} pairs hands-on execution with a "
-        f"broad view of {company}"
-    )
-
-    resource_phrase = f" I can share the approved resource: {artifact}." if artifact else ""
-
-    body = (
-        f"Hi {contact_name}, {opening}. I mapped the public context into a "
-        f"source-linked brief and one small idea: {solution} My background spans "
-        "founder's-office automation, D2C operations, growth, and internal tools "
-        "while I study at Christ University in Bengaluru. I'm looking for a "
-        "six-month onsite generalist internship in Bengaluru from November 2026 "
-        f"where I can own work across functions.{resource_phrase} Would a short outline be useful?"
-    )
 
     # LinkedIn connection note (under 300 chars)
     linkedin_note = (
@@ -321,7 +400,7 @@ def draft_outreach(record: Record) -> Record:
     if not solution:
         return {
             "email_subject": "founder office idea",
-            "email_body": "",
+            "claude_prompt": "",
             "linkedin_note": linkedin_note,
             "linkedin_message": linkedin_message,
             "followups": followups,
@@ -331,13 +410,14 @@ def draft_outreach(record: Record) -> Record:
             "draft_source": "generic_opportunity",
         }
 
+    claude_prompt = build_email_prompt(record)
     return {
         "email_subject": "founder office idea",
-        "email_body": body,
+        "claude_prompt": claude_prompt,
         "linkedin_note": linkedin_note,
         "linkedin_message": linkedin_message,
         "followups": followups,
-        "send_status": "draft_needs_human_review",
+        "send_status": "draft_needs_human_review" if claude_prompt else "blocked_no_evidence",
         "artifact_mention_allowed": bool(artifact),
         "strategy_id": strategy_id,
         "draft_source": "generic_opportunity",
@@ -356,27 +436,28 @@ def validate_outreach(draft: Record) -> list[str]:
     if draft.get("send_status") == "blocked_insufficient_evidence":
         return errors
 
-    # Extract text fields (keep original for structure detection, clean version for text)
+    # Extract text fields (keep original for structure detection, clean version for text).
+    # There is no email_body any more -- outreach.py no longer drafts the
+    # email itself (see build_email_prompt); subject_raw stays only as a
+    # short label, not the real subject Daksh will send.
     subject_raw = draft.get("email_subject") or draft.get("subject", "")
-    body_raw = draft.get("email_body", "")
     linkedin_note_raw = draft.get("linkedin_note", "")
     linkedin_message_raw = draft.get("linkedin_message", "")
 
     subject = clean_text(subject_raw)
-    body = clean_text(body_raw)
     linkedin_note = clean_text(linkedin_note_raw)
     linkedin_message = clean_text(linkedin_message_raw)
 
     # Combine all text for some checks
-    all_text = f"{subject} {body} {linkedin_note} {linkedin_message}".casefold()
+    all_text = f"{subject} {linkedin_note} {linkedin_message}".casefold()
+    prose = all_text
 
-    # Word/phrase/tone checks run on Daksh's own prose only. A verbatim quote
-    # from the company's own page is evidence, and its vocabulary is theirs.
-    quoted = clean_text(draft.get("quoted_span", "")).casefold()
-    prose = all_text.replace(quoted, " ") if quoted else all_text
-
-    # For structural checks, use the raw body with newlines preserved
-    body_with_structure = f"{subject_raw}\n{body_raw}"
+    # For structural checks, use the raw text with newlines preserved. The
+    # LinkedIn note and message are the only prose left that Daksh actually
+    # sends from this pipeline; pointing these at subject_raw (a 2-4 word
+    # subject that can never hold a bulleted list) left checks 6 and 7 dead
+    # -- they could not fire on any draft this module produces.
+    body_with_structure = f"{linkedin_note_raw}\n{linkedin_message_raw}"
 
     # 1. Check for forbidden punctuation (em dashes, curly quotes, emoji)
     for char, name in FORBIDDEN_PUNCTUATION.items():
@@ -419,20 +500,10 @@ def validate_outreach(draft: Record) -> list[str]:
     if re.search(r"\n\s*(•|-|\*)\s+\w+:", body_with_structure):
         errors.append("inline_header_bullets")
 
-    # Email-specific checks
-    if body:
-        word_count = len(_words(body))
-        if not 80 <= word_count <= 110:
-            errors.append(f"email_word_count:{word_count}")
-
-        # Subject format
-        if not 2 <= len(_words(subject)) <= 4 or subject != subject.casefold():
-            errors.append("subject_format")
-
-        # URL count
-        url_count = len(re.findall(r"https?://", body))
-        if url_count > 1:
-            errors.append("too_many_urls")
+    # No email_body checks: outreach.py no longer drafts the email itself
+    # (see build_email_prompt) -- Daksh writes the real email in Claude Code,
+    # outside this pipeline's reach, so word count and subject format are no
+    # longer this validator's job.
 
     # LinkedIn-specific checks
     if linkedin_note:
@@ -440,7 +511,10 @@ def validate_outreach(draft: Record) -> list[str]:
             errors.append(f"linkedin_note_too_long:{len(linkedin_note)}")
 
     # Check send status validity
-    if draft.get("send_status") not in {"draft_needs_human_review", "approved_manual_send", "blocked_insufficient_evidence"}:
+    if draft.get("send_status") not in {
+        "draft_needs_human_review", "approved_manual_send",
+        "blocked_insufficient_evidence", "blocked_no_evidence",
+    }:
         errors.append("invalid_send_status")
 
     return errors

@@ -449,16 +449,20 @@ def test_discovered_for_research_reaches_the_run_dict_with_prompts(
 
     assert "discovered_for_research" in result
     discovered = result["discovered_for_research"]
-    # Now includes 1 funded company + 3 watchlist companies (Emergent, Lyzr AI, AEOS)
-    assert len(discovered) == 4
+    # watchlist.yml's deep_research defaults to false as of 2026-09-13 (the
+    # same 3 fixed companies burned two Kimi calls each, twice daily, for an
+    # answer that never changed), so only the funded company enters the
+    # daily deep-research queue. Watchlist companies are deep-dived by hand
+    # instead (pipeline.py --watchlist-prompts).
+    assert len(discovered) == 1
+    company_names = {item["company"] for item in discovered}
+    assert company_names == {"Resolvable Co"}
     # All should have prompt_generation
     assert all(item.get("prompt_generation", {}).get("prompt_text") == "fake prompt" for item in discovered)
-    # Verify both funded and watchlist companies are present
-    company_names = {item["company"] for item in discovered}
-    assert "Resolvable Co" in company_names  # The funded one
-    assert "Emergent" in company_names  # From watchlist
-    assert "Lyzr AI" in company_names  # From watchlist
-    assert "AEOS" in company_names  # From watchlist
+    # Watchlist companies still reach the run dict, for the digest's
+    # watchlist movement section -- just without deep research attached.
+    watchlist_names = {item["company"] for item in result["watchlist_companies"]}
+    assert watchlist_names == {"Emergent", "Lyzr AI", "AEOS"}
     # Every discovered company must have gone through outreach drafting --
     # draft_problem_led_email existed but was never called on this list
     # until this was fixed; watchlist companies in particular never went
@@ -474,6 +478,84 @@ def test_discovered_for_research_reaches_the_run_dict_with_prompts(
     )
     assert resolved_event["prompt_generation"]["prompt_text"] == "fake prompt"
     assert resolved_event["deep_problem_research"]["problem_status"] == "inference_needs_validation"
+
+
+def test_hunter_source_health_none_when_hunter_not_active() -> None:
+    """No hunter_ctx (state disabled -- --no-state or --dry-run) means no
+    Hunter row at all, not a misleading zero-activity row."""
+    assert pipeline._hunter_source_health(None) is None
+
+
+def test_hunter_source_health_reports_no_lookups_needed() -> None:
+    row = pipeline._hunter_source_health({"scoring": {}, "state": None, "month": "2026-09"})
+    assert row == {
+        "source_id": "hunter",
+        "status": "ok",
+        "record_count": 0,
+        "human_action": "No records needed a Hunter lookup this run.",
+    }
+
+
+def test_hunter_source_health_flags_missing_key_as_failed() -> None:
+    """A missing HUNTER_API_KEY is the single highest-value line this
+    plan adds -- it must render as a failure, not blend into ordinary
+    'ran cleanly, found nothing' noise."""
+    row = pipeline._hunter_source_health(
+        {"scoring": {}, "state": None, "month": "2026-09", "statuses": ["no_api_key", "no_api_key"]}
+    )
+    assert row["status"] == "failed"
+    assert "HUNTER_API_KEY" in row["human_action"]
+
+
+def test_hunter_source_health_ok_on_a_clean_mix_of_finds_and_misses() -> None:
+    row = pipeline._hunter_source_health(
+        {"scoring": {}, "state": None, "month": "2026-09", "statuses": ["ok", "no_match", "cache_hit", "cap_reached"]}
+    )
+    assert row["status"] == "ok"
+    assert row["record_count"] == 2  # ok + cache_hit
+
+
+def test_hunter_source_health_flags_http_error_as_failed() -> None:
+    row = pipeline._hunter_source_health(
+        {"scoring": {}, "state": None, "month": "2026-09", "statuses": ["http_error:401"]}
+    )
+    assert row["status"] == "failed"
+
+
+def test_watchlist_to_companies_always_returns_companies_for_digest_display() -> None:
+    """Building the display list costs nothing (no fetch, no LLM) and must
+    not depend on the deep_research flag -- the digest's watchlist movement
+    section needs every company's name regardless of whether it also enters
+    the daily research queue."""
+    config = {"companies": [{"name": "Emergent", "site_url": "https://emergent.sh"}]}
+    with_research = pipeline._watchlist_to_companies({**config, "deep_research": True})
+    without_research = pipeline._watchlist_to_companies({**config, "deep_research": False})
+    assert [item["company"] for item in with_research] == ["Emergent"]
+    assert [item["company"] for item in without_research] == ["Emergent"]
+
+
+def test_watchlist_deep_research_flag_gates_the_daily_queue_reversibly(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """deep_research: false (the 2026-09-13 default) keeps watchlist
+    companies out of discovered_for_research; flipping it back to true from
+    config alone, with no code change, restores the old behavior."""
+    monkeypatch.setenv("ENABLE_BEDROCK", "false")
+    config = load_all()
+    config["watchlist"] = {
+        "deep_research": False,
+        "companies": [{"name": "Emergent", "site_url": "https://emergent.sh", "lane": "ai"}],
+    }
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+    health = fixture_health(len(records))
+
+    off = run_pipeline(records, health, date(2026, 9, 8), config, tmp_path / "off")
+    assert off["watchlist_companies"][0]["company"] == "Emergent"
+    assert "Emergent" not in {item["company"] for item in off["discovered_for_research"]}
+
+    config["watchlist"]["deep_research"] = True
+    on = run_pipeline(records, health, date(2026, 9, 8), config, tmp_path / "on")
+    assert "Emergent" in {item["company"] for item in on["discovered_for_research"]}
 
 
 def test_discovered_company_gets_a_real_problem_led_draft(monkeypatch, tmp_path: Path) -> None:
@@ -538,7 +620,7 @@ def test_discovered_company_gets_a_real_problem_led_draft(monkeypatch, tmp_path:
     draft = resolvable["outreach"]
     assert draft["draft_source"] == "problem_led"
     assert draft["send_status"] == "draft_needs_human_review"
-    assert "support engineers" in draft["email_body"]
+    assert "support engineers" in draft["claude_prompt"]
     assert not draft["validation_errors"]
 
 
@@ -986,3 +1068,69 @@ def test_digest_renders_glance_queue() -> None:
     body = render_digest(run)
     assert "Worth a glance" in body
     assert "Hiring Founder's Office Interns" in body
+
+
+def test_deep_research_published_emails_reach_the_selected_contact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The funding-event loop attaches selected_contact BEFORE
+    research_deep_problem runs, so a funded company's deep-research
+    published_emails could never reach contacts._site_email -- the guard in
+    the discovered loop only re-chose a contact when there was none at all,
+    and the funding loop always leaves a contact_research_required stub."""
+    config = load_all()
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+
+    monkeypatch.setattr(
+        pipeline, "research_funding_event",
+        lambda event, allow_llm=False, cache=None: {
+            "status": "provisional", "problem_status": "insufficient_evidence",
+            "problem_hypothesis": "", "published_emails": [],
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "research_deep_problem",
+        lambda company, **kwargs: {
+            "problem_status": "insufficient_evidence",
+            "problem_hypothesis": "",
+            "observed_signals": [],
+            "evidence_count": 0,
+            # The five-page deep fetch found what the funding-event fetch did not.
+            "published_emails": ["founders@resolvable.example"],
+        },
+    )
+    monkeypatch.setattr(
+        pipeline, "build_prompts_for_companies",
+        lambda companies, **kwargs: [
+            {**company, "prompt_generation": {"prompt_text": "", "llm_status": "skipped"}}
+            for company in companies
+        ],
+    )
+
+    funding_records = [
+        {
+            "funding_event_id": "funding_resolved",
+            "company": "Resolvable Co",
+            "event_date": "2026-09-08",
+            "headline": "Resolvable Co raises $5 Mn",
+            "source_url": "https://example.com/resolvable",
+            "corroborating_urls": ["https://example.com/resolvable"],
+        },
+    ]
+    company_candidates = [
+        {
+            "company": "Resolvable Co",
+            "company_url": "https://resolvable.example",
+            "registry_url": "https://kalaari.com/portfolio",
+        }
+    ]
+    result = run_pipeline(
+        records, [], date(2026, 9, 8), config, tmp_path / "run",
+        funding_records=funding_records, company_candidates=company_candidates,
+    )
+
+    resolvable = next(
+        item for item in result["discovered_for_research"] if item["company"] == "Resolvable Co"
+    )
+    assert resolvable["selected_contact"]["email"] == "founders@resolvable.example"
+    assert resolvable["selected_contact"]["basis"] == "site_published_role_mailbox"

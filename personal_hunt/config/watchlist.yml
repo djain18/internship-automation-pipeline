@@ -1,6 +1,15 @@
-# Watchlist companies: permanent deep research targets regardless of funding or job posts.
-# Each company gets researched every run for problem signals and opportunities.
+# Watchlist companies: permanent job-board fetch targets regardless of funding.
 # Verified facts only; no speculation beyond what's documented below.
+#
+# deep_research: false (2026-09-13) -- these 3 fixed companies came back
+# insufficient_evidence every run, spending two Kimi calls each, twice daily,
+# for an answer that could not change. They are now deep-dived by hand: run
+# `python pipeline.py --watchlist-prompts`, paste the generated file for each
+# company into a fresh Claude Code conversation. Their job boards (board_url
+# below) still get fetched every run either way -- that part is real signal
+# and stays on. Set this back to true to restore the old daily-research
+# behavior with no code change.
+deep_research: false
 
 companies:
   - name: Emergent

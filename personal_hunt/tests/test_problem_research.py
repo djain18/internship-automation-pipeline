@@ -102,6 +102,35 @@ def test_firecrawl_evidence_skipped_for_watchlist_companies(monkeypatch) -> None
     assert result["evidence_count"] == 0
 
 
+def test_deep_research_carries_published_emails_through_every_return_path(monkeypatch) -> None:
+    """_fetch_site_and_roles's second element (scraped emails) used to be
+    discarded (bound to _emails and never read again). It must reach the
+    result dict on the insufficient-evidence path AND the evidence-found
+    path, since contacts.py's _site_email reads it from here for every
+    discovered/watchlist company."""
+    company = {"company": "Acme", "company_url": "https://acme.com", "lane": "ai"}
+
+    def mock_fetch_site_no_evidence(*_a, **_k):
+        return [], ["founders@acme.com"], []
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", mock_fetch_site_no_evidence)
+    monkeypatch.setattr(problem_research, "_fetch_hackernews_evidence", lambda *_a, **_k: [])
+    result = research_deep_problem(company, llm_cache={}, config={}, model_id="", region="")
+    assert result["problem_status"] == "insufficient_evidence"
+    assert result["published_emails"] == ["founders@acme.com"]
+
+    def mock_fetch_site_with_evidence(*_a, **_k):
+        return (
+            [{"url": "https://acme.com/careers", "observation": "hiring fast", "access_date": "2026-09-13"}],
+            ["founders@acme.com"],
+            [],
+        )
+
+    monkeypatch.setattr(problem_research, "_fetch_site_and_roles", mock_fetch_site_with_evidence)
+    result = research_deep_problem(company, llm_cache={}, config={}, model_id="", region="")
+    assert result["published_emails"] == ["founders@acme.com"]
+
+
 def test_deep_research_with_company_url_only() -> None:
     """Company with unresolved URL skips deep research."""
     company = {
