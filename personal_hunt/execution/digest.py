@@ -974,7 +974,56 @@ def render_html_digest(run: Record) -> str:
     watchlist_html = _watchlist_movement_html(run)
     problem_briefs_html = _problem_briefs_html(discovered, site_url)
 
+    # Sections the markdown digest carried but Gmail, which renders only this
+    # HTML, never showed: Daksh's own spotted leads, broken sources, and the
+    # stale-artifact warning. Silence about a broken source is the one thing a
+    # daily email must never do.
+    spotted_items = [
+        f'<li style="margin:0 0 8px"><a href="{html.escape(str(item.get("source_url") or ""), quote=True)}" '
+        f'style="color:#2a2e33;text-decoration:none;word-break:break-all">{html.escape(str(item.get("source_url") or ""))}</a></li>'
+        for item in run.get("spotted_leads", []) or []
+        if item.get("source_url")
+    ]
+    spotted_block = (
+        f"""
+        <div style="padding:20px 28px;border-top:1px solid #e5e7eb">
+          <div style="font-size:13px;font-weight:600;color:#2a2e33">Your spotted leads &middot; open and decide</div>
+          <ul style="margin:14px 0 0;padding-left:18px;font-size:13px">{''.join(spotted_items)}</ul>
+        </div>"""
+        if spotted_items
+        else ""
+    )
+    failed_sources = [
+        html.escape(str(item.get("source_id") or "unknown"))
+        for item in run.get("source_health", []) or []
+        if item.get("status") == "failed"
+    ]
+    stale_notice = html.escape(str(run.get("staleness_warning") or ""))
+    alert_lines = ([stale_notice] if stale_notice else []) + (
+        [f"Sources that failed this run: {', '.join(failed_sources)}"] if failed_sources else []
+    )
+    alert_block = (
+        '<div style="margin:0 28px 18px;padding:12px 14px;border-radius:10px;background:#fff7ed;'
+        'font-size:13px;line-height:19px;color:#9a3412">' + "<br>".join(alert_lines) + "</div>"
+        if alert_lines
+        else ""
+    )
+
     count = len(records)
+    withheld = sum(
+        1
+        for item in list(run.get("primary", [])) + list(run.get("remote_fallback", []))
+        if not item.get("digest_approved")
+    )
+    matches_html = (
+        f'<table role="presentation" style="width:100%;border-collapse:collapse">{"".join(rows)}</table>'
+        if rows
+        else (
+            '<div style="padding:18px 28px;border-top:1px solid #e5e7eb;font-size:13px;line-height:20px;color:#6b7375">'
+            f"No internship cleared every gate today. {int(run.get('eligible_count', 0) or 0)} passed the filters "
+            f"and {withheld} {'was' if withheld == 1 else 'were'} withheld by Kimi as low-fit. The digest is not padded.</div>"
+        )
+    )
     return f"""<!doctype html>
 <html><body style="margin:0;background:#f5f5f5;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2a2e33">
   <div style="display:none;max-height:0;overflow:hidden">{count} new high-fit internships selected for manual review.</div>
@@ -985,12 +1034,14 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:7px;font-size:18px;font-weight:600">Your internship hunt</div>
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
-      <table role="presentation" style="width:100%;border-collapse:collapse">{''.join(rows)}</table>
+      {alert_block}
+      {matches_html}
       {worth_a_look_block}
-      {watchlist_html}
-      {problem_briefs_html}
       {queue_block}
+      {spotted_block}
       {unverified_block}
+      {problem_briefs_html}
+      {watchlist_html}
       {weekly_block}
       {signal_block}
       <div style="padding:22px 28px;border-top:1px solid #e5e7eb">
