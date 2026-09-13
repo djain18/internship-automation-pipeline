@@ -38,6 +38,11 @@ PIPELINE_SEND_STATUSES = {
     "blocked_insufficient_evidence", "blocked_no_evidence", "blocked_validation",
     "approved_manual_send",
 }
+# Daksh's own addresses. The self-digest is "sent" from and to them and names
+# every matched company, so on 2026-09-13 all 26 Sent-folder hits for Outreach
+# companies on dakshjainn02@gmail.com were digests, not outreach.
+SELF_ADDRESSES = ("dakshinjain187@gmail.com", "dakshjainn02@gmail.com")
+_NOT_TO_SELF = " ".join(f"-to:{address}" for address in SELF_ADDRESSES)
 FREE_MAIL_DOMAINS = {
     "gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com",
     "icloud.com", "proton.me", "protonmail.com", "live.com", "rediffmail.com",
@@ -125,11 +130,11 @@ def outcome_updates(rows: list[Record], search: Any, today: date) -> dict[str, R
         sent_at = str(row.get("sent_at") or "").strip()[:10]
 
         if not sent_at:
-            if email:
+            if email and email not in SELF_ADDRESSES:
                 sent = _oldest(search.find(f"in:sent to:{email} newer_than:60d"))
                 how = "sent_to_contact_email"
-            elif company and len(company) >= 4:
-                sent = _oldest(search.find(f'in:sent subject:"{company}" newer_than:60d'))
+            elif not email and company and len(company) >= 4:
+                sent = _oldest(search.find(f'in:sent subject:"{company}" {_NOT_TO_SELF} newer_than:60d'))
                 how = "sent_subject_names_company"
             else:
                 sent = None

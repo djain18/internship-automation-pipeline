@@ -145,3 +145,16 @@ def test_classify_reply() -> None:
     assert classify_reply("Unfortunately we are not moving forward") == "rejected"
     assert classify_reply("Share your availability for an interview round") == "interview_requested"
     assert classify_reply("Thanks, will get back") == "replied"
+
+
+def test_self_sent_digests_are_never_mistaken_for_outreach() -> None:
+    gmail = FakeGmail({})
+    outcome_updates([{"id": "o1", "company": "Auraaison"}], gmail, date(2026, 9, 18))
+    assert gmail.queries and all(
+        "-to:dakshjainn02@gmail.com" in query and "-to:dakshinjain187@gmail.com" in query
+        for query in gmail.queries
+        if "in:sent" in query
+    )
+    gmail = FakeGmail({})
+    outcome_updates([{"id": "o2", "company": "X Co", "contact_email": "dakshjainn02@gmail.com"}], gmail, date(2026, 9, 18))
+    assert gmail.queries == []
