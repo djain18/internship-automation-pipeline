@@ -24,7 +24,11 @@ def test_rows_keep_outreach_manual() -> None:
             {
                 "id": "opp_1",
                 "company": "Test",
-                "outreach": {"send_status": "draft_needs_human_review"},
+                "outreach": {
+                    "send_status": "draft_needs_human_review",
+                    "email_subject": "founder office idea",
+                    "claude_prompt": "# Test: draft the outreach email",
+                },
                 "selected_contact": {},
             }
         ],
@@ -32,6 +36,11 @@ def test_rows_keep_outreach_manual() -> None:
     rows = rows_from_run(run)
     assert rows["Outreach"][0]["send_status"] == "draft_needs_human_review"
     assert rows["Outreach"][0]["next_action"] == "human_review"
+    # draft's own key is "email_subject" -- the Sheet column read "subject"
+    # from a key ("subject") neither draft function has ever emitted, which
+    # left this column silently blank on every real run.
+    assert rows["Outreach"][0]["subject"] == "founder office idea"
+    assert rows["Outreach"][0]["claude_prompt"] == "# Test: draft the outreach email"
 
 
 def test_existing_human_owned_values_survive_machine_upsert() -> None:

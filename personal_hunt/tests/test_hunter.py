@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import hunter
-from hunter import _pick, company_domain, find_company_contact
+from hunter import _pick, company_domain, find_company_contact, find_company_contact_with_status
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -88,6 +88,81 @@ def test_missing_key_and_disabled_flag_skip_quietly(monkeypatch) -> None:
     assert find_company_contact(_record(), scoring, state, "2026-09") is None
     monkeypatch.setenv("HUNTER_API_KEY", "key")
     assert find_company_contact(_record(), {"hunter_enabled": False}, state, "2026-09") is None
+
+
+def test_with_status_distinguishes_every_early_return(monkeypatch) -> None:
+    """Every early return used to look identical (silent None) from outside
+    -- a missing key, a blocked domain, and a real HTTP error were
+    indistinguishable, which is how the key never reaching Modal went
+    unnoticed. Each miss must carry its own reason."""
+    state = _MemoryState()
+
+    _clear_key(monkeypatch)
+    contact, status = find_company_contact_with_status(_record(), {"hunter_enabled": True}, state, "2026-09")
+    assert (contact, status) == (None, "no_api_key")
+
+    monkeypatch.setenv("HUNTER_API_KEY", "key")
+    contact, status = find_company_contact_with_status(_record(), {"hunter_enabled": False}, state, "2026-09")
+    assert (contact, status) == (None, "disabled")
+
+    contact, status = find_company_contact_with_status(
+        _record(company_url=""), {"hunter_enabled": True}, state, "2026-09"
+    )
+    assert (contact, status) == (None, "no_domain")
+
+    scoring = {"hunter_enabled": True, "hunter_monthly_max_searches": 0}
+    contact, status = find_company_contact_with_status(_record(), scoring, state, "2026-09")
+    assert (contact, status) == (None, "cap_reached")
+
+
+def test_with_status_reports_no_match_and_ok(monkeypatch) -> None:
+    state = _MemoryState()
+    monkeypatch.setenv("HUNTER_API_KEY", "key")
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/account"):
+            return _Response({"data": {"requests": {"searches": {"available": 20}, "verifications": {"available": 0}}}})
+        return _Response({"data": {"emails": []}})
+
+    monkeypatch.setattr(hunter.requests, "get", fake_get)
+    scoring = {"hunter_enabled": True, "hunter_monthly_max_searches": 25, "hunter_min_confidence": 80}
+    contact, status = find_company_contact_with_status(_record(), scoring, state, "2026-09")
+    assert (contact, status) == (None, "no_match")
+
+    # A record for a different, cached domain returns ok on a real pick.
+    state2 = _MemoryState()
+
+    def fake_get_found(url, params=None, timeout=None):
+        if url.endswith("/account"):
+            return _Response({"data": {"requests": {"searches": {"available": 20}, "verifications": {"available": 0}}}})
+        return _Response(_payload())
+
+    monkeypatch.setattr(hunter.requests, "get", fake_get_found)
+    contact, status = find_company_contact_with_status(_record(), scoring, state2, "2026-09")
+    assert status == "ok"
+    assert contact["email"] == "aarav@fixturelabs.example"
+
+    # A second lookup for the same domain this month hits the cache.
+    contact, status = find_company_contact_with_status(_record(), scoring, state2, "2026-09")
+    assert status == "cache_hit"
+
+
+def test_with_status_reports_http_error(monkeypatch) -> None:
+    state = _MemoryState()
+    monkeypatch.setenv("HUNTER_API_KEY", "key")
+
+    class _FailingResponse:
+        status_code = 401
+
+        def raise_for_status(self):
+            import requests
+
+            raise requests.HTTPError(response=self)
+
+    monkeypatch.setattr(hunter.requests, "get", lambda *_a, **_k: _FailingResponse())
+    scoring = {"hunter_enabled": True, "hunter_monthly_max_searches": 25}
+    contact, status = find_company_contact_with_status(_record(), scoring, state, "2026-09")
+    assert (contact, status) == (None, "http_error:401")
 
 
 def test_linkedin_url_from_hunter_result() -> None:

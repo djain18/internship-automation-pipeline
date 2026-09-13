@@ -225,7 +225,7 @@ def research_deep_problem(
     published_linkedin_urls: list[str] = []
 
     # 1. Company-owned surfaces
-    site_evidence, _emails, site_linkedin_urls = _fetch_site_and_roles(company_url)
+    site_evidence, published_emails, site_linkedin_urls = _fetch_site_and_roles(company_url)
     all_evidence.extend(site_evidence)
     published_linkedin_urls.extend(site_linkedin_urls)
 
@@ -258,6 +258,7 @@ def research_deep_problem(
             "confidence": "low",
             "supported": False,
             "published_linkedin_urls": published_linkedin_urls,
+            "published_emails": published_emails,
         }
 
     # Score evidence for ranking
@@ -278,6 +279,7 @@ def research_deep_problem(
             "confidence": "low",
             "supported": False,
             "published_linkedin_urls": published_linkedin_urls,
+            "published_emails": published_emails,
         }
 
     # Call LLM to synthesize hypothesis if enabled
@@ -301,6 +303,7 @@ def research_deep_problem(
             "confidence": "medium",
             "supported": False,
             "published_linkedin_urls": published_linkedin_urls,
+            "published_emails": published_emails,
         }
 
     # LLM synthesis with fail-closed validation
@@ -389,6 +392,7 @@ def research_deep_problem(
             "supported": supported,
             "llm_status": "ok",
             "published_linkedin_urls": published_linkedin_urls,
+            "published_emails": published_emails,
         }
 
     except Exception as e:
@@ -411,6 +415,7 @@ def research_deep_problem(
             "llm_error": str(e)[:200],
             "llm_status": "failed",
             "published_linkedin_urls": published_linkedin_urls,
+            "published_emails": published_emails,
         }
 
 

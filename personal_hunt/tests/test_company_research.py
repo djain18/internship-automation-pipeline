@@ -117,7 +117,7 @@ def test_outreach_leads_with_the_observed_problem() -> None:
             },
         }
     )
-    assert "own weekly revenue reporting" in draft["email_body"]
+    assert "own weekly revenue reporting" in draft["claude_prompt"]
     # Just verify it has the right fields, don't validate formatting
     assert draft["send_status"] == "draft_needs_human_review"
 
@@ -127,7 +127,7 @@ def test_outreach_is_blocked_when_no_solution_is_grounded() -> None:
         {"company": "Acme", "title": "Intern", "research": {"solution_concept": ""}}
     )
     assert draft["send_status"] == "blocked_insufficient_evidence"
-    assert draft["email_body"] == ""
+    assert draft["claude_prompt"] == ""
 
 
 def test_published_site_address_is_used_when_the_record_has_no_contact() -> None:

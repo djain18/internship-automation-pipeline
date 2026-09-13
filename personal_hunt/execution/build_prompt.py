@@ -90,20 +90,27 @@ def validate_prototype_prompt(prompt_text: str, company_name: str) -> list[str]:
     return errors
 
 
-def _load_prompt_template(templates_dir: Path | None = None) -> str:
-    """Load prompt template from templates/ directory if available."""
+def load_prompt_template(filename: str, fallback: str, templates_dir: Path | None = None) -> str:
+    """Load a template from templates/ by filename, falling back to an
+    embedded default when the file is missing or unreadable. Shared with
+    outreach.py's build_email_prompt so a missing template file degrades
+    instead of crashing, the same guarantee this module already gives
+    prototype_prompt.txt."""
     if templates_dir is None:
         templates_dir = Path(__file__).parent.parent / "templates"
 
-    template_file = templates_dir / "prototype_prompt.txt"
+    template_file = templates_dir / filename
     if template_file.exists():
         try:
             return template_file.read_text("utf-8").strip()
         except Exception:
             pass
+    return fallback
 
-    # Fall back to embedded template
-    return PROMPT_TEMPLATE
+
+def _load_prompt_template(templates_dir: Path | None = None) -> str:
+    """prototype_prompt.txt specifically. See load_prompt_template."""
+    return load_prompt_template("prototype_prompt.txt", PROMPT_TEMPLATE, templates_dir)
 
 
 def build_prototype_prompt(

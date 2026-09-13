@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from models import Record, canonical_url, clean_text
 
@@ -37,12 +38,20 @@ def _site_email(record: Record) -> tuple[str, str]:
     """The best address published on the company's own site, if any.
 
     Returns (email, kind). A personal-looking address beats a shared mailbox,
-    because a shared mailbox rarely reaches the person who decides.
+    because a shared mailbox rarely reaches the person who decides. Reads
+    both research and deep_problem_research -- same two-source merge
+    _extract_provenanced_linkedin already does, since a discovered/watchlist
+    company's emails live in the latter, not the former, and reading only
+    "research" silently dropped every one of them.
     """
-
+    research = record.get("research") if isinstance(record.get("research"), dict) else {}
+    deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
     published = [
         clean_text(item)
-        for item in (record.get("research") or {}).get("published_emails") or []
+        for item in [
+            *(research.get("published_emails") or []),
+            *(deep_research.get("published_emails") or []),
+        ]
     ]
     if not published:
         return "", ""
@@ -132,6 +141,34 @@ def _role_priority(role: str) -> int:
     if "head of ops" in role_lower or "vp ops" in role_lower or "director of ops" in role_lower:
         return 3
     return 50  # Named person with generic role
+
+
+def attach_contact(record: Record, hunter_ctx: dict[str, Any] | None) -> Record:
+    """choose_contact, then one bounded Hunter lookup when it found no email.
+
+    The single path all three contact-attaching call sites route through
+    (enrich_selected's research queue, funding events, and watchlist/
+    discovered-for-research companies) -- previously only the first of
+    those three ever reached Hunter, so the highest-value targets (the ones
+    that get deep research and a validated prototype prompt) never got a
+    contact lookup at all. hunter is imported here, not at module level,
+    because hunter.py imports _mailbox_kind from this module.
+    """
+    contact = choose_contact(record)
+    if hunter_ctx and not (contact or {}).get("email"):
+        from hunter import find_company_contact_with_status
+
+        found, status = find_company_contact_with_status(
+            record, hunter_ctx["scoring"], hunter_ctx["state"], hunter_ctx["month"]
+        )
+        # Collected here, read once at the end of run_pipeline to build a
+        # single "hunter" source_health row -- every early return used to
+        # look identical (silent None) from outside, which let a missing
+        # HUNTER_API_KEY go unnoticed for weeks.
+        hunter_ctx.setdefault("statuses", []).append(status)
+        if found and found.get("email"):
+            return found
+    return contact
 
 
 def choose_contact(record: Record) -> Record:

@@ -513,6 +513,16 @@ def _harvested_ats_source(vendor: str, slug: str) -> Record | None:
     }
 
 
+def watchlist_source_id(name: str) -> str:
+    """The source_health id a watchlist company's board fetch reports under.
+
+    Shared with digest.py's watchlist movement section so both read the same
+    company under the same key -- a duplicated slug regex here and there
+    would silently stop matching the moment one drifted from the other."""
+    slug = re.sub(r"[^A-Za-z0-9_.-]", "_", name.casefold())
+    return f"watchlist_{slug}"
+
+
 def watchlist_board_sources(watchlist_config: dict[str, Any]) -> list[Record]:
     """Convert config/watchlist.yml's per-company board_url/board_adapter into
     fetch_live-compatible source dicts, so each watchlist company's own board
@@ -528,10 +538,9 @@ def watchlist_board_sources(watchlist_config: dict[str, Any]) -> list[Record]:
         name = clean_text(company_cfg.get("name", ""))
         if not board_url or not adapter or not name:
             continue
-        slug = re.sub(r"[^A-Za-z0-9_.-]", "_", name.casefold())
         output.append(
             {
-                "id": f"watchlist_{slug}",
+                "id": watchlist_source_id(name),
                 "name": f"Watchlist board: {name}",
                 "company": name,
                 "company_url": clean_text(company_cfg.get("site_url", "")),

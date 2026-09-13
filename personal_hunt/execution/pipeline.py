@@ -43,7 +43,7 @@ from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
 from company_site import fetch_office_evidence
 from firecrawl_research import resolve_company_url_via_search
-from contacts import choose_contact
+from contacts import attach_contact, choose_contact
 from dedupe import deduplicate
 from digest import render_digest, render_html_digest, send_self_digest, write_digest
 from discover_companies import fetch_registries
@@ -57,12 +57,12 @@ from fetch_sources import (
     watchlist_board_sources,
 )
 from funding import fetch_funding_live, select_funding_events
-from hunter import find_company_contact
 from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
 from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
 from normalize import normalize_many
 from outreach import draft_outreach, validate_outreach
 from problem_research import research_deep_problem, select_discovered_for_research
+from watchlist_prompts import write_watchlist_prompts
 from research import research_funding_event, research_records
 from score import score_many, select_balanced
 from sheets import publish_run
@@ -101,16 +101,7 @@ def enrich_selected(
     research_results = research_records(output, cache=llm_cache)
     for item, research in zip(output, research_results, strict=True):
         item["research"] = research
-        item["selected_contact"] = choose_contact(item)
-        if hunter_ctx and not (item["selected_contact"] or {}).get("email"):
-            found = find_company_contact(
-                item,
-                hunter_ctx["scoring"],
-                hunter_ctx["state"],
-                hunter_ctx["month"],
-            )
-            if found and found.get("email"):
-                item["selected_contact"] = found
+        item["selected_contact"] = attach_contact(item, hunter_ctx)
         item["resume"] = route_resume(item)
         item["content_hash"] = normalized_content_hash(
             {
@@ -391,7 +382,11 @@ def _watchlist_to_companies(watchlist_config: dict[str, Any]) -> list[Record]:
     """Convert watchlist.yml company entries to Record format for deep research.
 
     Each watchlist company becomes a company record with site URL and lane.
-    These bypass funding event requirements and are always researched.
+    Building this list is free (no fetch, no LLM) -- the digest's watchlist
+    movement section always uses it for display. Whether these records also
+    enter the daily deep-research queue is gated separately, at the
+    select_discovered_for_research call site, by watchlist.yml's
+    deep_research flag.
     """
     output: list[Record] = []
     for company_cfg in watchlist_config.get("companies", []):
@@ -660,6 +655,51 @@ def _adaptive_apify_topup(
         )
 
 
+# Statuses that mean Hunter never got a fair chance to find anything --
+# misconfiguration or a hard error, not a real search that came up empty.
+# These are what "complete_with_source_failures" should mean for Hunter;
+# a monthly cap or a clean no-match is Hunter working as designed.
+_HUNTER_FAILURE_STATUSES = {"no_api_key"}
+
+
+def _hunter_source_health(hunter_ctx: dict[str, Any] | None) -> Record | None:
+    """One aggregated source_health row summarizing every Hunter lookup this
+    run. Every early return in hunter.py used to look identical (a silent
+    None) from outside the module -- a missing HUNTER_API_KEY, a blocked
+    domain, and a real HTTP error were indistinguishable, which is how the
+    key going unwired to Modal could have gone unnoticed indefinitely."""
+    if hunter_ctx is None:
+        return None
+    statuses: list[str] = hunter_ctx.get("statuses", [])
+    if not statuses:
+        return {
+            "source_id": "hunter",
+            "status": "ok",
+            "record_count": 0,
+            "human_action": "No records needed a Hunter lookup this run.",
+        }
+    from collections import Counter
+
+    counts = Counter(statuses)
+    found = counts.get("ok", 0) + counts.get("cache_hit", 0)
+    is_failure = any(status in _HUNTER_FAILURE_STATUSES or status.startswith(("http_error", "error:")) for status in counts)
+    summary = ", ".join(f"{status}={count}" for status, count in sorted(counts.items()))
+    if "no_api_key" in counts:
+        action = "HUNTER_API_KEY is not set for this run -- add it to the mounted secret."
+    elif any(status.startswith(("http_error", "error:")) for status in counts):
+        action = f"Hunter lookup errored ({summary}); inspect hunter.py's error handling."
+    elif "quota_exhausted" in counts or "cap_reached" in counts:
+        action = f"Hunter's free-tier budget was hit this run ({summary}); contacts fell back to research required."
+    else:
+        action = f"Hunter ran cleanly, {found} contact(s) found ({summary})."
+    return {
+        "source_id": "hunter",
+        "status": "failed" if is_failure else "ok",
+        "record_count": found,
+        "human_action": action,
+    }
+
+
 def run_pipeline(
     raw_records: list[Record],
     source_health: list[Record],
@@ -676,6 +716,15 @@ def run_pipeline(
     hunter_state: Any | None = None,
 ) -> Record:
     llm_cache = llm_cache if llm_cache is not None else dict(role_judgements or {})
+    # Built once, passed to every attach_contact call in this run -- funding
+    # events and discovered/watchlist companies previously called bare
+    # choose_contact with no Hunter fallback at all, which is why they were
+    # the two buckets that never got a contact.
+    hunter_ctx = (
+        {"scoring": config["scoring"], "state": hunter_state, "month": run_date.strftime("%Y-%m")}
+        if hunter_state is not None
+        else None
+    )
     raw_records = attach_company_provenance(raw_records, company_candidates or [])
     normalized = normalize_many(
         raw_records,
@@ -721,21 +770,33 @@ def run_pipeline(
         event["problem_research"] = research_funding_event(
             event, allow_llm=bool(event.get("company_url")), cache=llm_cache
         )
-        # Funding events skipped choose_contact entirely, which is why contact
-        # was null on every one of them.
+        # Funding events used to skip Hunter entirely (bare choose_contact,
+        # no fallback), which is a real part of why contact was null on
+        # every one of them -- see attach_contact's docstring.
         event["research"] = event["problem_research"]
-        event["selected_contact"] = choose_contact(event)
+        event["selected_contact"] = attach_contact(event, hunter_ctx)
 
     # Phase 2: Deep problem research for discovered companies
-    # Load watchlist companies (always included, no evidence gate)
+    # Load watchlist companies for digest display -- free, no fetch or LLM.
     watchlist_companies = _watchlist_to_companies(config.get("watchlist", {}))
+    # Whether they also enter the daily deep-research queue (which bypasses
+    # the evidence-minimum gate) is gated by deep_research in watchlist.yml.
+    # Default false as of 2026-09-13: the same 3 fixed companies came back
+    # insufficient_evidence every run, burning two Kimi calls each, twice
+    # daily, for an answer that could not change. Deep-diving them is now a
+    # one-shot manual step (pipeline.py --watchlist-prompts); their job
+    # boards still get fetched every run via watchlist_board_sources, a
+    # separate, cheap path this flag does not touch.
+    watchlist_for_research = (
+        watchlist_companies if config.get("watchlist", {}).get("deep_research", True) else []
+    )
     # Select funded companies with resolved URLs for deep research,
-    # plus all watchlist companies (which bypass the evidence-minimum gate)
+    # plus watchlist companies admitted above (which bypass the evidence gate)
     discovered_for_research = select_discovered_for_research(
         funding_primary + funding_extended,
         config=config["scoring"],
         run_date=run_date,
-        watchlist_companies=watchlist_companies,
+        watchlist_companies=watchlist_for_research,
     )
     model_id = os.getenv("BEDROCK_RESEARCH_MODEL_ID", "")
     region = os.getenv("AWS_REGION", "")
@@ -770,8 +831,22 @@ def run_pipeline(
     # real run -- the same "computed but never called" failure shape as the
     # earlier discovered_for_research/prompt_generation wiring gap.
     for company in discovered_for_research:
-        if not company.get("selected_contact"):
-            company["selected_contact"] = choose_contact(company)
+        contact = company.get("selected_contact") or {}
+        if not contact:
+            contact = attach_contact(company, hunter_ctx)
+        elif not contact.get("email"):
+            # research_deep_problem runs *after* the funding-event loop
+            # attached this contact, and its five-page site fetch is the only
+            # place a funded company's published_emails ever reach
+            # _site_email. Skipping the retry here meant contacts.py's
+            # research/deep_problem_research merge could never fire for the
+            # bucket it was written for. choose_contact is free and offline,
+            # so this costs nothing and spends no second Hunter lookup; the
+            # earlier contact stays unless this actually turns up an address.
+            rechosen = choose_contact(company)
+            if rechosen.get("email"):
+                contact = rechosen
+        company["selected_contact"] = contact
         draft = draft_outreach(company)
         draft["validation_errors"] = validate_outreach(draft)
         if draft["validation_errors"]:
@@ -801,15 +876,7 @@ def run_pipeline(
         output_root,
         int(config["scoring"]["max_artifacts"]),
         llm_cache,
-        hunter_ctx=(
-            {
-                "scoring": config["scoring"],
-                "state": hunter_state,
-                "month": run_date.strftime("%Y-%m"),
-            }
-            if hunter_state is not None
-            else None
-        ),
+        hunter_ctx=hunter_ctx,
     )
     enriched_by_id = {item["id"]: item for item in enriched}
     primary = [enriched_by_id.get(item["id"], item) for item in primary]
@@ -844,6 +911,9 @@ def run_pipeline(
     )
     llm_statuses = {primary_llm.get("status"), remote_llm.get("status")}
     digest_usable = llm_statuses.issubset({"ok", "not_needed"})
+    hunter_health = _hunter_source_health(hunter_ctx)
+    if hunter_health is not None:
+        source_health = [*source_health, hunter_health]
     return {
         "run_id": run_id,
         "run_kind": run_kind,
@@ -893,6 +963,7 @@ def run_pipeline(
         "funding_extended": funding_extended,
         "funding_excluded": funding_excluded,
         "discovered_for_research": discovered_for_research,
+        "watchlist_companies": watchlist_companies,
         "all_scored": scored,
         "duplicates": duplicates,
         "source_health": source_health,
@@ -908,6 +979,14 @@ def _parse_args() -> argparse.Namespace:
     mode.add_argument("--live", action="store_true")
     mode.add_argument("--input-json", type=Path)
     mode.add_argument("--digest-latest", action="store_true")
+    mode.add_argument(
+        "--watchlist-prompts",
+        action="store_true",
+        help=(
+            "Write one deep-dive research prompt per watchlist.yml company and exit. "
+            "No fetch, no LLM call -- paste the result into a fresh Claude Code session."
+        ),
+    )
     parser.add_argument("--run-date", type=date.fromisoformat)
     parser.add_argument("--publish-sheets", action="store_true")
     parser.add_argument("--send-digest", action="store_true")
@@ -1075,6 +1154,20 @@ def main() -> int:
     )
     state = LocalState(state_base / "state.json")
     llm_cache = {} if args.no_state else state.llm_cache()
+    if args.watchlist_prompts:
+        output_dir = output_base / run_date.isoformat() / "watchlist-prompts"
+        written = write_watchlist_prompts(config["watchlist"], output_dir)
+        print(
+            json.dumps(
+                {
+                    "status": "watchlist_prompts_written",
+                    "count": len(written),
+                    "files": [str(path.resolve()) for path in written],
+                },
+                indent=2,
+            )
+        )
+        return 0
     if args.digest_latest:
         # Unlike the --live path below, this branch used to have no exception
         # handling at all: any raise from _load_latest_live() or the guards

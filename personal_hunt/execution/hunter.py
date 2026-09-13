@@ -195,41 +195,60 @@ def canonical_source(record: Record) -> str:
 def find_company_contact(
     record: Record, scoring: dict[str, Any], state: Any, month: str
 ) -> Record | None:
-    """One bounded Hunter lookup for a contact-less record. Never raises."""
+    """One bounded Hunter lookup for a contact-less record. Never raises.
+
+    Backward-compatible entry point: returns just the contact (or None).
+    Use find_company_contact_with_status when the reason for a miss matters
+    -- every early return used to look identical (silent None) from outside,
+    which is how a missing HUNTER_API_KEY went unnoticed for weeks.
+    """
+    contact, _status = find_company_contact_with_status(record, scoring, state, month)
+    return contact
+
+
+def find_company_contact_with_status(
+    record: Record, scoring: dict[str, Any], state: Any, month: str
+) -> tuple[Record | None, str]:
+    """Same lookup, plus the reason for a miss: disabled, no_api_key,
+    no_domain, cached_miss, cap_reached, quota_exhausted, no_match,
+    http_error:<code>, error:<ExceptionType>, cache_hit, or ok."""
     try:
         return _find_company_contact(record, scoring, state, month)
-    except Exception:
-        return None
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else "unknown"
+        return None, f"http_error:{code}"
+    except Exception as exc:
+        return None, f"error:{type(exc).__name__}"
 
 
 def _find_company_contact(
     record: Record, scoring: dict[str, Any], state: Any, month: str
-) -> Record | None:
+) -> tuple[Record | None, str]:
     if not scoring.get("hunter_enabled", True):
-        return None
+        return None, "disabled"
     key = os.getenv("HUNTER_API_KEY", "")
     if not key:
-        return None
+        return None, "no_api_key"
     domain = company_domain(record)
     if not domain:
-        return None
+        return None, "no_domain"
     cached = state.hunter_domain_cache(month, domain)
     if cached is not None:
         if not cached.get("found"):
-            return None
-        return _contact_from_cached(cached, record)
+            return None, "cached_miss"
+        return _contact_from_cached(cached, record), "cache_hit"
     use = state.hunter_month_use(month)
     if use["searches"] >= int(scoring.get("hunter_monthly_max_searches", 25)):
-        return None
+        return None, "cap_reached"
     quota = account_quota(key)
     if quota is not None and quota[0] <= 0:
-        return None
+        return None, "quota_exhausted"
     emails, accept_all = domain_search(key, domain, int(scoring.get("hunter_limit_per_domain", 10)))
     state.record_hunter_use(month, "searches")
     pick = _pick(emails, int(scoring.get("hunter_min_confidence", 80)))
     if pick is None:
         state.cache_hunter_domain(month, domain, {"found": False})
-        return None
+        return None, "no_match"
     verified: Record | None = None
     if scoring.get("hunter_verify", False):
         use = state.hunter_month_use(month)
@@ -254,7 +273,7 @@ def _find_company_contact(
             "confidence": contact["confidence"],
         },
     )
-    return contact
+    return contact, "ok"
 
 
 def _contact_from_cached(cached: Record, record: Record) -> Record:

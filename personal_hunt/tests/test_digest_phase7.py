@@ -24,45 +24,44 @@ from pipeline import run_pipeline
 
 
 def test_watchlist_movement_section_shows_activity_summary():
-    """Watchlist movement section displays one-line status per watchlist company."""
-    discovered = [
-        {
-            "company": "Emergent",
-            "company_url_basis": "watchlist",
-            "deep_problem_research": {
-                "evidence_count": 3,
-            },
-        },
-        {
-            "company": "Lyzr AI",
-            "company_url_basis": "watchlist",
-            "deep_problem_research": {
-                "evidence_count": 0,
-            },
-        },
-        {
-            "company": "SomeVC-Funded Startup",
-            "company_url_basis": "reviewed_registry_exact_company_name",
-            "deep_problem_research": {
-                "evidence_count": 2,
-            },
-        },
-    ]
+    """Watchlist movement section displays one-line status per watchlist company.
 
-    rendered = _watchlist_movement_section(discovered)
+    Covers both signal paths: a company that did enter the deep-research
+    queue this run (discovered_for_research), and one that only got its
+    free job-board fetch (deep_research: false, the 2026-09-13 default).
+    """
+    run = {
+        "watchlist_companies": [
+            {"company": "Emergent", "funding_event_id": "watchlist_emergent_id"},
+            {"company": "Lyzr AI", "funding_event_id": "watchlist_lyzr_id"},
+            {"company": "AEOS", "funding_event_id": "watchlist_aeos_id"},
+        ],
+        "discovered_for_research": [
+            {
+                "funding_event_id": "watchlist_emergent_id",
+                "deep_problem_research": {"evidence_count": 3},
+            },
+        ],
+        "source_health": [
+            {"source_id": "watchlist_lyzr_ai", "status": "ok", "record_count": 4},
+            {"source_id": "watchlist_aeos", "status": "failed", "record_count": 0},
+        ],
+    }
 
-    # Only watchlist companies should appear
+    rendered = _watchlist_movement_section(run)
+
     assert "Emergent" in rendered
-    assert "Lyzr AI" in rendered
-    assert "SomeVC-Funded Startup" not in rendered
     assert "3 signals found" in rendered
-    assert "no activity observed" in rendered
+    assert "Lyzr AI" in rendered
+    assert "4 open roles on board" in rendered
+    assert "AEOS" in rendered
+    assert "board fetch failed" in rendered
 
 
 def test_watchlist_movement_section_handles_empty_list():
-    """Empty watchlist returns honest message."""
-    rendered = _watchlist_movement_section([])
-    assert "No watchlist companies present" in rendered
+    """No watchlist companies configured returns an honest message."""
+    rendered = _watchlist_movement_section({"watchlist_companies": []})
+    assert "No watchlist companies configured" in rendered
 
 
 def test_problem_brief_block_includes_all_sections():
@@ -96,7 +95,7 @@ def test_problem_brief_block_includes_all_sections():
             "access_date": "2026-09-13",
         },
         "outreach": {
-            "email_body": "Hi Jane, I noticed...",
+            "claude_prompt": "# TestCorp: draft the outreach email\n\nHi Jane, I noticed...",
             "linkedin_note": "I'm interested in TestCorp's automation challenges.",
             "linkedin_message": "Following up on our connection...",
             "send_status": "ready",
@@ -280,7 +279,7 @@ def test_fixture_pipeline_render_includes_discovered_section(tmp_path: Path, mon
             },
             "outreach": {
                 "email_subject": "watchlist prototype idea",
-                "email_body": (
+                "claude_prompt": (
                     "Hi Test Contact, I've been researching Test Watchlist Co and found a "
                     "concrete operational gap worth flagging: users report slow performance "
                     "on the platform. I put together a small working prototype instead of "
@@ -310,7 +309,7 @@ def test_fixture_pipeline_render_includes_discovered_section(tmp_path: Path, mon
     def mock_research_deep(company, **kwargs):
         return company.get("deep_problem_research", {})
 
-    def mock_choose_contact(company):
+    def mock_attach_contact(company, hunter_ctx):
         return company.get("selected_contact")
 
     def mock_draft_outreach(company):
@@ -329,8 +328,8 @@ def test_fixture_pipeline_render_includes_discovered_section(tmp_path: Path, mon
         mock_research_deep,
     )
     monkeypatch.setattr(
-        "pipeline.choose_contact",
-        mock_choose_contact,
+        "pipeline.attach_contact",
+        mock_attach_contact,
     )
     monkeypatch.setattr(
         "pipeline.draft_outreach",
@@ -397,8 +396,14 @@ def test_digest_quiet_day_with_no_discovered_companies(tmp_path: Path, monkeypat
     # Even on a quiet day, sections should be present
     assert "## Watchlist movement" in rendered
     assert "## Problem briefs for researched companies" in rendered
-    # And should say what happened honestly
-    assert "No watchlist companies" in rendered or "no activity" in rendered.lower()
+    # And should say what happened honestly. With deep_research off (the
+    # 2026-09-13 default), watchlist status now comes from each company's
+    # real job-board fetch, not from the (empty) discovered-companies queue.
+    assert "Emergent" in rendered
+    assert any(
+        phrase in rendered.lower()
+        for phrase in ("open role", "no board configured", "board fetch")
+    )
 
     # HTML digest must stay honest on a quiet day too, not just plain text.
     html_rendered = render_html_digest(run)

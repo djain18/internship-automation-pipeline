@@ -548,3 +548,122 @@ credits on them).
 
 Verified: 250 personal_hunt tests (up from 244), 200 Rise tests (separate commands), Ruff clean.
 Committed `7726c2d`, pushed to `origin/main`, redeployed, verified live before pushing.
+
+## 2026-09-13 (continued) — Hunter wired to every call site, discarded emails restored, email body replaced with a Claude Code prompt, watchlist daily burn stopped
+
+Daksh raised three problems: zero contacts ever reached him despite Hunter.io being connected;
+the drafted emails read as mail-merge slop, worse than plain AI slop; and Emergent/Lyzr/AEOS burn
+two Kimi calls each, twice daily, for a permanent `insufficient_evidence`.
+
+**Diagnosis, not assumption, first.** Before touching code: listed the mounted Modal secret
+`internship-hunt-secrets` via a throwaway `modal run` function that printed only whether
+`HUNTER_API_KEY` was present (never its value) — it was, 40 characters, matching Hunter's key
+format. That ruled out the obvious "key never reached the cloud" theory. Calling
+`hunter.account_quota()` locally against the same key then hit a real local bug: `.env` line 108
+had `HUNTER_API_KEY=...422b8967PUBLIC_RESEARCH_PROVIDER=firecrawl` on one line with no newline
+between them, so the local key was 74 characters of two concatenated values and every local
+Hunter call 401'd. Fixed the line break; `account_quota` then returned `(50, 100)` -- untouched
+free-tier quota, confirming Hunter really has never run once, matching the absent `hunter` key in
+`state.json`. `domain_search` against `stripe.com` (a domain known to have staff) confirmed the
+real shape of a Hunter pick: `sources[]` is frequently a Google search-query URL
+(`google.com/search?q=site:linkedin.com...`), not a direct citation link -- the code already
+caps confidence at `medium` for this (never `high` without a separate deliverable-verification
+call), so no code change was needed there, only precise wording in the policy amendment below.
+
+**Five real breaks found by reading the code, not guessing:**
+1. `find_company_contact` only ran inside `enrich_selected`'s `research_queue`
+   (`pipeline.py`) -- funding events (`:727`, old numbering) and
+   discovered/watchlist companies (`:774`) called bare `choose_contact` with no Hunter fallback at
+   all. Those are exactly the records that get deep research and a validated prototype prompt.
+   Confirmed against the 2026-09-13 Graph AI run: real domain resolved, real careers page fetched
+   and quoted, still ended `contact_research_required`.
+2. `problem_research.py:228` unpacked `_fetch_site_and_roles`'s scraped emails into `_emails` and
+   discarded them -- none of `research_deep_problem`'s five return dicts carried
+   `published_emails`, though all five carried `published_linkedin_urls`.
+   `contacts._site_email` only ever read `research["published_emails"]`, never
+   `deep_problem_research["published_emails"]`.
+3. `hunter.py`'s `except Exception: return None` made every early return (missing key, blocked
+   domain, monthly cap, a real HTTP error, and a genuine no-match) look identical from outside.
+4. `digest.py`'s internship section printed `contact.name or contact.status` -- a site-scraped or
+   Hunter-found address with no name (`site_published_role_mailbox`, or an unverified generic
+   Hunter pick) rendered as the bare word "available" with the email nowhere on the page.
+5. The `email_body` on every draft was a hardcoded Python f-string in `outreach.py`
+   (`draft_problem_led_email`, `draft_outreach`) -- Kimi K2.5 has never written outreach copy,
+   only ranking/research/prototype-prompt generation. Every email was the same skeleton with the
+   company name swapped in.
+
+**Fixes, in the order that unblocks Daksh soonest:**
+
+- **`pipeline.py --watchlist-prompts`** (new, `execution/watchlist_prompts.py`): deterministic,
+  no fetch, no LLM. Writes one self-contained deep-dive prompt per `watchlist.yml` company to
+  `out/<date>/watchlist-prompts/<slug>.md` -- verified facts from the config, a research brief
+  with the same truth rules as `CLAUDE.md`, and the email copy rules plus a `/humanizer`
+  instruction. Daksh pastes one into a fresh Claude Code conversation per company.
+- **`contacts.attach_contact(record, hunter_ctx)`** is now the single path all three call sites
+  route through (`pipeline.py`'s `enrich_selected`, the funding-event loop, and the
+  discovered/watchlist loop) -- replacing three separate, inconsistent call sites with one.
+- **`problem_research.py`**: kept the previously-discarded scraped emails and added
+  `published_emails` to all five `research_deep_problem` return dicts. `contacts._site_email` now
+  reads both `research` and `deep_problem_research`, mirroring the two-source merge
+  `_extract_provenanced_linkedin` already did for LinkedIn URLs.
+- **`hunter.find_company_contact_with_status`** (new): every early return now carries a reason
+  (`no_api_key`, `no_domain`, `cached_miss`, `cap_reached`, `quota_exhausted`, `no_match`,
+  `http_error:<code>`, `cache_hit`, `ok`). `find_company_contact` (the old signature) still exists
+  as a thin wrapper for backward compatibility. `pipeline._hunter_source_health` aggregates every
+  status collected across a run into one `hunter` source-health row, rendered in the digest's
+  existing Source health section -- a `no_api_key` line there would have caught this whole class
+  of problem on day one.
+- **`digest.py`**'s internship section now prints the email, its source URL, and its
+  `contact_priority` whenever present, not just the name-or-status line.
+- **`outreach.build_email_prompt(record)`** (new) replaces `email_body` with `claude_prompt` in
+  both `draft_problem_led_email` and `draft_outreach` -- a self-contained, paste-ready prompt
+  (new `templates/email_prompt.txt`) carrying the company, contact, the real observed signal with
+  its source, the inference kept explicitly separate from it, the uncertainty, the solution idea,
+  the resume basename, the copy rules, and a `/humanizer` instruction. The forbidden-word/phrase
+  lists are rendered from `outreach.py`'s own `FORBIDDEN_WORDS`/`FORBIDDEN_PHRASES` constants, not
+  retyped, so the rules Claude Code is told to follow cannot drift from what `validate_outreach`
+  enforces. Refuses to emit an empty prompt: `send_status` becomes `blocked_no_evidence` when
+  there is no real observed signal to ground one in, distinct from `blocked_insufficient_evidence`
+  because LinkedIn note/message are still drafted in that case. `validate_outreach`'s email
+  word-count and subject-format checks were removed (they validated a field that no longer
+  exists); every LinkedIn and tone/forbidden-content check is unchanged. `sheets.py`'s Outreach
+  tab `email_body` column is now `claude_prompt`; fixed a real adjacent bug in the same edit --
+  the `subject` column read `draft.get("subject")`, a key neither draft function has ever emitted
+  (`email_subject` is the real key), so that column was silently blank on every real run.
+- **One real bug found while smoke-testing the new prompt by hand**: `deterministic_research`'s
+  own observation reads `The listing states: "..."` -- wrapping that again in quotes for the
+  prompt nested them (`""..."`.`") and read as visibly broken. Fixed with `_quote_with_source`,
+  which skips the outer wrap when the text already quotes itself.
+- **`watchlist.yml`**: `deep_research: false` (new, default). `pipeline._watchlist_to_companies`
+  now always builds the display list (free, no fetch or LLM) for the digest's watchlist movement
+  section; whether that list also enters the daily deep-research queue is gated separately at the
+  `select_discovered_for_research` call site. `watchlist_board_sources` (the actual job-board
+  fetch) is untouched and still runs every time -- it is real, cheap signal, unlike the daily
+  research pass. The Watchlist movement section now reads each company's own board-fetch
+  `record_count` from `source_health` when it wasn't deep-researched this run, instead of showing
+  a dishonest "no activity" for a signal that was never checked. New `fetch_sources.watchlist_source_id`
+  is the one place that slug is computed, shared between the fetcher and the digest so they can
+  never drift out of matching each other.
+- **Policy amendment**, `context/source-and-access-policy.md` (archived workspace, 2026-09-13):
+  replaced the blanket "No automated personal-contact discovery" line with the rule the code now
+  enforces -- a named-person address is acceptable only with at least one public source URL,
+  stored with its extraction date and confidence; a pattern-guessed address is never stored or
+  shown regardless of provider. Documents the Google-search-query nuance in Hunter's `sources[]`.
+
+**Verified:** 264 personal_hunt tests (up from 250), Ruff clean. `Step 0` diagnostics run live
+against the real Hunter account (`account_quota` returned `(50, 100)`; `domain_search` against
+`stripe.com` returned real named picks with the expected `sources[]` shape). Fixture run's
+rendered digest inspected by eye for the Watchlist movement section text. `build_email_prompt`'s
+output inspected by eye twice -- once to confirm the doubled-quote bug, once after the fix.
+`pipeline.py --watchlist-prompts` run for real; all three generated files read end to end.
+
+**Skipped or unverified:**
+- **No live cloud run yet** with these changes deployed -- not committed, pushed, or redeployed
+  this session. The next scheduled run is the first real test of Hunter actually firing on a
+  funded/watchlist company with a resolved domain.
+- **HUNTER_API_KEY was already correctly present in the mounted secret** -- the original
+  suspicion (never reached Modal) was wrong; Step 0 caught this before any secret was rewritten,
+  so no Modal secret change was made this session.
+- Sheets publish, Gmail self-digest, and the funded-company end-to-end chain were not re-verified
+  live in this session; those paths are exercised by the existing test suite and the 2026-09-13
+  (continued, above) entry's live run, not by anything new here.

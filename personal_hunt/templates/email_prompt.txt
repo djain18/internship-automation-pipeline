@@ -1,0 +1,43 @@
+# {company_name}: draft the outreach email
+
+## Verified facts (do not re-derive; do not contradict without new evidence)
+
+- Company: {company_name}
+- Role: {role_title}
+- Location: {location}
+- Contact: {contact_name} ({contact_role})
+- Apply link: {apply_url}
+- Resume to attach: {resume_basename}
+
+## What I actually observed
+
+{observed_signal}
+
+## What I am inferring (kept separate from the observation above)
+
+{inference}
+
+## What is still uncertain
+
+{uncertainty}
+
+## Solution idea
+
+{solution_concept}
+
+## Draft the email
+
+Write a cold email from Daksh to {contact_name} using the observation and
+inference above. Copy rules:
+
+{copy_rules}
+
+Never use these words: {forbidden_words}.
+Never use these phrases: {forbidden_phrases}.
+Never invent a metric, a familiarity, or an artifact that does not exist.
+Never state the inference as a fact, or promise an unmeasured outcome.
+
+## Before you finish
+
+Run the drafted email through the /humanizer skill so it does not read like
+AI-generated text. Show me the final email; I will send it manually.
