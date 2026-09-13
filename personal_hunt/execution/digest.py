@@ -630,7 +630,9 @@ def _send_queue_section(run: Record) -> str:
     )
     lines.append("")
     if not queue:
-        lines.extend(["Queue is clear: every approved match was already emailed.", ""])
+        # "every approved match was already emailed" printed on days with zero
+        # matches too, which claimed work that never happened.
+        lines.extend(["Queue is clear: no approved match is waiting to be sent.", ""])
     for index, item in enumerate(queue, 1):
         lines.extend(
             [
@@ -650,6 +652,16 @@ def _send_queue_section(run: Record) -> str:
             lines.append(
                 f"- {item.get('company')} - {item.get('title')} "
                 f"(waiting {item.get('age_days')}d): send or drop it today"
+            )
+        lines.append("")
+    closed = run.get("closed_queue", []) or []
+    if closed:
+        lines.append("Probably closed (the page says so; skipped from today's queue):")
+        lines.append("")
+        for item in closed:
+            lines.append(
+                f"- {item.get('company')} - {item.get('title')}: page reads "
+                f"\"{item.get('closed_signal')}\" ({item.get('apply_url')})"
             )
         lines.append("")
     return "\n".join(lines)

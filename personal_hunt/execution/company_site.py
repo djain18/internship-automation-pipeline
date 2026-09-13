@@ -299,6 +299,63 @@ def find_office_evidence(html_text: str, page_url: str) -> Record | None:
     return None
 
 
+# Phrases job pages and ATS boards print once a role stops taking applicants
+# while still answering 200, which the HEAD-based link check cannot see.
+CLOSED_LISTING_PHRASES = (
+    "no longer accepting applications",
+    "not accepting applications",
+    "this position has been filled",
+    "position has been filled",
+    "this job is no longer available",
+    "job is no longer available",
+    "this job has expired",
+    "job posting has expired",
+    "no longer open",
+    "applications are closed",
+    "this role has been filled",
+    "the job you are looking for",
+)
+_CLOSED_HOSTS_SKIPPED = ("linkedin.com", "lnkd.in")
+
+
+def closed_listing_signal(
+    url: str,
+    user_agent: str = "InternshipResearch/0.1",
+    timeout: int = 10,
+    max_bytes: int = 200_000,
+) -> str:
+    """The exact closed-listing phrase a job page prints, or "".
+
+    One robots-respecting GET, never raising. LinkedIn is skipped outright:
+    this pipeline may not open it. An empty result means "no closed signal
+    seen", never "confirmed open".
+    """
+
+    target = canonical_url(url)
+    parts = urlsplit(target)
+    host = parts.netloc.casefold()
+    if not target.startswith("http") or any(
+        host == skipped or host.endswith("." + skipped) for skipped in _CLOSED_HOSTS_SKIPPED
+    ):
+        return ""
+    session = requests.Session()
+    session.headers["User-Agent"] = user_agent
+    try:
+        robots = _robots(session, f"{parts.scheme}://{parts.netloc}", timeout)
+        if not robots.can_fetch(user_agent, target):
+            return ""
+        response = session.get(target, timeout=timeout, stream=True)
+        if response.status_code >= 400:
+            return ""
+        body = response.raw.read(max_bytes, decode_content=True).decode(
+            response.encoding or "utf-8", errors="replace"
+        )
+    except Exception:
+        return ""
+    lowered = clean_text(BeautifulSoup(body, "html.parser").get_text(" ")).casefold()
+    return next((phrase for phrase in CLOSED_LISTING_PHRASES if phrase in lowered), "")
+
+
 def fetch_office_evidence(
     company_url: str,
     user_agent: str = "InternshipResearch/0.1",

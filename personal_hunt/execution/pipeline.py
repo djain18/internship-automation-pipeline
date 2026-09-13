@@ -42,7 +42,7 @@ from artifacts import create_artifacts
 from build_prompt import build_prompts_for_companies
 from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
-from company_site import fetch_office_evidence
+from company_site import closed_listing_signal, fetch_office_evidence
 from firecrawl_research import resolve_company_url_via_search
 from contacts import attach_contact, choose_contact
 from dedupe import deduplicate
@@ -233,10 +233,18 @@ def attach_send_loop(
     sent_ids: set[str],
     deliveries: dict[str, Record],
     scoring: dict[str, Any],
+    closed_check: Any = None,
 ) -> Record:
     """Push drafts out the door: quota queue, stale flags, and send streak.
 
-    Reads delivery state only; every send stays manual and human-owned."""
+    Reads delivery state only; every send stays manual and human-owned.
+
+    closed_check (live runs only) is called on each would-be queue entry's
+    apply URL, at most quota + a few times per run. A page that still answers
+    200 but says the role is filled passes the HEAD-based link check, and
+    Daksh would otherwise spend a send slot drafting for a closed role; those
+    move to closed_queue with the exact phrase seen, and the next entry takes
+    the slot."""
 
     approved = list(run.get("digest_primary", [])) + list(run.get("digest_remote_fallback", []))
     unsent = sorted(
@@ -260,13 +268,30 @@ def attach_send_loop(
                 "contact": contact.get("email") or contact.get("name", ""),
             }
         )
-    queue = entries[:quota]
+    queue: list[Record] = []
+    closed: list[Record] = []
+    # ponytail: sequential GETs, bounded to quota + 3 checks per run.
+    checks_left = quota + 3
+    for entry in entries:
+        if len(queue) >= quota:
+            break
+        if closed_check is not None and checks_left > 0:
+            checks_left -= 1
+            phrase = closed_check(str(entry.get("apply_url") or ""))
+            if phrase:
+                closed.append({**entry, "closed_signal": phrase})
+                continue
+        queue.append(entry)
     queued_ids = {entry["id"] for entry in queue}
+    closed_ids = {entry["id"] for entry in closed}
     stale = [
         entry for entry in entries
-        if entry["age_days"] >= stale_after and entry["id"] not in queued_ids
+        if entry["age_days"] >= stale_after
+        and entry["id"] not in queued_ids
+        and entry["id"] not in closed_ids
     ]
     run["send_queue"] = queue
+    run["closed_queue"] = closed
     run["stale_queue"] = stale
     run["send_streak_days"] = send_streak_days(deliveries, run_date)
     run["daily_send_quota"] = quota
@@ -1348,6 +1373,7 @@ def main() -> int:
         sent_ids=set() if args.no_state or args.dry_run else state.sent_opportunity_ids(),
         deliveries={} if args.no_state or args.dry_run else state.digest_deliveries(),
         scoring=config["scoring"],
+        closed_check=closed_listing_signal if run_kind.startswith("live") else None,
     )
     if args.publish_sheets and not args.dry_run:
         # Read before the digest is written, so today's email carries the
