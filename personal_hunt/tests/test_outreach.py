@@ -268,7 +268,7 @@ def test_email_prompt_carries_conversion_and_humanizer_rules_itself() -> None:
         # Employer instructions outrank generic rules (Auraaison names a subject line).
         assert "instructions in the listing win" in prompt
         # Conversion rules, each traceable to a cited source in REVIEW.md.
-        assert "50-100 words" in prompt
+        assert "80-150 words" in prompt
         assert "interest question" in prompt
         assert "Attach Daksh-Jain-founders_office.pdf" in prompt
         # Humanizer principles written into the prompt, plus the audit loop.

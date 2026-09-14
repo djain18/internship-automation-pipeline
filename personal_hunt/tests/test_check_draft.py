@@ -6,12 +6,16 @@ from pathlib import Path
 from check_draft import check_email_draft
 
 BODY = (
-    "Your post calls early work at Auraaison the messy, real, unglamorous version of "
-    "building an AI company. That line is why I'm writing. At Godel Earth I worked in the "
-    "founder's office on AI tooling and email automation, so messy is familiar ground. "
-    "I'm looking for a Founder's Office internship in Bengaluru from November to April. "
-    "I have a rough idea for keeping founder decisions written down while things move "
-    "fast. Would a short note on it be useful?"
+    "Dear Auraaison team,\n\n"
+    "Your post describes early work at Auraaison as the messy, real, unglamorous version of "
+    "building an AI company. That line is the reason I am writing.\n\n"
+    "I am Daksh Jain, a final-year BCA student at Christ University, Bengaluru. At Godel "
+    "Earth I worked in the founder's office on AI tooling and email automation, so that "
+    "kind of work is familiar to me.\n\n"
+    "I would like to be considered for the Founder's Office Intern role from November 2026 "
+    "to April 2027. I have attached my resume for your reference. Would you be open to "
+    "considering me for this role?\n\n"
+    "Best regards,\nDaksh Jain\nBCA, Christ University, Bengaluru\ndakshjainn02@gmail.com"
 )
 
 
@@ -20,7 +24,7 @@ def draft(**overrides):
         "lead_id": "opp_1",
         "to": "admin@auraaison.com",
         "to_source": "https://www.linkedin.com/posts/auraaisonn_x",
-        "subject": "founder office intern",
+        "subject": "Founder's Office Internship Application - Daksh Jain",
         "body": BODY,
         "attachment": "Daksh-Jain-founders_office.pdf",
         "listing_subject": None,
@@ -37,11 +41,18 @@ def test_word_count_bounds() -> None:
     assert any(e.startswith("body_too_long") for e in check_email_draft(draft(body=BODY + " " + BODY)))
 
 
+def test_formal_greeting_and_signature_required() -> None:
+    no_greeting = BODY.replace("Dear Auraaison team,\n\n", "")
+    assert "missing_greeting" in check_email_draft(draft(body=no_greeting))
+    no_signature = BODY.split("Best regards,")[0] + "Thanks"
+    assert "missing_signature" in check_email_draft(draft(body=no_signature + " and more words " * 3))
+
+
 def test_subject_rules_and_listing_override() -> None:
-    assert "subject_not_lowercase" in check_email_draft(draft(subject="Founder Office Intern"))
     assert any(e.startswith("subject_word_count") for e in check_email_draft(draft(subject="hi")))
-    assert "subject_fake_reply_prefix" in check_email_draft(draft(subject="re: founder office"))
-    # The listing's own subject wins over the lowercase 2-4 word rule.
+    assert "subject_missing_internship" in check_email_draft(draft(subject="A quick note for your team"))
+    assert "subject_fake_reply_prefix" in check_email_draft(draft(subject="Re: Founder's Office Internship"))
+    # The listing's own subject wins over the generic subject rules.
     required = draft(subject="Founder's Office", listing_subject="Founder's Office")
     assert check_email_draft(required) == []
     assert "subject_ignores_listing_instruction" in check_email_draft(
@@ -76,7 +87,7 @@ def test_recipient_needs_a_source_and_null_is_allowed() -> None:
 
 def test_cli_reports_errors_and_exit_code(tmp_path: Path) -> None:
     path = tmp_path / "drafts.json"
-    path.write_text(json.dumps([draft(), draft(lead_id="opp_2", subject="Hi")]), encoding="utf-8")
+    path.write_text(json.dumps([draft(), draft(lead_id="opp_2", subject="Hi")], ensure_ascii=False), encoding="utf-8")
     script = Path(__file__).resolve().parents[1] / "execution" / "check_draft.py"
     result = subprocess.run([sys.executable, str(script), str(path)], capture_output=True, text=True)
     assert result.returncode == 1

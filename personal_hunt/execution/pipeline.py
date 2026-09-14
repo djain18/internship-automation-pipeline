@@ -1242,6 +1242,10 @@ def _send_unscored(
 def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
     run_id = str(run["run_id"])
     delivery_key = _ist_delivery_key(run_id)
+    if run.get("outreach_drafts"):
+        # The review email is its own delivery: a plain digest earlier the same
+        # day must not suppress the evening approval request (2026-09-14).
+        delivery_key += ":review"
     # Keyed on the IST calendar date, not just run_id: a retry within the same
     # morning must not double-send, but a genuinely new day must always send
     # even if it happens to reference the same (stale) run artifact. The

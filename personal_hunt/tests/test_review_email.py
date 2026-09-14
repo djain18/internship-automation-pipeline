@@ -87,6 +87,29 @@ def test_attach_outreach_review_reads_this_runs_reviewable_drafts(tmp_path: Path
     assert run["outreach_next_slot"] == "2026-09-15T10:00:00+05:30"
 
 
+def test_review_email_still_sends_after_the_same_days_plain_digest(monkeypatch, tmp_path: Path) -> None:
+    # 2026-09-14: the day's digest had already gone out, so the 21:00 run with
+    # drafts would have been skipped as "already sent" and no review email sent.
+    subjects = []
+
+    def fake_send(subject, _body, _html="", attachments=None):
+        subjects.append(subject)
+        return f"gmail-{len(subjects)}"
+
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("GMAIL_DIGEST_TO", "dakshjainn02@gmail.com")
+    monkeypatch.setenv("RESUME_DIR", str(tmp_path))
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+    monkeypatch.setattr(pipeline, "_ist_delivery_key", lambda run_id: f"2026-09-14:{run_id}")
+    state = LocalState(tmp_path / "state.json")
+    plain = {**_run(), "run_id": "run_a", "run_kind": "live", "digest_usable": True}
+    assert pipeline._send_once(plain, state)[0].startswith("digest_sent")
+    review = {**_review_run(), "run_kind": "live", "digest_usable": True}
+    assert pipeline._send_once(review, state)[0] != "digest_already_sent"
+    assert pipeline._send_once(review, state)[0] == "digest_already_sent"
+    assert len(subjects) == 2
+
+
 def test_send_once_attaches_resumes_and_prefixes_subject(monkeypatch, tmp_path: Path) -> None:
     sent = {}
 

@@ -14,9 +14,21 @@ from research import TEMPLATE_INFERENCE, TEMPLATE_SOLUTION
 # highest-converting principles inside the prompt). Sources, checked
 # 2026-09-14, are listed with each rule in REVIEW.md; recheck them yearly.
 EMAIL_COPY_RULES = (
-    "- Body: 50-100 words, aim for about 75. Short enough to read on a phone "
-    "without scrolling. (Instantly 2026 benchmark: best campaigns under 80 words; "
-    "Gong 2026: replies drop sharply past 100.)",
+    # 2026-09-14 (Daksh): "a little more formal, like how cold emails are written
+    # for internships". Greeting, a one-line introduction and a signature are
+    # added; the body stays short and plain.
+    "- Tone: polite and professional, like a strong internship application email "
+    "from a student to a founder. Warm, never casual, never salesy. No slang.",
+    "- Format, in this order: greeting (\"Dear <first name>,\" or \"Dear <Company> "
+    "team,\" when no name is known); the observation line; one sentence introducing "
+    "Daksh (\"I am Daksh Jain, a final-year BCA student at Christ University, "
+    "Bengaluru.\"); one line on why he fits; the ask; the question; then the sign-off "
+    "exactly as: \"Best regards,\" / \"Daksh Jain\" / \"BCA, Christ University, "
+    "Bengaluru\" / \"dakshjainn02@gmail.com\", each on its own line.",
+    "- Length: 80-150 words including greeting and signature, aim for about 110. "
+    "Short paragraphs of one to three sentences. (Instantly 2026: best campaigns "
+    "under 80 words of pitch; Gong 2026: replies drop past 100. The greeting and "
+    "signature carry the extra words, not the pitch.)",
     "- Any instructions in the listing win over every rule here: a required "
     "subject line, a named inbox, \"send your CV\", \"DM me\", a form. Follow them "
     "exactly and say in the output which one you followed.",
@@ -26,22 +38,26 @@ EMAIL_COPY_RULES = (
     "the email still makes sense, the personalization is not doing its job.",
     "- Then one line on why Daksh fits, using exactly one verified fact from the "
     "section about him, the one closest to this role. No metrics, no adjectives about himself.",
-    "- Be honest about the ask: a Founder's Office or generalist internship, "
-    "Nov 2026 to Apr 2027, Bengaluru.",
-    "- End with one low-effort interest question they can answer in a line "
-    "(\"Would a short note on how I'd approach X be useful?\"), not a request for a "
-    "30-minute call. (Gong Labs, 304,174 emails: asking for interest beat asking "
-    "for a meeting in cold outreach.) One or two questions in total.",
-    "- Write at a school reading level: short sentences, plain words. (Boomerang, "
-    "40M emails, 2016: 3rd-grade emails got 53% responses vs 39% at college level.)",
-    "- Slightly warm and a little opinionated. Neither neutral nor gushing.",
-    "- Count sentences about them against sentences about Daksh. Theirs should win.",
-    "- Subject: 2-4 lowercase words that look like an internal note "
-    "(\"founder office intern\"). No clickbait, emoji, numbers, fake Re:/Fwd:, or their "
-    "first name. Use the listing's subject line instead when it names one.",
+    "- Be honest about the ask: name the role from the listing, the dates "
+    "(November 2026 to April 2027) and Bengaluru, and say the resume is attached "
+    "(\"I have attached my resume for your reference.\").",
+    "- End with one polite, low-effort interest question they can answer in a line "
+    "(\"Would you be open to considering me for this role?\" or \"Would a short note "
+    "on how I would approach X be useful?\"), not a request for a 30-minute call. "
+    "(Gong Labs, 304,174 emails: asking for interest beat asking for a meeting in "
+    "cold outreach.) One question in total.",
+    "- Plain words and short sentences, even though the tone is formal. (Boomerang, "
+    "40M emails, 2016: 3rd-grade emails got 53% responses vs 39% at college level.) "
+    "Full sentences, no contractions.",
+    "- Count sentences about them against sentences about Daksh. Keep them close to even.",
+    "- Subject: a clear internship subject of 4-9 words naming the role and Daksh, "
+    "for example \"Founder's Office Internship Application - Daksh Jain\". Use a plain "
+    "hyphen. No clickbait, emoji, fake Re:/Fwd:, or their first name. Use the listing's "
+    "subject line exactly when it names one.",
     "- Plain text, at most one link, no images or signature banners. Attach "
     "{resume_basename}.pdf.",
-    "- Also write a day-3 follow-up (under 60 words) that adds one new, sourced "
+    "- Also write a polite day-3 follow-up (under 70 words, same greeting and sign-off) "
+    "that adds one new, sourced "
     "observation or a small useful idea; never \"just checking in\". (Instantly 2026: "
     "42% of replies came after the first email.)",
     "- LinkedIn note: 250-300 characters where possible.",
@@ -68,7 +84,8 @@ HUMANIZER_RULES = (
     "no filler (\"in order to\"), no stacked hedges.",
     "- No bold text, bullet lists, headings or emoji in the email.",
     "- Give it a pulse: mix short and longer sentences, use \"I\" naturally, and "
-    "include one specific reaction to their post. Do not polish it into a template.",
+    "include one specific reaction to their post. Formal does not mean stiff; it "
+    "should still read like one real student wrote it to one company.",
 )
 
 # Verified in context/candidate-profile.md (2026-09-08). The resume metrics

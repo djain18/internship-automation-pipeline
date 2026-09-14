@@ -40,7 +40,7 @@ pipeline_image = (
             "PERSONAL_HUNT_URL": "https://rise-web-kappa.vercel.app/my-hunt",
             # Approved-outreach sender (2026-09-14). "shadow" mails Daksh the copies;
             # flip to "live" only after the shadow week, per the plan.
-            "OUTREACH_SEND_MODE": "shadow",
+            "OUTREACH_SEND_MODE": "live",  # Daksh, 2026-09-14: live from 2026-09-15, no shadow week
             "OUTREACH_FROM": "dakshjainn02@gmail.com",
             "RESUME_DIR": "/data/resumes",
         }

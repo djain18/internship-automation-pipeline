@@ -18,8 +18,11 @@ from typing import Any
 from models import clean_text
 from outreach import validate_outreach
 
-BODY_MIN_WORDS = 50
-BODY_MAX_WORDS = 100
+# 2026-09-14: formal internship format (greeting, introduction, signature) per
+# Daksh, so the bounds include those lines. See EMAIL_COPY_RULES.
+BODY_MIN_WORDS = 80
+BODY_MAX_WORDS = 150
+SIGNATURE_NAME = "Daksh Jain"
 RESUME_ATTACHMENTS = frozenset(
     f"Daksh-Jain-{name}.pdf"
     for name in ("founders_office", "ai_automation", "gtm", "ops", "Master")
@@ -61,11 +64,16 @@ def check_email_draft(draft: dict[str, Any]) -> list[str]:
         if _fold(subject) != _fold(listing_subject):
             errors.append("subject_ignores_listing_instruction")
     else:
-        if subject != subject.lower():
-            errors.append("subject_not_lowercase")
         count = len(subject.split())
-        if not 2 <= count <= 4:
+        if not 3 <= count <= 10:
             errors.append(f"subject_word_count:{count}")
+        if "intern" not in subject.casefold():
+            errors.append("subject_missing_internship")
+    lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+    if not lines or not re.match(r"^(dear|hi|hello)\b.+,$", lines[0], re.IGNORECASE):
+        errors.append("missing_greeting")
+    if not any(line.startswith(SIGNATURE_NAME) for line in lines[-4:]):
+        errors.append("missing_signature")
     if re.match(r"^(re|fwd?)\s*:", subject, re.IGNORECASE):
         errors.append("subject_fake_reply_prefix")
 
