@@ -68,7 +68,10 @@ def test_routine_token_cannot_approve(api) -> None:
 def test_full_flow_queue_draft_review_approve(api) -> None:
     queue = api.get("/api/outreach/queue", headers=ROUTINE).json()
     assert queue["run_id"] == "run_a"
-    assert [item["lead_id"] for item in queue["leads"]] == ["opp_1"]  # opp_2 already sent
+    # state.json's sent_opportunity_ids means "shown in a digest", not "emailed".
+    # A lead Daksh saw but never contacted still gets a draft (2026-09-14: the
+    # live queue came back empty because every lead had been in the digest).
+    assert [item["lead_id"] for item in queue["leads"]] == ["opp_1", "opp_2"]
 
     wrong_run = api.post("/api/outreach/drafts", headers=ROUTINE, json={"run_id": "old", "drafts": [submitted()]})
     assert wrong_run.status_code == 409
