@@ -479,6 +479,58 @@ def sync_outcomes_from_gmail(spreadsheet_id: str | None = None, today: date | No
     return {"status": "ok", "updated_rows": len(updates), "updated_cells": len(data)}
 
 
+def outreach_send_updates(
+    matrix: list[list[Any]], sends: list[Record]
+) -> tuple[list[Record], list[list[Any]]]:
+    """Cell updates and new rows recording approved sends on the Outreach tab.
+
+    send_status and sent_at are human-owned columns, and a real send through
+    the approved sender is exactly what Daksh records there by hand, so they
+    are written here. Existing rows are matched on id outreach_<lead id>."""
+    headers = [str(header) for header in matrix[0]] if matrix and matrix[0] else TAB_SCHEMAS["Outreach"]
+    row_number = {str(row.get("id")): index + 2 for index, row in enumerate(_table(matrix))}
+    updates: list[Record] = []
+    appended: list[list[Any]] = []
+    for send in sends:
+        values = {
+            "send_status": "sent_after_approval",
+            "sent_at": str(send["sent_at"])[:10],
+            "contact_email": send["to"],
+            "subject": send["subject"],
+            "outcome_basis": f"gmail_message:{send['message_id']}",
+        }
+        row_id = f"outreach_{send['lead_id']}"
+        if row_id in row_number:
+            for column, value in values.items():
+                if column in headers:
+                    cell = f"'Outreach'!{_column_name(headers.index(column) + 1)}{row_number[row_id]}"
+                    updates.append({"range": cell, "values": [[value]]})
+        else:
+            row = {"id": row_id, "opportunity_id": send["lead_id"], "company": send.get("company"), **values}
+            appended.append([_flatten(row.get(header)) for header in headers])
+    return updates, appended
+
+
+def record_outreach_sends(sends: list[Record], spreadsheet_id: str | None = None) -> Record:
+    spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
+    if not sends:
+        return {"status": "ok", "updated_cells": 0, "appended_rows": 0}
+    if not spreadsheet_id:
+        return {"status": "skipped_no_sheet", "updated_cells": 0, "appended_rows": 0}
+    service = _service()
+    ensure_tabs(service, spreadsheet_id)
+    values = service.spreadsheets().values()
+    matrix = values.get(spreadsheetId=spreadsheet_id, range="'Outreach'!A1:ZZ").execute().get("values", [])
+    updates, appended = outreach_send_updates(matrix, sends)
+    if updates:
+        values.batchUpdate(spreadsheetId=spreadsheet_id, body={"valueInputOption": "RAW", "data": updates}).execute()
+    if appended:
+        values.append(
+            spreadsheetId=spreadsheet_id, range="'Outreach'!A1", valueInputOption="RAW", body={"values": appended}
+        ).execute()
+    return {"status": "ok", "updated_cells": len(updates), "appended_rows": len(appended)}
+
+
 def publish_run(run: Record, spreadsheet_id: str | None = None) -> dict[str, int]:
     spreadsheet_id = spreadsheet_id or os.getenv("INTERNSHIP_SHEET_ID", "")
     if not spreadsheet_id:

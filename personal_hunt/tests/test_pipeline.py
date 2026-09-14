@@ -97,6 +97,30 @@ def test_only_kimi_approved_records_are_researched(monkeypatch, tmp_path: Path) 
     assert all("research" not in item for item in run["primary"] if not item["digest_approved"])
 
 
+@pytest.mark.parametrize(
+    ("status", "usable"), [("ok", True), ("partial", True), ("failed", False)]
+)
+def test_digest_usable_follows_kimi_scoring_status(
+    monkeypatch, tmp_path: Path, status: str, usable: bool
+) -> None:
+    # A partial reply fails only its missing leads closed, so it must not
+    # cancel the digest the way a total failure does.
+    monkeypatch.setenv("ENABLE_BEDROCK", "false")
+    config = load_all()
+    records = load_json_records(AUTOMATION_ROOT / "fixtures" / "opportunities.json", "fixture")
+
+    def fake_score(items, _scoring, section, cache=None):
+        del cache
+        return [dict(item, digest_approved=False) for item in items], {
+            "status": status if items else "not_needed",
+            "section": section,
+        }
+
+    monkeypatch.setattr(pipeline, "score_shortlist", fake_score)
+    run = run_pipeline(records, [], date(2026, 9, 8), config, tmp_path / "run")
+    assert run["digest_usable"] is usable
+
+
 def test_resume_routing_prioritizes_role_family() -> None:
     assert route_resume(
         {
@@ -213,6 +237,58 @@ def test_self_digest_still_sends_when_every_match_was_already_sent(monkeypatch, 
     assert status == "digest_sent_no_new_matches"
     assert message_id == "gmail_message_quiet"
     assert sent_subjects == ["no new internship matches - Rise"]
+
+
+def test_failed_kimi_scoring_sends_labelled_unscored_digest(monkeypatch, tmp_path: Path) -> None:
+    # 2026-09-14 incident: scoring failed, _send_once raised, and Daksh got a
+    # failure notice instead of a digest. A total scoring outage now sends the
+    # deterministically shortlisted leads, marked UNSCORED everywhere.
+    state = LocalState(tmp_path / "state.json")
+    captured: list[tuple[str, str, str]] = []
+
+    def fake_send(subject: str, body: str, html_body: str = "") -> str:
+        captured.append((subject, body, html_body))
+        return "gmail_message_unscored"
+
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("GMAIL_DIGEST_TO", "dakshinjain187@gmail.com")
+    monkeypatch.setattr(pipeline, "send_self_digest", fake_send)
+    lead = {"digest_approved": False, "llm_rank_status": "failed", "title": "Generalist Intern"}
+    run = {
+        "run_id": "run_unscored",
+        "run_date": "2026-09-14",
+        "run_kind": "live",
+        "digest_usable": False,
+        "daily_target": 2,
+        "llm_scoring": {
+            "primary": {"status": "failed", "error": "ValueError: bad ids"},
+            "remote_fallback": {"status": "not_needed"},
+        },
+        "digest_primary": [],
+        "digest_remote_fallback": [],
+        "primary": [
+            {**lead, "id": "opp-low", "company": "LowCo", "score": 60},
+            {**lead, "id": "opp-top", "company": "TopCo", "score": 90},
+            {**lead, "id": "opp-mid", "company": "MidCo", "score": 75},
+        ],
+        "remote_fallback": [],
+        "funding_primary": [],
+        "funding_extended": [],
+        "source_health": [],
+    }
+
+    first = _send_once(run, state)
+    second = _send_once(run, state)
+
+    assert first == ("digest_sent_unscored", "gmail_message_unscored")
+    assert second == ("digest_already_sent", "gmail_message_unscored")
+    subject, body, html_body = captured[0]
+    assert subject == "[UNSCORED] 2 internship leads - Rise"
+    assert "UNSCORED" in body and "UNSCORED" in html_body
+    assert "approved by Kimi" not in body
+    assert "TopCo" in body and "MidCo" in body and "LowCo" not in body
+    # Unscored leads are not marked sent, so a later scored digest can still show them.
+    assert state.sent_opportunity_ids() == set()
 
 
 def test_digest_key_is_per_ist_day_not_only_per_run_id(monkeypatch, tmp_path: Path) -> None:
@@ -895,6 +971,32 @@ def test_send_queue_respects_quota_and_skips_sent() -> None:
     assert run["stale_queue"] == []
     assert run["send_streak_days"] == 0
     assert run["daily_send_quota"] == 2
+
+
+def test_send_queue_orders_by_kimi_fit_before_deterministic_score() -> None:
+    # run_33217ed5f6396542 (2026-09-14): five unsent leads tied at score 82, the
+    # tie broke on the hash id, and the queue skipped Auraaison (Kimi fit 92)
+    # and Simple Energy (85) for AIFORJR (80), College Circle (82), Mokuit (78).
+    from pipeline import attach_send_loop
+
+    def lead(id, fit, score=82):
+        return {"id": id, "company": id, "title": "Intern", "score": score, "llm_fit_score": fit}
+
+    run = {
+        "digest_primary": [
+            lead("opp_6c77_aiforjr", 80), lead("opp_825f_college", 82), lead("opp_8727_mokuit", 78),
+            lead("opp_9174_simple", 85), lead("opp_f35e_auraaison", 92), lead("opp_0000_lowfit", 71, score=95),
+        ],
+        "digest_remote_fallback": [],
+    }
+    attach_send_loop(
+        run, run_date=date(2026, 9, 14), first_seen={}, sent_ids=set(),
+        deliveries={}, scoring={"daily_send_quota": 3, "stale_after_days": 3},
+    )
+    assert [entry["id"] for entry in run["send_queue"]] == [
+        "opp_f35e_auraaison", "opp_9174_simple", "opp_825f_college"
+    ]
+    assert run["send_queue"][0]["kimi_fit"] == 92
 
 
 def test_stale_queue_flags_aged_unsent_beyond_quota() -> None:

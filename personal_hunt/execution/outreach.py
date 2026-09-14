@@ -4,19 +4,128 @@ import re
 
 from build_prompt import load_prompt_template
 from models import Record, clean_text
+from research import TEMPLATE_INFERENCE, TEMPLATE_SOLUTION
 
 # Shared with watchlist_prompts.py's one-shot deep-dive prompts, so the copy
 # rules Claude Code is told to follow are defined once, not retyped per
 # feature and left to drift.
+#
+# 2026-09-14: rewritten from sourced cold email data (Daksh asked for the
+# highest-converting principles inside the prompt). Sources, checked
+# 2026-09-14, are listed with each rule in REVIEW.md; recheck them yearly.
 EMAIL_COPY_RULES = (
-    "- Email body: 80-110 words.",
-    "- Subject: 2-4 lowercase words, no clickbait, emoji, fake reply prefix, "
-    "or the recipient's first name.",
-    "- One primary link.",
+    "- Body: 50-100 words, aim for about 75. Short enough to read on a phone "
+    "without scrolling. (Instantly 2026 benchmark: best campaigns under 80 words; "
+    "Gong 2026: replies drop sharply past 100.)",
+    "- Any instructions in the listing win over every rule here: a required "
+    "subject line, a named inbox, \"send your CV\", \"DM me\", a form. Follow them "
+    "exactly and say in the output which one you followed.",
+    "- First sentence is about them: the observation above, in their own words where "
+    "possible. Never open with Daksh's name, college, or \"I came across\".",
+    "- The observation has to lead to the ask. If you can delete the first line and "
+    "the email still makes sense, the personalization is not doing its job.",
+    "- Then one line on why Daksh fits, using exactly one verified fact from the "
+    "section about him, the one closest to this role. No metrics, no adjectives about himself.",
+    "- Be honest about the ask: a Founder's Office or generalist internship, "
+    "Nov 2026 to Apr 2027, Bengaluru.",
+    "- End with one low-effort interest question they can answer in a line "
+    "(\"Would a short note on how I'd approach X be useful?\"), not a request for a "
+    "30-minute call. (Gong Labs, 304,174 emails: asking for interest beat asking "
+    "for a meeting in cold outreach.) One or two questions in total.",
+    "- Write at a school reading level: short sentences, plain words. (Boomerang, "
+    "40M emails, 2016: 3rd-grade emails got 53% responses vs 39% at college level.)",
+    "- Slightly warm and a little opinionated. Neither neutral nor gushing.",
+    "- Count sentences about them against sentences about Daksh. Theirs should win.",
+    "- Subject: 2-4 lowercase words that look like an internal note "
+    "(\"founder office intern\"). No clickbait, emoji, numbers, fake Re:/Fwd:, or their "
+    "first name. Use the listing's subject line instead when it names one.",
+    "- Plain text, at most one link, no images or signature banners. Attach "
+    "{resume_basename}.pdf.",
+    "- Also write a day-3 follow-up (under 60 words) that adds one new, sourced "
+    "observation or a small useful idea; never \"just checking in\". (Instantly 2026: "
+    "42% of replies came after the first email.)",
     "- LinkedIn note: 250-300 characters where possible.",
-    "- Write like a thoughtful peer, not a vendor.",
-    "- Lead with their situation, not Daksh's biography.",
 )
+
+# The /humanizer skill's patterns, written into the prompt so they shape the
+# first draft instead of only a clean-up pass.
+HUMANIZER_RULES = (
+    "- Use zero em dashes and no curly quotes. Use commas, full stops or brackets.",
+    "- No AI vocabulary: delve, leverage, robust, testament, underscore, showcase, "
+    "landscape, pivotal, crucial, vibrant, additionally, enhance, foster, garner, "
+    "highlight (verb), intricate, key (adjective), valuable, align with.",
+    "- No inflated significance (\"a pivotal moment\", \"reshaping\", \"at the "
+    "intersection of\") and no promotional words (\"groundbreaking\", \"exciting "
+    "opportunity\", \"passionate\").",
+    "- No -ing tails that fake depth (\"..., highlighting their commitment to X\").",
+    "- Say \"is\" and \"has\", not \"serves as\", \"stands as\" or \"boasts\".",
+    "- No \"not just X, it's Y\", no rule of three, no synonym cycling, no false "
+    "\"from X to Y\" ranges.",
+    "- No chatbot or template phrases: \"I hope this email finds you well\", "
+    "\"I came across\", \"let me know\", \"I hope this helps\", \"looking forward to\", "
+    "\"just checking in\", \"synergy\", \"world-class\", \"cutting-edge\".",
+    "- No flattery (\"your amazing work\"), no vague authorities (\"experts say\"), "
+    "no filler (\"in order to\"), no stacked hedges.",
+    "- No bold text, bullet lists, headings or emoji in the email.",
+    "- Give it a pulse: mix short and longer sentences, use \"I\" naturally, and "
+    "include one specific reaction to their post. Do not polish it into a template.",
+)
+
+# Verified in context/candidate-profile.md (2026-09-08). The resume metrics
+# there stay out until Daksh confirms their evidence.
+CANDIDATE_FACTS = (
+    "- BCA student at Christ University, Bengaluru (June 2024 to May 2027). "
+    "Available for an internship from about 1 Nov 2026 to 30 Apr 2027.",
+    "- Godel Earth, Founder's Office: AI tooling on Amazon Bedrock, tool "
+    "evaluation, LinkedIn and email automation.",
+    "- ClapNow, Founder's Office: growth, influencer onboarding, seller operations.",
+    "- Ravure, D2C operations: orders, inventory, COD, RTO, Shopify workflows.",
+    "- Stratezic: GTM and lead-generation automation. Fire In The Belly: "
+    "Founder's Office opportunity automation.",
+    "- Built Rise, an internship discovery platform, and a job tracker with a "
+    "Google Sheets backend for Fleetooo.",
+    "- Works around an electrical retail shop: wholesalers, distributors, "
+    "assortment and customers building homes.",
+    "- Never cite a percentage, lead count, accuracy or time-saved figure for "
+    "Daksh; none is verified.",
+)
+
+EMAIL_OUTPUT_FORMAT = (
+    "After the tells from step 2, end with exactly this:",
+    "",
+    "Subject: ...",
+    "Body: ...",
+    "Attachment: ...",
+    "Listing instruction followed: ... (or none)",
+    "Word count: N | sentences about them / about Daksh: N / N",
+    "Day-3 follow-up: ...",
+    "LinkedIn note: ...",
+)
+
+EMAIL_AUDIT_STEPS = (
+    "1. Write the draft following every rule above.",
+    "2. Ask yourself: What makes this obviously AI-written? List the remaining tells "
+    "in a few words.",
+    "3. Rewrite to remove them, then check word count, zero em dashes, and that every "
+    "fact appears in this prompt or a source you opened.",
+    "4. Run the result through the /humanizer skill as a last pass. I will send it "
+    "manually.",
+)
+
+
+def _email_rule_values(record: Record) -> dict[str, str]:
+    """Placeholder values shared by both email prompts."""
+    resume = clean_text(record.get("resume")) or "Daksh-Jain-Master"
+    return {
+        "resume_basename": resume,
+        "candidate_facts": "\n".join(CANDIDATE_FACTS),
+        "copy_rules": "\n".join(EMAIL_COPY_RULES).replace("{resume_basename}", resume),
+        "humanizer_rules": "\n".join(HUMANIZER_RULES),
+        "output_format": "\n".join(EMAIL_OUTPUT_FORMAT),
+        "audit_steps": "\n".join(EMAIL_AUDIT_STEPS),
+        "forbidden_words": ", ".join(FORBIDDEN_WORDS),
+        "forbidden_phrases": "; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
+    }
 
 _EMAIL_PROMPT_FALLBACK = """# {company_name}: draft the outreach email
 
@@ -25,7 +134,7 @@ _EMAIL_PROMPT_FALLBACK = """# {company_name}: draft the outreach email
 - Company: {company_name}
 - Role: {role_title}
 - Location: {location}
-- Contact: {contact_name} ({contact_role})
+- Contact: {contact_line}
 - Apply link: {apply_url}
 - Resume to attach: {resume_basename}
 
@@ -45,22 +154,30 @@ _EMAIL_PROMPT_FALLBACK = """# {company_name}: draft the outreach email
 
 {solution_concept}
 
+## About Daksh (verified; use one fact, the most relevant)
+
+{candidate_facts}
+
 ## Draft the email
 
-Write a cold email from Daksh to {contact_name} using the observation and
-inference above. Copy rules:
+Write a cold email from Daksh to {recipient} built on the observation above.
+Treat the inference and solution idea as Daksh's guesses: offer them as questions
+or ideas, never as facts about the company. Never invent a metric, a familiarity,
+or an artifact that does not exist.
+
+### What gets cold emails answered
 
 {copy_rules}
 
-Never use these words: {forbidden_words}.
-Never use these phrases: {forbidden_phrases}.
-Never invent a metric, a familiarity, or an artifact that does not exist.
-Never state the inference as a fact, or promise an unmeasured outcome.
+### Humanizer rules (apply while writing, not only after)
+
+{humanizer_rules}
 
 ## Before you finish
 
-Run the drafted email through the /humanizer skill so it does not read like
-AI-generated text. Show me the final email; I will send it manually.
+{audit_steps}
+
+{output_format}
 """
 
 # Humanizer rules - hard-fail checks for outreach quality
@@ -200,6 +317,33 @@ def _recipient(record: Record) -> str:
     return name
 
 
+def _contact_line(record: Record) -> str:
+    """The contact as a verified fact: name / email (provenance), or an explicit
+    "none found". Shared by both prompts. The email prompt used to print the
+    Hi-there greeting fallback here, giving "Contact: there" (2026-09-14)."""
+    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
+    bits = [clean_text(contact.get("name")), clean_text(contact.get("email"))]
+    line = " / ".join(bit for bit in bits if bit)
+    if not line:
+        return "none found yet -- find the founder or hiring lead's public channel, with its source"
+    details = [clean_text(contact.get("role"))]
+    if contact.get("email") and contact.get("source_url"):
+        details.append(f"published at {clean_text(contact.get('source_url'))}")
+    details = [detail for detail in details if detail]
+    return f"{line} ({'; '.join(details)})" if details else line
+
+
+def _prompt_recipient(record: Record) -> str:
+    """Who the drafted email is addressed to, in words Claude Code can act on."""
+    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
+    name = _recipient(record)
+    if name != "there":
+        return name
+    team = f"the {clean_text(record.get('company')) or 'company'} hiring team"
+    email = clean_text(contact.get("email"))
+    return f"{team} ({email})" if email else team
+
+
 def _is_problem_led_company(record: Record) -> bool:
     """Check if company has deep problem research and prompt generation."""
     deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
@@ -272,13 +416,21 @@ def build_email_prompt(record: Record) -> str:
 
     deep_research = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
     research = record.get("research") if isinstance(record.get("research"), dict) else {}
-    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
 
-    inference = clean_text(deep_research.get("problem_hypothesis")) or clean_text(research.get("solution_concept"))
+    def researched(key: str, template: str) -> str:
+        value = clean_text(research.get(key))
+        return "" if value == clean_text(template) else value
+
+    # Each section reads its own field. The inference slot used to fall back to
+    # solution_concept, printing one sentence twice on every card (2026-09-14);
+    # template sentences identical on every record count as no research.
+    inference = clean_text(deep_research.get("problem_hypothesis")) or researched(
+        "inference", TEMPLATE_INFERENCE
+    )
     uncertainty = clean_text(research.get("uncertainty")) or (
         "Not yet validated -- this is inference from public information, not confirmed internally."
     )
-    solution_concept = clean_text(research.get("solution_concept")) or inference
+    solution_concept = researched("solution_concept", TEMPLATE_SOLUTION)
 
     template = load_prompt_template("email_prompt.txt", _EMAIL_PROMPT_FALLBACK)
     return with_listing_context(record, _fill(
@@ -287,17 +439,14 @@ def build_email_prompt(record: Record) -> str:
         company_name=clean_text(record.get("company")) or "the company",
         role_title=clean_text(record.get("title")) or "internship opportunity",
         location=clean_text(record.get("location")) or "Bengaluru",
-        contact_name=contact.get("name") or "there",
-        contact_role=clean_text(contact.get("role")) or "hiring contact",
+        contact_line=_contact_line(record),
+        recipient=_prompt_recipient(record),
         apply_url=clean_text(record.get("apply_url") or record.get("source_url") or record.get("company_url")),
-        resume_basename=clean_text(record.get("resume")) or "Daksh-Jain-Master",
         observed_signal=observed_signal,
         inference=inference or "None drawn -- observation alone was not enough to infer a specific problem.",
         uncertainty=uncertainty,
         solution_concept=solution_concept or "None yet -- draft one grounded in the observation above.",
-        copy_rules="\n".join(EMAIL_COPY_RULES),
-        forbidden_words=", ".join(FORBIDDEN_WORDS),
-        forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
+        **_email_rule_values(record),
     ))
 
 
@@ -330,23 +479,32 @@ complaint, a process they describe. For it, give me:
 If you cannot find anything specific and sourced, stop and tell me. Do not draft
 an email built on the job title alone.
 
+## About Daksh (verified; use one fact, the most relevant)
+
+{candidate_facts}
+
 ## Step 2 - draft the email
 
 Only once Step 1 found a sourced observation. Write a cold email from Daksh to
-the contact above. Copy rules:
+the contact above, built on that observation. Keep your inference a question or
+idea, never a stated fact about the company. Never invent a metric, a
+familiarity, or an artifact that does not exist.
+
+### What gets cold emails answered
 
 {copy_rules}
 
-Never use these words: {forbidden_words}.
-Never use these phrases: {forbidden_phrases}.
-Never invent a metric, a familiarity, or an artifact that does not exist.
-Never state the inference as a fact, or promise an unmeasured outcome.
+### Humanizer rules (apply while writing, not only after)
+
+{humanizer_rules}
 
 ## Before you finish
 
-Run the drafted email through the /humanizer skill so it does not read like
-AI-generated text. Show me the observation with its source, then the final
-email; I will send it manually.
+Show me the observation with its URL and today's date first. Then:
+
+{audit_steps}
+
+{output_format}
 """
 
 
@@ -362,13 +520,7 @@ def build_research_first_prompt(record: Record) -> str:
     Daksh's own Claude Code session can do, so this hands it the verified facts
     and makes a sourced observation the precondition for any draft.
     """
-    contact = record.get("selected_contact") if isinstance(record.get("selected_contact"), dict) else {}
-    bits = [clean_text(contact.get("name")), clean_text(contact.get("email"))]
-    contact_line = " / ".join(bit for bit in bits if bit) or (
-        "none found yet -- find the founder or hiring lead's public channel, with its source"
-    )
-    if contact.get("email") and contact.get("source_url"):
-        contact_line += f" (published at {clean_text(contact.get('source_url'))})"
+    contact_line = _contact_line(record)
     template = load_prompt_template("research_first_prompt.txt", _RESEARCH_FIRST_PROMPT_FALLBACK)
     return with_listing_context(record, _fill(
         template,
@@ -379,10 +531,7 @@ def build_research_first_prompt(record: Record) -> str:
         source_url=clean_text(record.get("source_url")) or "not recorded",
         apply_url=clean_text(record.get("apply_url") or record.get("source_url")) or "not recorded",
         contact_line=contact_line,
-        resume_basename=clean_text(record.get("resume")) or "Daksh-Jain-Master",
-        copy_rules="\n".join(EMAIL_COPY_RULES),
-        forbidden_words=", ".join(FORBIDDEN_WORDS),
-        forbidden_phrases="; ".join(f'"{phrase}"' for phrase in FORBIDDEN_PHRASES),
+        **_email_rule_values(record),
     ))
 
 

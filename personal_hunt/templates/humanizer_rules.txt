@@ -58,9 +58,9 @@ linkedin_note_max_chars: 300
 linkedin_message_check: true
 
 [Email-specific]
-# Email body should be 80-110 words
-email_word_count_min: 80
-email_word_count_max: 110
+# Email body should be 50-100 words (2026-09-14, see REVIEW.md section 2e)
+email_word_count_min: 50
+email_word_count_max: 100
 
 # Subject should be 2-4 words, all lowercase
 subject_min_words: 2

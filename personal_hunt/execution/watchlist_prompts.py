@@ -17,7 +17,15 @@ from typing import Any
 # watchlist_prompts.py ... so the copy rules Claude Code is told to follow are
 # defined once, not retyped per feature and left to drift" -- a verbatim copy
 # here was exactly the drift that comment forbids.
-from outreach import EMAIL_COPY_RULES, FORBIDDEN_PHRASES, FORBIDDEN_WORDS
+from outreach import (
+    CANDIDATE_FACTS,
+    EMAIL_AUDIT_STEPS,
+    EMAIL_COPY_RULES,
+    EMAIL_OUTPUT_FORMAT,
+    FORBIDDEN_PHRASES,
+    FORBIDDEN_WORDS,
+    HUMANIZER_RULES,
+)
 
 
 def _slug(name: str) -> str:
@@ -60,19 +68,24 @@ def build_watchlist_prompt(company: dict[str, Any]) -> str:
         "1. A cold email to a founder or relevant functional leader at this company.",
         "2. A LinkedIn connection note.",
         "",
-        "Copy rules:",
-        *EMAIL_COPY_RULES,
+        "About Daksh (verified; use one fact, the most relevant):",
+        *CANDIDATE_FACTS,
         "",
-        f"Never use these words: {forbidden_words}.",
-        f"Never use these phrases: {forbidden_phrases}.",
-        "Never invent a metric, a familiarity, or an artifact that does not exist.",
-        "Never promise an unmeasured outcome or turn an inference into a stated fact.",
+        "What gets cold emails answered:",
+        *(rule.replace("{resume_basename}", "Daksh-Jain-Master") for rule in EMAIL_COPY_RULES),
+        "",
+        "Humanizer rules (apply while writing, not only after):",
+        *HUMANIZER_RULES,
+        f"- Never use these words: {forbidden_words}.",
+        f"- Never use these phrases: {forbidden_phrases}.",
+        "- Never invent a metric, a familiarity, or an artifact that does not exist.",
+        "- Never promise an unmeasured outcome or turn an inference into a stated fact.",
         "",
         "## Before you finish",
         "",
-        "Run the drafted email and LinkedIn note through the /humanizer skill so the",
-        "copy does not read like AI-generated text. Show me the final email and note;",
-        "I will send them manually.",
+        *EMAIL_AUDIT_STEPS,
+        "",
+        *EMAIL_OUTPUT_FORMAT,
         "",
     ]
     return "\n".join(lines)

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
-from datetime import date
+import threading
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+
+import outreach_store
 
 
 APPROVED_EMAILS = frozenset(
@@ -20,6 +24,10 @@ APPROVED_EMAILS = frozenset(
 )
 OUTPUT_ROOT = Path(os.getenv("PIPELINE_OUTPUT_DIR", "/data/out")).resolve()
 STATE_PATH = Path(os.getenv("PIPELINE_STATE_DIR", "/data/state")) / "state.json"
+OUTREACH_PATH = STATE_PATH.with_name("outreach.json")
+# Set by deploy/modal_app.py to volume.commit so writes reach the sender's container.
+COMMIT: Any = lambda: None  # noqa: E731
+_OUTREACH_LOCK = threading.Lock()
 
 
 def _origins() -> list[str]:
@@ -35,7 +43,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins(),
     allow_credentials=False,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -132,6 +140,97 @@ def _apify_summary() -> dict[str, Any]:
         }
     except Exception:
         return {"month_spend_usd": 0, "monthly_hard_stop_usd": 5, "status": "unavailable"}
+
+
+def _now() -> datetime:
+    return datetime.now(outreach_store.IST)
+
+
+def require_routine(authorization: str | None = Header(default=None)) -> None:
+    """The drafting routine's own bearer secret. It can read the queue and
+    submit drafts, nothing else; approving stays behind Daksh's sign-in."""
+    expected = os.getenv("RISE_OUTREACH_TOKEN", "")
+    supplied = (authorization or "")[7:].strip() if (authorization or "").startswith("Bearer ") else ""
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Routine credential required")
+
+
+def _sent_ids() -> set[str]:
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        return {str(value) for value in state.get("sent_opportunity_ids", [])}
+    except (OSError, ValueError):
+        return set()
+
+
+def _change_outreach(change: Any) -> Any:
+    """Load, change and save outreach state under one lock, then commit the volume."""
+    with _OUTREACH_LOCK:
+        data = outreach_store.load(OUTREACH_PATH)
+        try:
+            result = change(data)
+        except outreach_store.DraftError as exc:
+            status = 404 if str(exc) == "unknown draft" else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        outreach_store.save(OUTREACH_PATH, data)
+        COMMIT()
+        return result
+
+
+@app.get("/api/outreach/queue", dependencies=[Depends(require_routine)])
+def outreach_queue() -> dict[str, Any]:
+    run = _latest_live()
+    data = outreach_store.load(OUTREACH_PATH)
+    return {"run_id": run.get("run_id"), "leads": outreach_store.drafting_queue(run, data, _sent_ids())}
+
+
+@app.post("/api/outreach/drafts", dependencies=[Depends(require_routine)])
+def outreach_submit(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or "")
+    if run_id != _latest_live().get("run_id"):
+        raise HTTPException(status_code=409, detail="Drafts are for a run that is no longer the latest")
+    drafts = payload.get("drafts")
+    if not isinstance(drafts, list):
+        raise HTTPException(status_code=400, detail="drafts must be a list")
+    statuses = _change_outreach(lambda data: outreach_store.submit_drafts(data, run_id, drafts, _now()))
+    return {"statuses": statuses}
+
+
+@app.get("/api/outreach/drafts")
+def outreach_list(claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, Any]:
+    del claims
+    data = outreach_store.load(OUTREACH_PATH)
+    now = _now()
+    drafts = sorted(
+        data["drafts"].values(),
+        key=lambda draft: (str(draft.get("updated_at") or ""), draft["lead_id"]),
+        reverse=True,
+    )
+    return {
+        "now": now.isoformat(),
+        "nextSlot": outreach_store.next_send_slot(now).isoformat(),
+        "drafts": drafts,
+    }
+
+
+@app.patch("/api/outreach/drafts/{lead_id}")
+def outreach_edit(
+    lead_id: str, changes: dict[str, Any] = Body(...), claims: dict[str, Any] = Depends(require_daksh)
+) -> dict[str, Any]:
+    del claims
+    return _change_outreach(lambda data: outreach_store.edit_draft(data, lead_id, changes, _now()))
+
+
+@app.post("/api/outreach/drafts/{lead_id}/approve")
+def outreach_approve(lead_id: str, claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, Any]:
+    del claims
+    return _change_outreach(lambda data: outreach_store.approve(data, lead_id, _now()))
+
+
+@app.post("/api/outreach/drafts/{lead_id}/reject")
+def outreach_reject(lead_id: str, claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, Any]:
+    del claims
+    return _change_outreach(lambda data: outreach_store.reject(data, lead_id, _now()))
 
 
 @app.get("/health")

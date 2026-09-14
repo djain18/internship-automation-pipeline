@@ -44,3 +44,10 @@ Internships are strictly seven days old or newer, deterministically score at
 least 70, then must pass Kimi fit >=70, relevant=true, and spam=false. Funding
 is secondary: 0–15 days primary, 16–30 days visibly labeled, never older.
 
+Kimi scoring contract (2026-09-14): the model sees leads as `1..N`, never real
+ids. A reply that is unusable or misses leads is retried once and the better
+attempt kept. Leads still without a verdict fail closed one by one (status
+`partial`, digest still sent). If scoring fails outright, the 08:30 delivery
+sends the deterministic shortlist marked `[UNSCORED]` in the subject and both
+bodies, capped at `daily_target`, and does not mark those leads as sent.
+

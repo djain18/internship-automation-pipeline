@@ -72,6 +72,19 @@ def evidence_ledger(record: Record) -> list[Record]:
     return ledger
 
 
+# The fixed sentences deterministic_research attaches to any record with a
+# responsibility sentence. Identical on every record, so outreach prompts must
+# never present them as research (Kplor and Mokuit, 2026-09-14).
+TEMPLATE_SOLUTION = (
+    "a one-page operating map of that work: decisions, inputs, owners, "
+    "handoffs, and the step most ready for a small automation."
+)
+TEMPLATE_INFERENCE = (
+    "The listing puts that whole span of work on one intern, so the handoffs "
+    "between those areas likely have no single owner yet."
+)
+
+
 def deterministic_research(record: Record) -> Record:
     ledger = evidence_ledger(record)
     # Only a real observation qualifies. "X published or was listed for Y" and
@@ -94,10 +107,7 @@ def deterministic_research(record: Record) -> Record:
         observation_url = clean_text(record.get("listing_page_url")) or observation_url
     if responsibility:
         observation = f'The listing states: "{responsibility}"'
-        solution = (
-            "a one-page operating map of that work: decisions, inputs, owners, "
-            "handoffs, and the step most ready for a small automation."
-        )
+        solution = TEMPLATE_SOLUTION
         solution_basis = "job_description"
     else:
         solution = ""
@@ -109,12 +119,7 @@ def deterministic_research(record: Record) -> Record:
     # outreach prompt as "What I am inferring", which is exactly how a prompt
     # built on nothing produces generic copy no humaniser can rescue. An empty
     # inference is honest and lets build_email_prompt say so.
-    inference = (
-        "The listing puts that whole span of work on one intern, so the handoffs "
-        "between those areas likely have no single owner yet."
-        if responsibility
-        else ""
-    )
+    inference = TEMPLATE_INFERENCE if responsibility else ""
     return {
         "status": "provisional" if ledger else "research_pending",
         "evidence": ledger,
@@ -193,6 +198,25 @@ def merge_llm_research(base: Record, row: dict[str, Any], record: Record) -> Rec
     spans = _quoted_spans(signal) or ([signal] if signal else [])
     if spans and all(grounded_in(span, source) for span in spans):
         generated["observed_problem_signal"] = signal
+        # Cite the text the quote was actually found in. Keeping base's URL
+        # cited aiforjr.com for a sentence from the LinkedIn post (2026-09-14).
+        places = [
+            (record.get("description"), record.get("source_url")),
+            (record.get("listing_page_text"), record.get("listing_page_url")),
+            *(
+                (item.get("observation"), item.get("url"))
+                for item in base.get("evidence") or []
+                if isinstance(item, dict) and not item.get("restates_listing")
+            ),
+        ]
+        generated["observation_url"] = next(
+            (
+                clean_text(url)
+                for text, url in places
+                if url and all(grounded_in(span, fold_text(str(text or ""))) for span in spans)
+            ),
+            clean_text(record.get("source_url")),
+        )
     merged = {**base, **generated}
     if not merged.get("observed_problem_signal"):
         for key in ("inference", "why_it_matters", "solution_concept"):

@@ -797,3 +797,368 @@ the sync now excludes self-addressed mail from the sync (commit "Never match Dak
 digests..."), pushed and deployed. Open: confirm which account Daksh sends outreach from. Form
 applications (Ashby/YC/binary.so) leave no email trail and stay manual. First scheduled run on
 all of today's code: 00:30 IST, 2026-09-14, not yet observed.
+
+## 2026-09-14 — digest cancelled: Kimi shortlist ID mismatch
+
+**Trigger:** "[FAILED] internship digest delivery - Rise" at 08:30 IST on 2026-09-14:
+`RuntimeError: Digest is unusable because Kimi shortlist scoring did not pass`.
+
+**Root cause.** The 00:30 IST collect (`run_8df9363eaeef875d`, status `complete`) sent 22
+Bengaluru primary leads to Kimi in one call, the largest shortlist yet (max 12 across the 23
+live runs from 2026-09-11 to 09-14, all of which scored cleanly). Kimi's reply failed
+`_validate_response`: `ValueError: response IDs must match the supplied shortlist exactly`.
+That check was all-or-nothing, so one wrong id among 22 twenty-character hex ids
+(`opp_3dd445e30e0748bc`) failed every lead, set `digest_usable=False`, and `_send_once`
+raised. The raw reply was discarded on failure, so the exact bad id is unknown.
+`modal app logs` only streams live containers; evidence came from the run artifact on the
+`internship-hunt-data` volume.
+
+**Fix, approved by Daksh 2026-09-14 ("implement this whole fix"), shipped one step at a time,
+each with its own tests:**
+
+1. `score_shortlist` sends aliases `1..N` and maps them back in code.
+2. Unknown, duplicate and malformed rows are dropped; leads without a usable verdict fail
+   closed individually (`llm_rank_status=missing_from_response`); ranks are renumbered in the
+   model's order; section status `partial` keeps `digest_usable=True`. The strict
+   `_validate_response` stays for `eval_models.py`.
+3. One retry when the reply is unusable or incomplete; the better attempt wins; failed or
+   partial payloads are never left in the LLM cache.
+4. If scoring still fails outright, delivery sends the deterministic shortlist (top
+   `daily_target` by score) as `[UNSCORED] N internship leads - Rise`, with the failure
+   reason in both bodies, "shortlisted, UNSCORED" section titles, and "Kimi fit: UNSCORED" on
+   each card. Those leads are not recorded as sent. This relaxes the old rule that nothing
+   unscored reaches the inbox; Daksh chose it.
+
+**Verified:** 316 personal_hunt tests (11 new); fixture run local and on Modal (same run id,
+normal digest unchanged); replay of the real failed run through `_send_once` with a fake
+sender produced a 10-lead `[UNSCORED]` digest; deployed; live Kimi K2.5 on the same 22 leads
+with the fixed code returned status `ok`, 22/22 verdicts on attempt 1, 9 admitted
+(Auraaison Founder's Office Intern ranked 1, fit 92). The live check ran twice by mistake
+(~13.4k tokens each). `latest-live.json` was confirmed unchanged afterwards.
+
+**Not verified:** a scheduled run on this code (next collect 00:30 IST, 2026-09-15; delivery
+08:30). The 2026-09-14 digest was not re-sent; that needs a new paid live collect.
+Unscored cards show `Resume: None`, because resume routing only runs for approved leads.
+
+## 2026-09-14 (continued) — digest content fixes from Daksh's read of "7 new internship matches"
+
+Approved by Daksh 2026-09-14 ("sure", on items 2a-2d). Each fix was tested and recorded
+before the next one started. Replays use the real run `run_33217ed5f6396542`.
+
+### 2a. "Contact: there" in email prompts
+
+**Symptom:** every email prompt without a named person read "Contact: there (published
+company address)" and "Write a cold email from Daksh to there".
+**Cause:** `build_email_prompt` passed `contact.get("name") or "there"`, the Hi-there greeting
+fallback, into the verified-facts line and the drafting instruction.
+**Fix:** a shared `_contact_line()` (name / email, then role and "published at <url>", or
+"none found yet -- find the founder or hiring lead's public channel, with its source") is
+used by both the email prompt and the research-first prompt. The instruction now addresses
+the named person, or "the <Company> hiring team (<email>)". `templates/email_prompt.txt` and
+the embedded fallback both use `{contact_line}` / `{recipient}`. The LinkedIn note and message
+still open with "Hi there" when there is no name, which is correct for a greeting.
+**Verified:** new test `test_claude_prompt_never_uses_there_as_a_contact_name` (failed first,
+then passed); 317 tests; Ruff clean. Replay of all 11 approved leads: no "there". Examples:
+Auraaison "admin@auraaison.com (published company address; published at <post>)", Kplor
+"none found yet ...".
+
+### 2b. Observed quote cited to the wrong page (AIFORJR)
+
+**Symptom:** AIFORJR's prompt quoted "Engage parents & kids for 30 days make them come back to
+app" with "(source: http://aiforjr.com/)". The quote is real, but it is from sagarjaid's
+LinkedIn hiring post; the aiforjr.com homepage text does not contain it.
+**Cause:** `merge_llm_research` accepts Kimi's quote when it is verbatim in the post *plus* the
+job page combined, but kept the deterministic `observation_url`, which pointed at the job page
+the deterministic path had used.
+**Fix:** when a model quote is accepted, `observation_url` is set to the first text that
+contains every quoted span: the post (`source_url`), then the job page (`listing_page_url`),
+then a non-listing evidence item's `url`.
+**Verified:** new test `test_llm_research_merge_cites_the_text_the_quote_was_found_in` fails on
+the old code (checked by stashing the fix) and passes with it; 318 tests; Ruff clean. Replay
+on the 11 approved leads: 8 carry a quote and every one is verbatim in the page it now cites
+(AIFORJR moved from aiforjr.com to the post); SuprSend, Sarvam and Ressl have no quote and get
+the research-first prompt. **Not fixed:** AIFORJR's "listing, verbatim" block is still the
+company homepage, because the post's apply link was the homepage.
+
+### 2c. "Solution idea" repeated the inference, and template text posed as research
+
+**Symptom:** on every card "What I am inferring" and "Solution idea" printed the same
+sentence. Kplor and Mokuit also got the same generic lines ("a one-page operating map of that
+work...") presented as research.
+**Cause:** `build_email_prompt` filled the inference slot from `research["solution_concept"]`
+and never read `research["inference"]`, which Kimi fills separately. When Kimi's quote is
+rejected, the deterministic fallback sentences (identical on every record) came through as
+if researched.
+**Fix:** the inference comes from `deep_problem_research.problem_hypothesis`, else
+`research["inference"]`; the solution from `research["solution_concept"]`. The two template
+sentences are now named constants in `research.py` (`TEMPLATE_INFERENCE`,
+`TEMPLATE_SOLUTION`), and the prompt treats them as absent, printing "None drawn..." /
+"None yet -- draft one grounded in the observation above."
+**Verified:** new tests `test_claude_prompt_keeps_inference_and_solution_separate` and
+`test_claude_prompt_does_not_pass_off_template_text_as_research` (both failed first);
+320 tests; Ruff clean. Replay on the 11 approved leads: 8 email prompts, none with matching
+inference and solution; Kplor and Mokuit now say "None drawn" / "None yet"; SuprSend, Sarvam
+and Ressl keep the research-first prompt. **Not changed:** evidence packs (`artifacts.py`)
+still print the template sentences; they are not reachable from the email yet (item 3).
+
+### 2d. Send queue skipped the best leads
+
+**Symptom:** today's queue was AIFORJR (Kimi fit 80), College Circle (82) and Mokuit (78),
+while Auraaison (92) and Simple Energy (85) were left out.
+**Cause:** `attach_send_loop` sorted unsent approved leads by deterministic score, then by id.
+Five unsent leads tied at 82, so the order came from the hash ids (`opp_6c77...` <
+`opp_825f...` < `opp_8727...` < `opp_9174...` < `opp_f35e...`). Kimi fit was never used.
+**Fix:** sort by Kimi fit, then score, then id. Each queue entry carries `kimi_fit`, and both
+the text and HTML queue lines show it.
+**Verified:** new test `test_send_queue_orders_by_kimi_fit_before_deterministic_score`
+(failed first); 321 tests; Ruff clean. Replay on `run_33217ed5f6396542` with the production
+sent-list: queue went from AIFORJR / College Circle / Mokuit to Auraaison (92) / Simple Energy
+(85) / College Circle (82). **Known gap:** College Circle's LinkedIn Jobs page says "Not
+currently accepting applications"; the closed-role check cannot see that behind a `lnkd.in`
+link, so it still takes a queue slot.
+
+### 2e. Email prompt rebuilt around humanizer and cold email conversion principles
+
+**Ask (Daksh, 2026-09-14):** the prompt must itself contain the /humanizer principles and the
+highest-converting cold email practices, not only say "run /humanizer".
+**Change (`outreach.py`, `templates/email_prompt.txt`, `watchlist_prompts.py`):** email,
+research-first and watchlist prompts now share four blocks:
+- `CANDIDATE_FACTS`: verified facts from `context/candidate-profile.md`, with the unverified
+  resume metrics excluded.
+- `EMAIL_COPY_RULES`: the conversion rules below.
+- `HUMANIZER_RULES`: the skill's patterns, applied while drafting.
+- `EMAIL_AUDIT_STEPS` + `EMAIL_OUTPUT_FORMAT`: draft, ask "What makes this obviously
+  AI-written?", rewrite, run /humanizer, then a fixed output with word count, the them/Daksh
+  sentence count, the listing instruction followed, a day-3 follow-up and a LinkedIn note.
+
+Instructions in the listing (a required subject line, "send your CV") override the generic
+rules; Auraaison's post names its own subject line. The body length moved from 80-110 to
+50-100 words.
+
+**Sources (checked 2026-09-14; recheck yearly by reopening each URL):**
+- Instantly, Cold Email Benchmark Report 2026 (published 2026-01-12, 2025 data): best
+  campaigns under 80 words; 58% of replies on step 1 and 42% on later steps; Wednesday
+  highest engagement. https://instantly.ai/cold-email-benchmark-report-2026
+- Gong, "Do execs really reply to cold email?" (2026-01-29): replies drop sharply past 100
+  words, best at 50-100; 1-4 word subject lines open best; executives decide in under three
+  seconds whether to open. https://www.gong.io/blog/do-execs-really-reply-to-cold-email-here-s-what-the-data-says
+- Gong Labs CTA study (2020, updated 2026-03-06), 304,174 emails: an interest CTA was the top
+  cold-stage CTA; asking for a specific time wins only later in a deal. The article gives no
+  exact cold-stage percentage, so none is quoted.
+  https://www.gong.io/blog/this-surprising-cold-email-cta-will-help-you-book-a-lot-more-meetings
+- Boomerang (2016-02-12), 40M emails of all kinds, not only cold: 3rd-grade reading level
+  53% vs college level 39% response; 50-125 words best; 1-3 questions 50% more likely to get
+  a reply; slightly warm beats neutral.
+  https://blog.boomerangapp.com/2016/02/7-tips-for-getting-more-responses-to-your-emails-with-data/
+- Local skills: `~/.claude/skills/humanizer/SKILL.md` v2.5.1 and the `cold-email` skill
+  (personalization must connect to the problem; the "so what?" test).
+
+**Not used:** job-seeker reply rate claims ("15-35%", "40-50%") from vendor blogs
+(firstsales.io, whali.com, jobhuntrr.com), which give no method. pitchhired.com returned 403.
+The cold-email skill's secondary figures ("83% more replies under 75 words", "44% worse")
+could not be traced to a primary source.
+
+**Verified:** new test `test_email_prompt_carries_conversion_and_humanizer_rules_itself`
+(failed first); 322 tests; Ruff clean. Replay of Auraaison's real prompt rendered every block,
+with the resume filename filled in and no unfilled `{placeholders}`. Fixed during review:
+"his family's electrical retail shop" -> "an electrical retail shop" (the profile does not
+say family).
+
+## 2026-09-14 — approved-outreach sender (plan: internship workspace tasks/2026-09-approved-outreach-sender/plan.md)
+
+Daksh approved the plan and the rule change on 2026-09-14:
+- sender account dakshjainn02@gmail.com;
+- when a lead has no public address, the routine searches for one, then asks Daksh;
+- send at 10:00 IST Monday to Friday;
+- drafting routine on Claude Sonnet 5.
+
+Steps are logged below as they finish.
+
+### Step 1. `check_draft.py`, the deterministic draft gate
+
+**Built:** `personal_hunt/execution/check_draft.py` exposes `check_email_draft(draft)` and a
+CLI (`check_draft.py drafts.json`, which prints `{lead_id: [errors]}` and exits 1 when any
+draft fails). It reuses `validate_outreach`'s humanizer checks on the subject and body
+(punctuation, emoji, forbidden words and phrases, -ing tails, "not just ... but", list
+structure) and adds the email rules:
+- body length 50-100 words;
+- subject 2-4 lowercase words, or exactly the listing's subject line when one is named;
+- no fake Re:/Fwd: prefix;
+- no metric-shaped claims (%, N+, Nx, N leads/users/hours...);
+- at most one link;
+- attachment must be one of the five `Daksh-Jain-*.pdf` resumes;
+- a recipient must be a valid address with an http(s) source or `entered_by_daksh`. A null
+  recipient is allowed: the draft waits for Daksh to add one.
+
+**Verified:** 8 tests in `test_check_draft.py`, including the CLI exit code; 330 tests
+total; Ruff clean. **Known limit:** the metric pattern is a heuristic. It will not catch a
+claim written in words ("doubled replies"); the humanizer audit in the prompt and Daksh's
+review cover that.
+
+### Step 2. Outreach state and API
+
+**Built:**
+- `personal_hunt/execution/outreach_store.py`: one `state/outreach.json` on the volume,
+  keyed by lead id, so each lead is drafted, approved and sent at most once. Pure
+  functions:
+  - `drafting_queue`: the run's approved leads that are unsent and undrafted, each with
+    its prompt, listing text, attachment name and contact.
+  - `submit_drafts`: runs `check_email_draft`, sets `to_review` / `needs_address` /
+    `blocked_validation`, and never overwrites an approved, rejected or sent draft.
+  - `edit_draft`: only to, to_source, subject, body and attachment. Any edit clears the
+    approval, and an address Daksh types is marked `entered_by_daksh`.
+  - `approve`: needs a clean draft with a recipient. It stores a SHA-256 of
+    to/subject/attachment/body and the slot.
+  - `reject`.
+  - `next_send_slot`: the first Mon-Fri 10:00 IST whose 09:00 lock is still ahead.
+  - `due_for_send`: approved, at or past the slot, hash unchanged, checks still pass.
+  - `mark_sending` / `mark_sent` / `mark_failed`.
+- `private_api.py` endpoints:
+  - Routine only, bearer `RISE_OUTREACH_TOKEN` compared with `hmac.compare_digest`; it
+    fails closed when the variable is unset: `GET /api/outreach/queue` and
+    `POST /api/outreach/drafts` (409 when the run is no longer the latest).
+  - Daksh only, existing Firebase check: `GET /api/outreach/drafts` (with `nextSlot`),
+    `PATCH /api/outreach/drafts/{id}`, `POST .../approve`, `POST .../reject`.
+  - Writes happen under a process lock and then `volume.commit()` (the `COMMIT` hook set
+    in `modal_app.py`). CORS now allows POST and PATCH.
+- `modal_app.py`: the API image now mounts `personal_hunt/execution`, `templates`,
+  `config` and `hunt_core`, and installs requests, bs4, boto3 and PyYAML (needed by
+  check_draft's import chain).
+
+**Verified:**
+- 12 tests in `test_outreach_store.py` (six slot cases including Friday night, Saturday
+  and the 09:00 boundary; a tampered body is not sent; an edit after approval clears it;
+  a resubmit never touches an approved draft).
+- 4 tests in `test_outreach_api.py`, including "a routine token cannot approve". The
+  first version of that test passed for the wrong reason: the fake Firebase check
+  accepted any token. The fake now only accepts a real session token.
+- 346 tests; Ruff clean.
+- Deployed 2026-09-14: `/health` 200, and `/api/personal/latest`,
+  `/api/outreach/queue` and `/api/outreach/drafts` all 401 without credentials.
+
+**Not active yet:** `RISE_OUTREACH_TOKEN` is not set anywhere, so the routine endpoints
+refuse every request until activation (step 6).
+
+### Step 3. Sender (`send_approved.py`), shadow mode first
+
+**Built:**
+- `send_due` sends at most 10 due drafts per slot, 45-90 seconds apart.
+- It saves each draft as `sending` and commits before calling Gmail, so a crash can
+  never resend.
+- Messages are plain text, From `OUTREACH_FROM`, with the approved resume PDF from
+  `/data/resumes` attached (the path is confined to that folder).
+- One failure (`send_failed` with the error) does not stop the rest.
+- Shadow mode addresses the message to Daksh, with `[SHADOW to <recipient>]` in the
+  subject and a note in the body, and marks the draft `shadow_sent` so it never goes out
+  later.
+- `run_slot` runs it all:
+  - `OUTREACH_SEND_MODE` is off / shadow (default) / live.
+  - Real sends are added to `sent_opportunity_ids` and recorded on the Sheet's Outreach
+    tab (`sheets.record_outreach_sends`: send_status `sent_after_approval`, sent_at,
+    contact_email, subject, `outcome_basis: gmail_message:<id>`; existing
+    `outreach_<lead>` rows are updated, missing ones appended). The existing follow-up
+    and outcome tracking reads those columns.
+  - A report email goes to Daksh.
+- Modal `send_approved_emails` runs at `0 10 * * 1-5` Asia/Kolkata, reloading the volume
+  first.
+
+**Resumes:** Daksh chose the 2026-08-25 rebuilt set (`E:\Projects\ai executive
+assistant\resumes\rebuilt\Daksh-Jain-*.pdf`), uploaded to `internship-hunt-data:/resumes/`
+on 2026-09-14.
+
+**Verified:**
+- 7 tests in `test_send_approved.py`: MIME structure and attachment name; state saved as
+  `sending` before Gmail; never sent twice; shadow never reaches the recipient; the cap,
+  with a failure not blocking the rest; a missing attachment is not sent; Sheet updates
+  for existing and new rows.
+- 353 tests; Ruff clean.
+- **Live shadow send 2026-09-14:** a one-off Modal run used an in-memory store, the
+  production Gmail token and the uploaded resume. Gmail message `1a0a03fe02d88ca6`
+  arrived in dakshjainn02's inbox with subject `[SHADOW to admin@auraaison.com] founder
+  office intern`, a plain-text body and `Daksh-Jain-founders_office.pdf` (273 KB).
+  Nothing was sent to Auraaison.
+- Deployed with the 10:00 cron in shadow mode.
+
+**Known limits:**
+- The sender and the API both save the whole outreach document. A write from the page
+  between the sender's load and save could be lost. The window is small because
+  approvals lock at 09:00 and the sender runs at 10:00; the fix, if it ever bites, is a
+  per-draft revision check.
+- Gmail may override the From header if the token account ever differs from
+  `OUTREACH_FROM`.
+
+**Deploy fix (same step):** the first deploy with a separate `send_approved_emails` cron
+failed: "Deployment failed: reached limit of 5 scheduled functions (# already deployed => 4,
+# in this app => 2)". The Modal workspace plan allows 5 crons, and other apps use 4. The app
+now keeps its single cron (`scheduled_pipeline`, `0,30 0,8,10 * * *` IST). New
+`schedule_slots.job_for` picks the job from IST wall-clock time: 00:30 collect, 08:30
+deliver, 10:00 send (weekdays only), anything else no-op. 8 tests; deployed. Step 4 moves
+the slots to the final 18:30 / 21:00 / 10:00 timeline.
+
+### Step 4. Review email and the new daily timeline
+
+**Built:**
+- `pipeline.attach_outreach_review` puts this run's drafts that still need Daksh
+  (`to_review`, `needs_address`, `blocked_validation`) and the next send slot on the run,
+  for the `--digest-latest` path. If that fails, the digest still goes out.
+- `digest.outreach_review_html` / `outreach_review_text` add a top section:
+  - "N emails to approve by 09:00", the slot ("Tue 15 Sep, 10:00 IST"), and a "Review and
+    approve" link to `/my-hunt/outbox`;
+  - each draft's company, state, To (or "needs an address"), attachment, subject, full
+    body and check errors, all HTML-escaped.
+- The footer now says only approved emails are sent.
+- `send_self_digest(..., attachments=)` attaches the drafts' resume PDFs. When drafts
+  exist, `_send_once` prefixes the subject with `[N to approve by 09:00]`.
+- Timeline (`schedule_slots`, single cron `0,30 10,18,21 * * *` IST):
+  - collect 18:30 (was 00:30);
+  - review email (digest + drafts) 21:00 (was the 08:30 digest), with a volume reload
+    first;
+  - send 10:00 Mon-Fri.
+
+**Verified:** 6 tests in `test_review_email.py` and updated slot tests; 369 tests; Ruff
+clean; fixture run local and on Modal complete. The review email rendered from the real
+`run_33217ed5f6396542` with two sample drafts looked right at phone width in Chrome.
+Deployed 2026-09-14.
+
+**Transition:** no 08:30 digest on 2026-09-15. Today's 21:00 slot finds `run_33217ed5f6396542`
+already delivered (delivery key recorded at 17:31) and does not send it again. The next
+collect is 2026-09-15 18:30 and the next review email 2026-09-15 21:00. Until the routine is
+active (step 6) the review email has no drafts section and is the normal digest.
+
+### Step 5. `/my-hunt/outbox` review page (rise-web)
+
+**Built:**
+- `rise-web/src/lib/outreach.js`:
+  - API calls: `fetchDrafts`, `saveDraft` (PATCH), `approveDraft`, `rejectDraft`.
+  - Pure helpers: `groupDrafts` (To review / Approved / Sent / Rejected), `canApprove`,
+    `wordCount` (same token rule as check_draft), `slotLabel` (IST, fixed month names,
+    because Node's en-GB writes "Sept"), and `RESUMES`, which mirrors check_draft.
+- `rise-web/src/pages/Outbox.jsx` at `/my-hunt/outbox` (lazy route in `App.jsx`), with an
+  "Outbox" button in the My Hunt header. Same tokens and structure as `MyHunt.jsx`.
+- Each card has:
+  - a checkbox, enabled only for a clean `to_review` draft with an address;
+  - To (with "Where it was published" or "Entered by you"), attachment select, subject
+    (showing the listing's required subject), and body with a live word count;
+  - check errors, the day-3 follow-up and LinkedIn note, and Save / Reject / "Move back to
+    review" buttons.
+- A sticky bar has "Approve N selected"; any unsaved edits are saved before approving.
+
+**Verified:**
+- 5 node tests in `outreach.test.js` (9 with the existing ones).
+- `vite build` passes. The large main-chunk warning was already there.
+- Browser run against a local harness: the real `private_api` with a fake sign-in, the real
+  `run_33217ed5f6396542`, and three drafts built from real leads:
+  - Auraaison `to_review`, with the listing's "Founder's Office" subject;
+  - Kplor `needs_address`;
+  - Mokuit at 158 words, `blocked_validation`.
+- In Chrome:
+  - Kplor's and Mokuit's checkboxes were disabled, with `body_too_long:158` shown.
+  - Ticking Auraaison and clicking Approve showed "1 approved. They send Tue 15 Sep, 10:00
+    IST."; the tabs moved to To review (2) / Approved (1), and the state file held
+    `approved`, slot `2026-09-15T10:00:00+05:30` and an approval hash.
+  - Typing an address for Kplor and saving turned it `to_review` with `to_source:
+    entered_by_daksh`.
+  - Layout checked at 1280 px and 400 px.
+- The harness config was placed in `rise-web/` temporarily and deleted afterwards.
+
+**Not deployed yet:** Vercel deploys from GitHub; the push happens in step 6.

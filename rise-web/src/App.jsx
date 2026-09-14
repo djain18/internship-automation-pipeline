@@ -10,6 +10,7 @@ import Internships from "./pages/Internships";
 import { fetchListings, fetchStats } from "./lib/api";
 
 const MyHunt = lazy(() => import("./pages/MyHunt"));
+const Outbox = lazy(() => import("./pages/Outbox"));
 
 // On route change: scroll to top, or to the hashed section if a #hash is present.
 function ScrollManager({ ready }) {
@@ -78,6 +79,14 @@ export default function App() {
             element={
               <Suspense fallback={<div className="min-h-[60vh] bg-secondary/30" />}>
                 <MyHunt />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/my-hunt/outbox"
+            element={
+              <Suspense fallback={<div className="min-h-[60vh] bg-secondary/30" />}>
+                <Outbox />
               </Suspense>
             }
           />

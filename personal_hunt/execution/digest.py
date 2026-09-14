@@ -4,6 +4,7 @@ import base64
 import html
 import json
 import os
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -36,8 +37,12 @@ def _section(title: str, records: list[Record]) -> str:
                 f"### {index}. {item['company']} - {item['title']}",
                 "",
                 f"- Score: {item.get('score')}/100",
-                f"- Kimi fit: {item.get('llm_fit_score')}/100 (rank {item.get('llm_rank')})",
-                f"- Kimi reason: {item.get('llm_rank_reason')}",
+                (
+                    f"- Kimi fit: {item.get('llm_fit_score')}/100 (rank {item.get('llm_rank')})"
+                    if item.get("llm_fit_score") is not None
+                    else "- Kimi fit: UNSCORED"
+                ),
+                f"- Kimi reason: {item.get('llm_rank_reason') or 'none'}",
                 f"- Lane: {item.get('lane')}",
                 f"- Location: {item.get('location')} ({item.get('location_class')})",
                 f"- Posted: {item.get('posted_date')} ({item.get('posted_date_basis')})",
@@ -642,7 +647,8 @@ def _send_queue_section(run: Record) -> str:
             [
                 f"### {index}. {item.get('company')} - {item.get('title')}",
                 "",
-                f"- Score {item.get('score')}/100, waiting {item.get('age_days')}d, resume {item.get('resume')}",
+                f"- Kimi fit {item.get('kimi_fit') if item.get('kimi_fit') is not None else '-'}/100, "
+                f"score {item.get('score')}/100, waiting {item.get('age_days')}d, resume {item.get('resume')}",
                 f"- Apply: {item.get('apply_url')}",
                 f"- Contact: {item.get('contact') or 'research required'}",
                 "- Human action: send the approved draft today, then log sent_at in the Sheet",
@@ -692,13 +698,17 @@ def render_digest(run: Record) -> str:
     shadow = os.getenv("SHADOW_MODE", "true").casefold() in {"1", "true", "yes"}
     label = "SHADOW / HUMAN REVIEW" if shadow else "HUMAN REVIEW REQUIRED"
     stale_notice = run.get("staleness_warning", "")
+    scoring_notice = run.get("scoring_warning", "")
+    approval = "shortlisted, UNSCORED" if scoring_notice else "approved by Kimi"
     discovered = run.get("discovered_for_research", [])
     return "\n".join(
         [
             f"# Internship hunt digest - {run['run_date']}",
             "",
             f"**{label}**",
+            *(["", f"**{scoring_notice}**"] if scoring_notice else []),
             *(["", f"**{stale_notice}**"] if stale_notice else []),
+            *(["", outreach_review_text(run)] if run.get("outreach_drafts") else []),
             "",
             (
                 f"Internships: prior {run.get('internship_window_days', 10)} days. "
@@ -707,17 +717,22 @@ def render_digest(run: Record) -> str:
             ),
             "",
             # Phase 7: Section 1 - Approved internship matches (unchanged)
-            _section("New Bengaluru internships approved by Kimi", primary),
-            _section("New India-remote internships approved by Kimi", remote),
+            _section(f"New Bengaluru internships {approval}", primary),
+            _section(f"New India-remote internships {approval}", remote),
             "## Kimi admission summary",
             "",
             (
-                f"{admitted_count} admitted (daily target {minimum}-{target}); "
+                f"Kimi admitted nothing: scoring failed. {admitted_count} unscored leads shown "
+                "by deterministic score."
+                if scoring_notice
+                else f"{admitted_count} admitted (daily target {minimum}-{target}); "
                 f"{len(withheld)} withheld as low-fit, irrelevant, spam, or unscored. "
                 "Withheld records remain in the audit trail."
             ),
             (
-                "Quality target shortfall: fewer than five internships cleared every gate; "
+                "Quality target not assessed: no lead cleared the Kimi gate."
+                if scoring_notice
+                else "Quality target shortfall: fewer than five internships cleared every gate; "
                 "the digest was not padded."
                 if admitted_count < minimum
                 else "Daily internship quality target met."
@@ -1057,7 +1072,9 @@ def render_html_digest(run: Record) -> str:
         target = html.escape(str(item.get("apply_url") or site_url), quote=True)
         queue_items.append(
             f'<li style="margin:0 0 10px"><a href="{target}" style="color:#2a2e33;font-weight:600;text-decoration:none">{title}</a>'
-            f'<div style="margin-top:3px;color:#6b7375">{company} · waiting {item.get("age_days", 0)}d</div></li>'
+            f'<div style="margin-top:3px;color:#6b7375">{company} · '
+            + (f'Kimi fit {int(item["kimi_fit"])} · ' if item.get("kimi_fit") is not None else "")
+            + f'waiting {item.get("age_days", 0)}d</div></li>'
         )
     streak = int(run.get("send_streak_days", 0) or 0)
     queue_block = ""
@@ -1121,7 +1138,8 @@ def render_html_digest(run: Record) -> str:
         if item.get("status") == "failed"
     ]
     stale_notice = html.escape(str(run.get("staleness_warning") or ""))
-    alert_lines = ([stale_notice] if stale_notice else []) + (
+    scoring_notice = html.escape(str(run.get("scoring_warning") or ""))
+    alert_lines = [line for line in (scoring_notice, stale_notice) if line] + (
         [f"Sources that failed this run: {', '.join(failed_sources)}"] if failed_sources else []
     )
     alert_block = (
@@ -1157,6 +1175,7 @@ def render_html_digest(run: Record) -> str:
         <div style="margin-top:5px;font-size:14px;color:#6b7375">{html.escape(str(run.get('run_date') or ''))} · {count} new match{'es' if count != 1 else ''}</div>
       </div>
       {alert_block}
+      {outreach_review_html(run)}
       {matches_html}
       {worth_a_look_block}
       {queue_block}
@@ -1170,12 +1189,92 @@ def render_html_digest(run: Record) -> str:
       <div style="padding:22px 28px;border-top:1px solid #e5e7eb">
         <a href="{html.escape(site_url, quote=True)}" style="display:inline-block;border-radius:999px;background:#2a2e33;color:#fff;padding:11px 18px;font-size:14px;font-weight:600;text-decoration:none">Open my hunt</a>
         {outcomes_line}
-        <div style="margin-top:14px;font-size:12px;line-height:18px;color:#8b9294">Research leads only. Verify every source and send applications or outreach manually.</div>
+        <div style="margin-top:14px;font-size:12px;line-height:18px;color:#8b9294">Research leads only. Verify every source. Only emails you approve on the review page are sent; everything else stays manual.</div>
       </div>
     </div>
   </div>
 </body></html>"""
-def send_self_digest(subject: str, body: str, html_body: str = "") -> str:
+_DRAFT_STATE = {
+    "to_review": "ready to approve",
+    "needs_address": "needs an address",
+    "blocked_validation": "fix before approving",
+}
+
+
+def _slot_label(slot: str) -> str:
+    try:
+        return datetime.fromisoformat(slot).strftime("%a %d %b, %H:%M IST")
+    except (TypeError, ValueError):
+        return "the next weekday, 10:00 IST"
+
+
+def _review_link() -> str:
+    return os.getenv("PERSONAL_HUNT_URL", "https://rise-web-kappa.vercel.app/my-hunt").rstrip("/") + "/outbox"
+
+
+def outreach_review_text(run: Record) -> str:
+    """Drafted cold emails waiting for Daksh (approved-outreach sender, 2026-09-14)."""
+    drafts = run.get("outreach_drafts") or []
+    if not drafts:
+        return ""
+    lines = [
+        f"## {len(drafts)} emails to approve by 09:00",
+        "",
+        f"Approve on {_review_link()}. Approved emails send {_slot_label(run.get('outreach_next_slot', ''))}.",
+        "",
+    ]
+    for index, draft in enumerate(drafts, 1):
+        lines.extend(
+            [
+                f"### {index}. {draft.get('company')} ({_DRAFT_STATE.get(draft.get('status'), draft.get('status'))})",
+                "",
+                f"To: {draft.get('to') or 'needs an address'}",
+                f"Subject: {draft.get('subject')}",
+                f"Attachment: {draft.get('attachment')}",
+                *([f"Checks: {', '.join(draft['errors'])}"] if draft.get("errors") else []),
+                "",
+                str(draft.get("body") or ""),
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def outreach_review_html(run: Record) -> str:
+    drafts = run.get("outreach_drafts") or []
+    if not drafts:
+        return ""
+    cards = []
+    for draft in drafts:
+        state = _DRAFT_STATE.get(draft.get("status"), str(draft.get("status")))
+        errors = (
+            f'<div style="margin-top:6px;color:#9a3412">Checks: {html.escape(", ".join(draft["errors"]))}</div>'
+            if draft.get("errors")
+            else ""
+        )
+        cards.append(
+            '<div style="margin-top:14px;padding:14px;border:1px solid #e5e7eb;border-radius:12px">'
+            f'<div style="font-weight:600">{html.escape(str(draft.get("company") or ""))} '
+            f'<span style="font-weight:400;color:#6b7375">&middot; {html.escape(state)}</span></div>'
+            f'<div style="margin-top:6px;color:#6b7375">To: {html.escape(str(draft.get("to") or "needs an address"))}'
+            f' &middot; {html.escape(str(draft.get("attachment") or ""))}</div>'
+            f'<div style="margin-top:6px"><strong>{html.escape(str(draft.get("subject") or ""))}</strong></div>'
+            f'<div style="margin-top:6px;white-space:pre-wrap;line-height:20px">{html.escape(str(draft.get("body") or ""))}</div>'
+            f"{errors}</div>"
+        )
+    link = html.escape(_review_link(), quote=True)
+    return f"""
+      <div style="padding:20px 28px;border-top:1px solid #e5e7eb;background:#eef2ff">
+        <div style="font-size:15px;font-weight:600;color:#2a2e33">{len(drafts)} emails to approve by 09:00</div>
+        <div style="margin-top:4px;font-size:13px;color:#6b7375">Approved emails send {html.escape(_slot_label(run.get("outreach_next_slot", "")))}. Nothing is sent without your approval.</div>
+        <a href="{link}" style="display:inline-block;margin-top:12px;border-radius:999px;background:#6366f1;color:#fff;padding:10px 16px;font-size:14px;font-weight:600;text-decoration:none">Review and approve</a>
+        <div style="font-size:13px">{''.join(cards)}</div>
+      </div>"""
+
+
+def send_self_digest(
+    subject: str, body: str, html_body: str = "", attachments: list[tuple[str, bytes]] | None = None
+) -> str:
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
@@ -1200,6 +1299,8 @@ def send_self_digest(subject: str, body: str, html_body: str = "") -> str:
     message.set_content(body)
     if html_body:
         message.add_alternative(html_body, subtype="html")
+    for name, content in attachments or []:
+        message.add_attachment(content, maintype="application", subtype="pdf", filename=name)
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
     result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
     return str(result["id"])
