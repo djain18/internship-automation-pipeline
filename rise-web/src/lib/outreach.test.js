@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RESUMES, canApprove, groupDrafts, slotLabel, wordCount } from "./outreach.js";
+import { RESUMES, bodyLinks, canApprove, displayText, groupDrafts, slotLabel, wordCount } from "./outreach.js";
 
 const draft = (lead_id, status, extra = {}) => ({ lead_id, status, to: "a@b.co", errors: [], ...extra });
 
@@ -33,6 +33,13 @@ test("canApprove needs a clean ready draft with an address and no unsaved edits"
 test("wordCount matches the server's rule", () => {
   assert.equal(wordCount("I'm writing to you, founder-office team."), 6);
   assert.equal(wordCount(""), 0);
+});
+
+test("named links collapse to their label for reading and word count", () => {
+  const body = "I also run [Rise](https://rise-web-kappa.vercel.app/), verified internships.";
+  assert.equal(displayText(body), "I also run Rise, verified internships.");
+  assert.deepEqual(bodyLinks(body), [{ label: "Rise", url: "https://rise-web-kappa.vercel.app/" }]);
+  assert.equal(wordCount(body), 6);
 });
 
 test("slotLabel shows IST day and time", () => {

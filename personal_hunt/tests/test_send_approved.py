@@ -50,7 +50,7 @@ def run_sender(data, recorder, **kwargs):
     )
 
 
-def test_message_is_plain_text_with_the_resume_attached() -> None:
+def test_message_has_a_plain_and_html_alternative_with_the_resume_attached() -> None:
     data = approved_store("a")
     recorder = Recorder()
     results = run_sender(data, recorder, shadow_to=None)
@@ -60,11 +60,32 @@ def test_message_is_plain_text_with_the_resume_attached() -> None:
     assert message["From"] == "dakshjainn02@gmail.com"
     assert message["Subject"] == "founder office intern"
     parts = list(message.walk())
-    assert [p.get_content_type() for p in parts] == ["multipart/mixed", "text/plain", "application/pdf"]
-    assert parts[2].get_filename() == "Daksh-Jain-founders_office.pdf"
+    assert [p.get_content_type() for p in parts] == [
+        "multipart/mixed",
+        "multipart/alternative",
+        "text/plain",
+        "text/html",
+        "application/pdf",
+    ]
+    assert parts[4].get_filename() == "Daksh-Jain-founders_office.pdf"
     assert data["drafts"]["a"]["status"] == "sent"
     # State is saved as "sending" before Gmail is called, so a crash can never resend.
     assert recorder.persisted[0]["a"] == "sending"
+
+
+def test_named_link_becomes_a_real_anchor_in_the_html_alternative() -> None:
+    data = approved_store("a")
+    lead = data["drafts"]["a"]
+    lead["body"] = f"{lead['body']} Also see [Rise](https://rise-web-kappa.vercel.app/)."
+    lead["approval_hash"] = store.approval_hash(lead)
+    recorder = Recorder()
+    run_sender(data, recorder, shadow_to=None)
+    message = message_from_bytes(recorder.messages[0].as_bytes())
+    plain, html = (
+        part.get_payload(decode=True).decode() for part in message.walk() if part.get_content_type().startswith("text/")
+    )
+    assert "Also see Rise (https://rise-web-kappa.vercel.app/)." in plain
+    assert '<a href="https://rise-web-kappa.vercel.app/">Rise</a>' in html
 
 
 def test_nothing_is_sent_twice() -> None:

@@ -33,9 +33,21 @@ export function canApprove(item, _dirty) {
   return item.status === "to_review" && Boolean(item.to) && !(item.errors || []).length;
 }
 
-// Same token rule as check_draft.py: [\w'’-]+
+// Mirrors MD_LINK in check_draft.py: a Gmail-style named link, "[Rise](url)".
+const MD_LINK = /\[([^[\]]+)\]\((https?:\/\/[^\s()]+)\)/g;
+
+// What the body reads as on screen: named links collapse to their link text.
+export function displayText(text) {
+  return String(text || "").replace(MD_LINK, "$1");
+}
+
+export function bodyLinks(text) {
+  return [...String(text || "").matchAll(MD_LINK)].map(([, label, url]) => ({ label, url }));
+}
+
+// Same token rule as check_draft.py: [\w'’-]+, run over the display text.
 export function wordCount(text) {
-  return (String(text || "").match(/[\p{L}\p{N}_'’-]+/gu) || []).length;
+  return (displayText(text).match(/[\p{L}\p{N}_'’-]+/gu) || []).length;
 }
 
 export function slotLabel(slot) {

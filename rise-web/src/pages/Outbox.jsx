@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, ArrowUpRight, Check, LogIn, Mail, Send, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowUpRight, Check, Link2, LogIn, Mail, Send, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 import {
   RESUMES,
   approveDraft,
+  bodyLinks,
   canApprove,
   fetchDrafts,
   groupDrafts,
@@ -47,7 +48,20 @@ function DraftCard({ item, edits, onEdit, selected, onSelect, onSave, onReject, 
   const editable = ["to_review", "needs_address", "blocked_validation", "approved", "rejected", "send_failed"].includes(item.status);
   const approvable = canApprove(value, dirty) && !(dirty && !value.to);
   const words = wordCount(value.body);
+  const links = bodyLinks(value.body);
+  const bodyRef = useRef(null);
   const id = `draft-${item.lead_id}`;
+
+  function insertLink() {
+    const url = window.prompt("Link URL");
+    if (!url) return;
+    const area = bodyRef.current;
+    const body = value.body || "";
+    const [start, end] = area ? [area.selectionStart, area.selectionEnd] : [body.length, body.length];
+    const label = body.slice(start, end) || window.prompt("Link text", "Rise") || "Rise";
+    const next = `${body.slice(0, start)}[${label}](${url})${body.slice(end)}`;
+    onEdit({ body: next });
+  }
   return (
     <article className="rounded-xl border border-border bg-background p-5 md:p-6" aria-labelledby={`${id}-title`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -99,8 +113,27 @@ function DraftCard({ item, edits, onEdit, selected, onSelect, onSave, onReject, 
         <input className={`${field} mt-1`} value={value.subject || ""} disabled={!editable || busy} onChange={(event) => onEdit({ subject: event.target.value })} />
       </label>
       <label className="mt-4 block text-sm">
-        <span className="flex justify-between text-xs text-muted-foreground"><span>Email</span><span className={words < 80 || words > 150 ? "text-[hsl(var(--accent-warm))]" : ""}>{words} words · aim for 80–150</span></span>
-        <textarea className={`${field} mt-1 min-h-[180px] leading-6`} value={value.body || ""} disabled={!editable || busy} onChange={(event) => onEdit({ body: event.target.value })} />
+        <span className="flex items-center justify-between text-xs text-muted-foreground">
+          <span className="flex items-center gap-2">
+            Email
+            {editable && !busy && (
+              <button type="button" onClick={insertLink} className="inline-flex items-center gap-1 text-accent hover:underline">
+                <Link2 className="h-3 w-3" /> Insert link
+              </button>
+            )}
+          </span>
+          <span className={words < 80 || words > 150 ? "text-[hsl(var(--accent-warm))]" : ""}>{words} words · aim for 80–150</span>
+        </span>
+        <textarea ref={bodyRef} className={`${field} mt-1 min-h-[180px] leading-6`} value={value.body || ""} disabled={!editable || busy} onChange={(event) => onEdit({ body: event.target.value })} />
+        {links.length > 0 && (
+          <span className="mt-1 flex flex-wrap gap-3">
+            {links.map(({ label, url }, index) => (
+              <a key={index} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                <Link2 className="h-3 w-3" /> {label}
+              </a>
+            ))}
+          </span>
+        )}
       </label>
 
       {(item.errors || []).length > 0 && !dirty && (

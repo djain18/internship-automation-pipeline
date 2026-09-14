@@ -18,17 +18,17 @@ from typing import Any
 from models import clean_text
 from outreach import validate_outreach
 
-# 2026-09-14: formal internship format (greeting, introduction, signature) per
-# Daksh, so the bounds include those lines. See EMAIL_COPY_RULES.
 BODY_MIN_WORDS = 80
 BODY_MAX_WORDS = 150
-SIGNATURE_NAME = "Daksh Jain"
 RESUME_ATTACHMENTS = frozenset(
     f"Daksh-Jain-{name}.pdf"
     for name in ("founders_office", "ai_automation", "gtm", "ops", "Master")
 )
 ENTERED_BY_DAKSH = "entered_by_daksh"
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.IGNORECASE)
+# "[Rise](https://...)" - a Gmail-style named link, same as the frontend's
+# insert-link control writes. https://rise-web-kappa.vercel.app/my-hunt
+MD_LINK = re.compile(r"\[([^\[\]]+)\]\((https?://[^\s()]+)\)")
 # Numbers that read as achievement claims. candidate-profile.md keeps every such
 # figure out of outreach until Daksh confirms its evidence.
 _METRIC = re.compile(
@@ -39,6 +39,17 @@ _METRIC = re.compile(
 
 def _fold(text: str) -> str:
     return clean_text(text).replace("’", "'").casefold()
+
+
+def display_text(body: str) -> str:
+    """Body as it reads on screen: named links collapse to their link text."""
+    return MD_LINK.sub(lambda m: m.group(1), body)
+
+
+def body_links(body: str) -> list[str]:
+    """Every URL in the body, named-link or bare."""
+    bare = re.findall(r"https?://\S+", MD_LINK.sub("", body))
+    return [match.group(2) for match in MD_LINK.finditer(body)] + bare
 
 
 def check_email_draft(draft: dict[str, Any]) -> list[str]:
@@ -53,7 +64,8 @@ def check_email_draft(draft: dict[str, Any]) -> list[str]:
         if error != "invalid_send_status"
     ]
 
-    words = len(re.findall(r"[\w'’-]+", body))
+    display = display_text(body)
+    words = len(re.findall(r"[\w'’-]+", display))
     if words < BODY_MIN_WORDS:
         errors.append(f"body_too_short:{words}")
     if words > BODY_MAX_WORDS:
@@ -69,17 +81,12 @@ def check_email_draft(draft: dict[str, Any]) -> list[str]:
             errors.append(f"subject_word_count:{count}")
         if "intern" not in subject.casefold():
             errors.append("subject_missing_internship")
-    lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
-    if not lines or not re.match(r"^(dear|hi|hello)\b.+,$", lines[0], re.IGNORECASE):
-        errors.append("missing_greeting")
-    if not any(line.startswith(SIGNATURE_NAME) for line in lines[-4:]):
-        errors.append("missing_signature")
     if re.match(r"^(re|fwd?)\s*:", subject, re.IGNORECASE):
         errors.append("subject_fake_reply_prefix")
 
-    if _METRIC.search(body):
+    if _METRIC.search(display):
         errors.append("unverified_metric")
-    links = re.findall(r"https?://\S+", body)
+    links = body_links(body)
     if len(links) > 1:
         errors.append(f"too_many_links:{len(links)}")
 

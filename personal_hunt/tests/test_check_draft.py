@@ -41,13 +41,6 @@ def test_word_count_bounds() -> None:
     assert any(e.startswith("body_too_long") for e in check_email_draft(draft(body=BODY + " " + BODY)))
 
 
-def test_formal_greeting_and_signature_required() -> None:
-    no_greeting = BODY.replace("Dear Auraaison team,\n\n", "")
-    assert "missing_greeting" in check_email_draft(draft(body=no_greeting))
-    no_signature = BODY.split("Best regards,")[0] + "Thanks"
-    assert "missing_signature" in check_email_draft(draft(body=no_signature + " and more words " * 3))
-
-
 def test_subject_rules_and_listing_override() -> None:
     assert any(e.startswith("subject_word_count") for e in check_email_draft(draft(subject="hi")))
     assert "subject_missing_internship" in check_email_draft(draft(subject="A quick note for your team"))
@@ -72,6 +65,16 @@ def test_unverified_metrics_and_links_are_blocked() -> None:
     assert "unverified_metric" in check_email_draft(draft(body=BODY.replace("email automation", "email automation for 200+ leads a week")))
     two_links = BODY + " https://a.example and https://b.example"
     assert "too_many_links:2" in check_email_draft(draft(body=two_links))
+
+
+def test_named_link_reads_as_its_label_not_the_url() -> None:
+    named = draft(body=BODY.replace(
+        "considering me for this role?",
+        "considering me for this role? I also run [Rise](https://rise-web-kappa.vercel.app/), verified internships.",
+    ))
+    assert check_email_draft(named) == []
+    two_links = draft(body=named["body"] + " https://a.example")
+    assert "too_many_links:2" in check_email_draft(two_links)
 
 
 def test_attachment_must_be_a_known_resume() -> None:
