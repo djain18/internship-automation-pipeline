@@ -9,6 +9,7 @@ Plan: internship workspace tasks/2026-09-approved-outreach-sender/plan.md.
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 import random
@@ -19,9 +20,22 @@ from pathlib import Path
 from typing import Any, Callable
 
 import outreach_store as store
+from check_draft import MD_LINK
 
 DAILY_CAP = 10
 RESUME_DIR = Path(os.getenv("RESUME_DIR", "/data/resumes"))
+
+
+def _plain_body(body: str) -> str:
+    """Named links ("[Rise](url)") read as "Rise (url)" for plain-text clients."""
+    return MD_LINK.sub(lambda m: f"{m.group(1)} ({m.group(2)})", body)
+
+
+def _html_body(body: str) -> str:
+    """Same body, named links rendered as real anchors - the sent version of
+    the "insert link" control in the outbox editor, like Gmail's own."""
+    linked = MD_LINK.sub(r'<a href="\2">\1</a>', html.escape(body))
+    return linked.replace("\n", "<br>\n")
 
 
 def build_message(draft: dict[str, Any], sender: str, pdf: bytes, shadow_to: str | None) -> EmailMessage:
@@ -37,7 +51,8 @@ def build_message(draft: dict[str, Any], sender: str, pdf: bytes, shadow_to: str
             "Shadow mode: this is exactly what would have gone to "
             f"{recipient} ({draft.get('company')}). Nothing was sent to them.\n\n{body}"
         )
-    message.set_content(body)
+    message.set_content(_plain_body(body))
+    message.add_alternative(_html_body(body), subtype="html")
     message.add_attachment(pdf, maintype="application", subtype="pdf", filename=str(draft["attachment"]))
     return message
 

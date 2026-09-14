@@ -1197,3 +1197,51 @@ saving a routine that uses a GitHub repository`. Daksh must:
 
 Then the routine is created (`0 14 * * *` UTC = 19:30 IST, Sonnet 5, FireCrawl
 connector), fired once against the current run, and its drafts inspected.
+
+### 2026-09-14 evening: formal emails, live from 2026-09-15, today's drafts
+
+**Daksh's call:** start sending real emails tomorrow (2026-09-15), with no shadow week, and
+make the emails "a little more formal, like how cold emails are written for internships".
+
+**Changes (commit `998ee1e`):**
+- **Prompt:** formal internship format:
+  - "Dear <name>," or "Dear <Company> team,";
+  - the observation line;
+  - "I am Daksh Jain, a final-year BCA student at Christ University, Bengaluru.";
+  - one verified fit line;
+  - role, dates and "I have attached my resume for your reference.";
+  - one polite interest question;
+  - a fixed signature (name / BCA, Christ University, Bengaluru / dakshjainn02@gmail.com).
+  - 80-150 words including greeting and signature, no contractions, and a subject that
+    names the internship ("Founder's Office Internship Application - Daksh Jain").
+  - The humanizer rules are unchanged.
+- **`check_draft`:** 80-150 words; the subject must contain "intern" unless the listing
+  names one; a "Dear/Hi/Hello ...," greeting and a "Daksh Jain" signature are required.
+  The lowercase-subject rule is removed. The Outbox word-count hint matches.
+- **Review email delivery key:** today's plain digest was already recorded, so the 21:00
+  review email would have been skipped. A run with drafts now uses
+  `<date>:<run_id>:review`. New test.
+- **`OUTREACH_SEND_MODE=live`.** The first text replace missed because of CRLF line endings
+  and deployed shadow; it was fixed and redeployed, and the file was confirmed to read
+  `live`.
+- 371 tests; Ruff clean; Modal and Vercel deployed.
+
+**Today's drafts:** the routine is still blocked (GitHub not connected, second attempt 401),
+so Claude drafted the live queue for `run_33217ed5f6396542` directly with the same
+rules and submitted them through the routine API:
+- `to_review`: Auraaison (admin@auraaison.com, the listing's subject "Founder's Office"),
+  College Circle AI, AIforJr (hello@aiforjr.com), Mokuit (Dear Monika, CV and preferred
+  location as the post asks).
+- `needs_address`: Kplor, Simple Energy, Koyō, BlockSurvey.
+- **College Circle address:** `collegecircleai@gmail.com`, the support address in the
+  collegecircleai.com footer. Its LinkedIn job page said "Not currently accepting
+  applications", and the post asks for 8 months while Daksh has 6; the email asks about
+  that openly.
+- **Not used:** SuprSend `support@` (a support inbox) and RocketReach for Kplor (a data
+  broker).
+- **Skipped:**
+  - SuprSend: the JD is behind lnkd.in and the post asks readers to read it first.
+  - Sarvam AI: job-alert repost with no sourced observation.
+  - Ressl AI: the job page asks for no AI-written messages.
+- All 8 drafts passed `check_draft` (110-132 words), and every quote is verbatim from the
+  listing text.
