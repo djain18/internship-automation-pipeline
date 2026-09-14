@@ -83,8 +83,8 @@ def test_full_flow_queue_draft_review_approve(api) -> None:
     assert listing["nextSlot"] == "2026-09-15T10:00:00+05:30"
     assert listing["drafts"][0]["status"] == "to_review"
 
-    edited = api.patch("/api/outreach/drafts/opp_1", headers=DAKSH, json={"subject": "founders office note"})
-    assert edited.json()["subject"] == "founders office note"
+    edited = api.patch("/api/outreach/drafts/opp_1", headers=DAKSH, json={"subject": "Founders Office Internship note"})
+    assert edited.json()["subject"] == "Founders Office Internship note"
     assert api.patch("/api/outreach/drafts/opp_1", headers=DAKSH, json={"status": "sent"}).status_code == 400
 
     approved = api.post("/api/outreach/drafts/opp_1/approve", headers=DAKSH).json()

@@ -108,7 +108,7 @@ def test_edit_after_approval_clears_it_and_resubmit_never_touches_approved() -> 
     store.approve(data, "opp_1", at("2026-09-14T21:00"))
     store.submit_drafts(data, "run_a", [submitted(subject="other subject here")], at("2026-09-14T22:00"))
     assert data["drafts"]["opp_1"]["subject"] == "founder office intern"
-    store.edit_draft(data, "opp_1", {"subject": "founders office note"}, at("2026-09-14T22:30"))
+    store.edit_draft(data, "opp_1", {"subject": "Founders Office Internship note"}, at("2026-09-14T22:30"))
     assert data["drafts"]["opp_1"]["status"] == "to_review"
     assert data["drafts"]["opp_1"]["approval_hash"] is None
     with pytest.raises(store.DraftError):

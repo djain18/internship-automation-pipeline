@@ -99,7 +99,7 @@ function DraftCard({ item, edits, onEdit, selected, onSelect, onSave, onReject, 
         <input className={`${field} mt-1`} value={value.subject || ""} disabled={!editable || busy} onChange={(event) => onEdit({ subject: event.target.value })} />
       </label>
       <label className="mt-4 block text-sm">
-        <span className="flex justify-between text-xs text-muted-foreground"><span>Email</span><span className={words < 50 || words > 100 ? "text-[hsl(var(--accent-warm))]" : ""}>{words} words · aim for 50–100</span></span>
+        <span className="flex justify-between text-xs text-muted-foreground"><span>Email</span><span className={words < 80 || words > 150 ? "text-[hsl(var(--accent-warm))]" : ""}>{words} words · aim for 80–150</span></span>
         <textarea className={`${field} mt-1 min-h-[180px] leading-6`} value={value.body || ""} disabled={!editable || busy} onChange={(event) => onEdit({ body: event.target.value })} />
       </label>
 
