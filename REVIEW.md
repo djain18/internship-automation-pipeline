@@ -1162,3 +1162,38 @@ active (step 6) the review email has no drafts section and is the normal digest.
 - The harness config was placed in `rise-web/` temporarily and deleted afterwards.
 
 **Not deployed yet:** Vercel deploys from GitHub; the push happens in step 6.
+
+### Step 6. Drafting routine (in progress, waiting on Daksh)
+
+**Done:**
+- Commits `3073e38`, `ed0ff9a` and `eb55618` pushed to `main`. The humanizer skill is
+  committed at `.claude/skills/humanizer/SKILL.md` (force-added, since `.claude/` is
+  gitignored).
+- Routine instructions are versioned in `personal_hunt/routines/outreach_drafter.md`:
+  queue → draft with each lead's prompt → public-address search with source → check_draft
+  (two fix rounds) → submit → report. Never sends, commits or pushes.
+- Modal secret `outreach-routine-token` (`RISE_OUTREACH_TOKEN`, 43-char random) mounted on
+  `personal_api`. A local copy is at `C:\Users\daksh\rise-outreach-routine-token.txt` for
+  Daksh to paste into the cloud environment.
+- Live check: the right token returns 200 and a wrong one 401.
+- Two defects found by that live check and fixed:
+  - The queue skipped every lead in `sent_opportunity_ids`, which means "shown in a
+    digest", not "emailed", so the live queue was empty. It now relies only on the
+    outreach store; the live queue returned all 11 leads.
+  - Queue prompts were read from the run as saved at collect time, before the
+    2026-09-14 prompt rebuild. They are now rebuilt per request: 7.1-9.6k characters,
+    each with the audit steps.
+- rise-web deployed to Vercel production. The push does not trigger a deploy here; the
+  CLI deploy was run, twice by mistake, both READY. `https://rise-web-kappa.vercel.app`
+  now serves the Outbox chunk.
+
+**Blocked:** creating the routine returned `HTTP 401 Connect your GitHub account before
+saving a routine that uses a GitHub repository`. Daksh must:
+1. connect GitHub for Claude Code on the web (claude.ai, or `/web-setup` in the CLI);
+2. in the cloud environment "Default", add the environment variable `RISE_OUTREACH_TOKEN`
+   (from the local file) and set Network access to Custom with the host
+   `dakshinjain187--daksh-internship-hunt-personal-api.modal.run`, keeping the default
+   package list.
+
+Then the routine is created (`0 14 * * *` UTC = 19:30 IST, Sonnet 5, FireCrawl
+connector), fired once against the current run, and its drafts inspected.
