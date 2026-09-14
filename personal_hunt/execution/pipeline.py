@@ -276,9 +276,16 @@ def attach_send_loop(
     the slot."""
 
     approved = list(run.get("digest_primary", [])) + list(run.get("digest_remote_fallback", []))
+    # Kimi fit first: the deterministic score ties constantly (five unsent leads
+    # at 82 on run_33217ed5f6396542), and the hash-id tiebreak then queued
+    # AIFORJR/College Circle/Mokuit over Auraaison (fit 92) and Simple Energy (85).
     unsent = sorted(
         (item for item in approved if str(item.get("id")) not in sent_ids),
-        key=lambda item: (-int(item.get("score", 0) or 0), str(item.get("id"))),
+        key=lambda item: (
+            -int(item.get("llm_fit_score") or 0),
+            -int(item.get("score", 0) or 0),
+            str(item.get("id")),
+        ),
     )
     quota = max(1, int(scoring.get("daily_send_quota", 3)))
     stale_after = int(scoring.get("stale_after_days", 3))
@@ -291,6 +298,7 @@ def attach_send_loop(
                 "company": item.get("company"),
                 "title": item.get("title"),
                 "score": item.get("score", 0),
+                "kimi_fit": item.get("llm_fit_score"),
                 "age_days": _queue_age_days(first_seen, run_date, str(item.get("id"))),
                 "resume": item.get("resume"),
                 "apply_url": item.get("apply_url") or item.get("source_url"),
@@ -998,7 +1006,9 @@ def run_pipeline(
         prefix="run",
     )
     llm_statuses = {primary_llm.get("status"), remote_llm.get("status")}
-    digest_usable = llm_statuses.issubset({"ok", "not_needed"})
+    # "partial": some leads got no usable verdict and were withheld one by one;
+    # every lead that is shown was still scored.
+    digest_usable = llm_statuses.issubset({"ok", "partial", "not_needed"})
     hunter_health = _hunter_source_health(hunter_ctx)
     if hunter_health is not None:
         source_health = [*source_health, hunter_health]
@@ -1162,6 +1172,73 @@ APPROVED_DIGEST_RECIPIENTS = frozenset(
 )
 
 
+REVIEWABLE_DRAFTS = ("to_review", "needs_address", "blocked_validation")
+
+
+def attach_outreach_review(run: Record, state_dir: Path, now: datetime | None = None) -> None:
+    """Put this run's drafted cold emails that still need Daksh on the run, so
+    the evening digest doubles as the approval request."""
+    import outreach_store
+
+    now = now or datetime.now(IST)
+    data = outreach_store.load(state_dir / "outreach.json")
+    run["outreach_drafts"] = [
+        draft
+        for draft in data["drafts"].values()
+        if draft.get("run_id") == run.get("run_id") and draft.get("status") in REVIEWABLE_DRAFTS
+    ]
+    run["outreach_next_slot"] = outreach_store.next_send_slot(now).isoformat()
+
+
+def _review_attachments(run: Record) -> list[tuple[str, bytes]]:
+    folder = Path(os.getenv("RESUME_DIR", "/data/resumes"))
+    names = sorted({str(d.get("attachment")) for d in run.get("outreach_drafts") or [] if d.get("attachment")})
+    return [(name, (folder / name).read_bytes()) for name in names if (folder / name).is_file()]
+
+
+def _send_unscored(
+    delivery_run: Record,
+    sent_ids: set[str],
+    state: LocalState,
+    delivery_key: str,
+    recipient: str,
+) -> tuple[str, str]:
+    """Kimi scoring failed outright (2026-09-14: the digest used to be
+    cancelled). Send the deterministic shortlist instead, labelled UNSCORED in
+    the subject and both bodies, so an outage is never silent and never passes
+    for Kimi-approved matches. These leads are not marked sent: a later scored
+    digest may still show them."""
+    target = int(delivery_run.get("daily_target", 10))
+    errors = "; ".join(
+        f"{section}: {meta.get('error') or meta.get('status')}"
+        for section, meta in (delivery_run.get("llm_scoring") or {}).items()
+        if meta.get("status") not in {"ok", "partial", "not_needed"}
+    )
+    for key, section in (("digest_primary", "primary"), ("digest_remote_fallback", "remote_fallback")):
+        leads = [
+            item for item in delivery_run.get(section, []) if str(item.get("id")) not in sent_ids
+        ]
+        delivery_run[key] = sorted(leads, key=lambda item: -(item.get("score") or 0))[:target]
+    count = len(delivery_run["digest_primary"]) + len(delivery_run["digest_remote_fallback"])
+    delivery_run["scoring_warning"] = (
+        "UNSCORED: Kimi shortlist scoring failed this run"
+        + (f" ({errors})" if errors else "")
+        + ". The leads below passed only the deterministic filters and score; Kimi did "
+        "not check them for fit or spam. Verify each one before acting."
+    )
+    stale_notice = _staleness_warning(delivery_run)
+    if stale_notice:
+        delivery_run["staleness_warning"] = stale_notice
+    subject = f"[UNSCORED] {count} internship lead{'s' if count != 1 else ''} - Rise"
+    if stale_notice:
+        subject = f"[STALE] {subject}"
+    message_id = send_self_digest(
+        subject, render_digest(delivery_run), render_html_digest(delivery_run)
+    )
+    state.record_digest_delivery(delivery_key, recipient, message_id, utc_timestamp(), opportunity_ids=[])
+    return "digest_sent_unscored", message_id
+
+
 def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
     run_id = str(run["run_id"])
     delivery_key = _ist_delivery_key(run_id)
@@ -1173,8 +1250,6 @@ def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
     existing = state.digest_delivery_for_run(delivery_key, run_id)
     if existing.get("message_id"):
         return "digest_already_sent", str(existing["message_id"])
-    if not run.get("digest_usable"):
-        raise RuntimeError("Digest is unusable because Kimi shortlist scoring did not pass")
     if run.get("run_kind") != "live":
         raise RuntimeError("Self-digest delivery accepts live scheduled runs only")
     if os.getenv("BEDROCK_RESEARCH_MODEL_ID", "") != "moonshotai.kimi-k2.5":
@@ -1184,6 +1259,8 @@ def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
         raise RuntimeError("Self-digest recipient is not an approved Daksh address")
     sent_ids = state.sent_opportunity_ids()
     delivery_run = deepcopy(run)
+    if not run.get("digest_usable"):
+        return _send_unscored(delivery_run, sent_ids, state, delivery_key, recipient)
     delivery_run["digest_primary"] = [
         item for item in run.get("digest_primary", []) if str(item.get("id")) not in sent_ids
     ]
@@ -1217,7 +1294,12 @@ def _send_once(run: Record, state: LocalState) -> tuple[str, str]:
         subject = f"[STALE] {subject}"
     body = render_digest(delivery_run)
     html_body = render_html_digest(delivery_run)
-    message_id = send_self_digest(subject, body, html_body)
+    drafts = delivery_run.get("outreach_drafts") or []
+    if drafts:
+        subject = f"[{len(drafts)} to approve by 09:00] {subject}"
+        message_id = send_self_digest(subject, body, html_body, attachments=_review_attachments(delivery_run))
+    else:
+        message_id = send_self_digest(subject, body, html_body)
     state.record_digest_delivery(
         delivery_key,
         recipient,
@@ -1265,6 +1347,10 @@ def main() -> int:
         # the run is still recorded as failed.
         try:
             run, run_path = _load_latest_live(output_base)
+            try:
+                attach_outreach_review(run, state_base)
+            except Exception as exc:  # noqa: BLE001 - drafts are optional; the digest still goes
+                run["outreach_review_error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
             digest_path = run_path.with_name(f"{run['run_id']}-digest.md")
             write_digest(digest_path, run)
             message_id = ""

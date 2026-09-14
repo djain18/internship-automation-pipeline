@@ -214,6 +214,112 @@ def test_claude_prompt_never_double_quotes_a_signal_that_already_quotes_itself()
     assert 'The listing states: "You will own weekly revenue reporting."' in draft["claude_prompt"]
 
 
+def test_claude_prompt_never_uses_there_as_a_contact_name() -> None:
+    """2026-09-14 digest: every prompt without a named person read
+    "Contact: there (published company address)" and "Write a cold email
+    from Daksh to there" -- the Hi-there greeting fallback leaked into facts."""
+    base = {
+        "company": "Auraaison",
+        "title": "Founder's Office Intern",
+        "source_url": "https://www.linkedin.com/posts/auraaisonn_x",
+        "research": {
+            "solution_concept": "a founder-office operating cadence.",
+            "observed_problem_signal": "The post describes messy early-stage execution.",
+        },
+    }
+    with_email = draft_outreach({
+        **base,
+        "selected_contact": {
+            "email": "admin@auraaison.com",
+            "role": "published company address",
+            "source_url": "https://www.linkedin.com/posts/auraaisonn_x",
+        },
+    })["claude_prompt"]
+    assert "Contact: there" not in with_email and "to there" not in with_email
+    assert "- Contact: admin@auraaison.com (published company address" in with_email
+    assert "from Daksh to the Auraaison hiring team (admin@auraaison.com)" in with_email
+
+    nobody = draft_outreach({**base, "selected_contact": {}})["claude_prompt"]
+    assert "Contact: there" not in nobody and "to there" not in nobody
+    assert "- Contact: none found yet" in nobody
+
+    named = draft_outreach({**base, "selected_contact": {"name": "Monika", "email": "monika@mokuit.com"}})
+    assert "- Contact: Monika / monika@mokuit.com" in named["claude_prompt"]
+    assert "from Daksh to Monika" in named["claude_prompt"]
+
+
+def test_email_prompt_carries_conversion_and_humanizer_rules_itself() -> None:
+    """Daksh 2026-09-14: the prompt must itself hold the humanizer principles and
+    the research-backed cold email rules, not just say "run /humanizer"."""
+    record = {
+        "company": "Auraaison", "title": "Founder's Office Intern", "source_url": "https://x/post",
+        "resume": "Daksh-Jain-founders_office",
+        "description": "Send your resume to admin@auraaison.com | Subject: Founder's Office",
+        "research": {"observed_problem_signal": '"the messy, real, unglamorous version of building"'},
+    }
+    prompts = [
+        draft_outreach(record)["claude_prompt"],
+        draft_outreach({**record, "research": {}})["claude_prompt"],  # research-first
+    ]
+    for prompt in prompts:
+        # Verified facts about Daksh, with the unverified resume metrics kept out.
+        assert "Christ University" in prompt and "Godel Earth" in prompt
+        assert "95 percent" not in prompt and "200-plus" not in prompt
+        # Employer instructions outrank generic rules (Auraaison names a subject line).
+        assert "instructions in the listing win" in prompt
+        # Conversion rules, each traceable to a cited source in REVIEW.md.
+        assert "50-100 words" in prompt
+        assert "interest question" in prompt
+        assert "Attach Daksh-Jain-founders_office.pdf" in prompt
+        # Humanizer principles written into the prompt, plus the audit loop.
+        assert "zero em dashes" in prompt
+        assert "rule of three" in prompt.casefold()
+        assert "What makes this obviously AI-written?" in prompt
+        # A fixed output format with a self-check.
+        assert "Word count:" in prompt
+        assert "/humanizer" in prompt
+
+
+def _section(prompt: str, heading: str) -> str:
+    return prompt.split(f"## {heading}\n\n", 1)[1].split("\n\n", 1)[0]
+
+
+def test_claude_prompt_keeps_inference_and_solution_separate() -> None:
+    """2026-09-14 digest: "What I am inferring" and "Solution idea" printed the
+    same sentence on every card, because the inference slot was filled from
+    solution_concept while research["inference"] was never read."""
+    record = {
+        "company": "Koyo", "title": "Product Ops Intern", "source_url": "https://x/post",
+        "research": {
+            "observed_problem_signal": '"We run AI-driven interviews for clients every day"',
+            "inference": "Interview operations need manual oversight as volume grows.",
+            "solution_concept": "A human-in-the-loop ops layer for live interviews.",
+        },
+    }
+    prompt = draft_outreach(record)["claude_prompt"]
+    assert _section(prompt, "What I am inferring (kept separate from the observation above)") == (
+        "Interview operations need manual oversight as volume grows."
+    )
+    assert _section(prompt, "Solution idea") == "A human-in-the-loop ops layer for live interviews."
+
+
+def test_claude_prompt_does_not_pass_off_template_text_as_research() -> None:
+    """Kplor and Mokuit (2026-09-14) got deterministic_research's fixed sentences,
+    identical on every record, presented as inference and solution."""
+    from research import deterministic_research
+
+    record = {
+        "company": "Mokuit", "title": "GTM Intern", "source_url": "https://x/post",
+        "description": "You will own market research, sales outreach and new market development.",
+    }
+    record["research"] = deterministic_research(record)
+    prompt = draft_outreach(record)["claude_prompt"]
+    assert "one-page operating map" not in prompt
+    assert "whole span of work on one intern" not in prompt
+    assert _section(prompt, "Solution idea").startswith("None yet")
+    assert _section(prompt, "What I am inferring (kept separate from the observation above)").startswith("None drawn")
+
+
 def test_claude_prompt_never_generated_without_a_real_signal() -> None:
     """A prompt built on nothing real would hand Claude Code a blank canvas
     to invent facts on -- exactly what this pipeline exists to prevent. The

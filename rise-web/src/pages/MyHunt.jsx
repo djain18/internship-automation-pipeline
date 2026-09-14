@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -8,6 +9,7 @@ import {
   Cloud,
   FileText,
   LogIn,
+  Mail,
   MapPin,
   RefreshCw,
   SearchCheck,
@@ -229,7 +231,12 @@ export default function MyHunt() {
             <h1 className="mt-3 text-4xl font-semibold tracking-tight text-foreground">My internship hunt</h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">High-fit opportunities, source-backed company research, and drafts ready for your manual review.</p>
           </div>
-          <div className="text-sm text-muted-foreground">Run {payload.run?.date} · {payload.run?.status}</div>
+          <div className="flex flex-col items-end gap-2">
+            <Link to="/my-hunt/outbox" className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Mail className="h-4 w-4" /> Outbox
+            </Link>
+            <div className="text-sm text-muted-foreground">Run {payload.run?.date} · {payload.run?.status}</div>
+          </div>
         </header>
 
         <section className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Run summary">
@@ -316,7 +323,7 @@ export default function MyHunt() {
           </div>
         )}
 
-        <footer className="mt-8 flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="h-3.5 w-3.5" /> Completed {payload.run?.completedAt || "recently"}. Applications and outreach are always manual.</footer>
+        <footer className="mt-8 flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="h-3.5 w-3.5" /> Completed {payload.run?.completedAt || "recently"}. Only emails you approve in the Outbox are sent; everything else stays manual.</footer>
       </div>
     </div>
   );

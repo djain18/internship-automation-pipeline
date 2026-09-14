@@ -38,6 +38,11 @@ pipeline_image = (
             "PIPELINE_OUTPUT_DIR": "/data/out",
             "PIPELINE_STATE_DIR": "/data/state",
             "PERSONAL_HUNT_URL": "https://rise-web-kappa.vercel.app/my-hunt",
+            # Approved-outreach sender (2026-09-14). "shadow" mails Daksh the copies;
+            # flip to "live" only after the shadow week, per the plan.
+            "OUTREACH_SEND_MODE": "shadow",
+            "OUTREACH_FROM": "dakshjainn02@gmail.com",
+            "RESUME_DIR": "/data/resumes",
         }
     )
     .add_local_dir(PERSONAL_ROOT, remote_path="/root/personal-hunt")
@@ -46,7 +51,16 @@ pipeline_image = (
 
 api_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi[standard]>=0.115,<1", "firebase-admin>=6,<7")
+    # 2026-09-14: the outreach review endpoints validate drafts with
+    # check_draft -> outreach -> research, which pull these in.
+    .pip_install(
+        "fastapi[standard]>=0.115,<1",
+        "firebase-admin>=6,<7",
+        "beautifulsoup4>=4.12,<5",
+        "boto3>=1.35,<2",
+        "PyYAML>=6,<7",
+        "requests>=2.32,<3",
+    )
     .env(
         {
             "PIPELINE_OUTPUT_DIR": "/data/out",
@@ -56,10 +70,10 @@ api_image = (
             ),
         }
     )
-    .add_local_file(
-        PERSONAL_ROOT / "execution" / "private_api.py",
-        remote_path="/root/private_api.py",
-    )
+    .add_local_dir(PERSONAL_ROOT / "execution", remote_path="/root/personal-hunt/execution")
+    .add_local_dir(PERSONAL_ROOT / "templates", remote_path="/root/personal-hunt/templates")
+    .add_local_dir(PERSONAL_ROOT / "config", remote_path="/root/personal-hunt/config")
+    .add_local_dir(REPO_ROOT / "execution" / "hunt_core", remote_path="/root/execution/hunt_core")
 )
 
 app = modal.App(APP_NAME)
@@ -143,6 +157,7 @@ def collect() -> dict[str, object]:
     timeout=60 * 10,
 )
 def deliver() -> dict[str, object]:
+    volume.reload()  # drafts the routine submitted through personal_api
     arguments = ["--digest-latest", "--no-state"]
     if _self_digest_enabled():
         arguments.append("--send-digest")
@@ -154,11 +169,39 @@ def deliver() -> dict[str, object]:
     secrets=pipeline_secrets,
     volumes={"/data": volume},
     timeout=60 * 45,
-    schedule=modal.Cron("30 0,8 * * *", timezone="Asia/Kolkata"),
+    # The only cron this app may have (workspace limit: 5 scheduled functions,
+    # 4 used elsewhere). Must match schedule_slots.CRON; job_for picks the job.
+    schedule=modal.Cron("0,30 10,18,21 * * *", timezone="Asia/Kolkata"),
 )
 def scheduled_pipeline() -> dict[str, object]:
-    hour = datetime.now(ZoneInfo("Asia/Kolkata")).hour
-    return deliver.local() if 7 <= hour < 12 else collect.local()
+    sys.path.insert(0, "/root/personal-hunt/execution")
+    from schedule_slots import job_for
+
+    job = job_for(datetime.now(ZoneInfo("Asia/Kolkata")))
+    if job == "collect":
+        return collect.local()
+    if job == "deliver":
+        return deliver.local()
+    if job == "send":
+        return send_approved_emails.local()
+    return {"status": "no_job_at_this_time"}
+
+
+@app.function(
+    image=pipeline_image,
+    secrets=pipeline_secrets,
+    volumes={"/data": volume},
+    timeout=60 * 30,
+)
+def send_approved_emails() -> dict[str, object]:
+    # Run at 10:00 IST Mon-Fri by scheduled_pipeline. Belkins 2026 (7.5M cold
+    # emails): 8 AM-noon has the highest reply rate; approvals lock at 09:00.
+    sys.path.insert(0, "/root/personal-hunt/execution")
+    sys.path.insert(0, "/root")
+    volume.reload()  # pick up approvals committed by personal_api
+    import send_approved
+
+    return send_approved.run_slot(commit=volume.commit)
 
 
 @app.function(
@@ -189,10 +232,12 @@ def live_render_pipeline() -> dict[str, object]:
 )
 @modal.asgi_app()
 def personal_api():
-    sys.path.insert(0, "/root")
-    from private_api import app as fastapi_app
+    sys.path.insert(0, "/root/personal-hunt/execution")
+    import private_api
 
-    return fastapi_app
+    # Draft edits and approvals must reach the sender's container.
+    private_api.COMMIT = volume.commit
+    return private_api.app
 
 
 @app.local_entrypoint()

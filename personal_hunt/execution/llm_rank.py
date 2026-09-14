@@ -44,7 +44,28 @@ def _failed(records: list[Record], status: str, error: str = "") -> list[Record]
     return output
 
 
+def _verdict_error(item: Any) -> str:
+    """Empty when one ranked row is well-formed; otherwise why it is not.
+    Bounds an over-long reason in place."""
+    if not isinstance(item, dict):
+        return "each ranked item must be an object"
+    score = item.get("fit_score")
+    if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+        return "fit_score must be an integer from 0 to 100"
+    if not isinstance(item.get("relevant"), bool) or not isinstance(item.get("spam"), bool):
+        return "relevant and spam must be booleans"
+    reason = clean_text(item.get("reason"))
+    if not reason:
+        return "reason must not be empty"
+    if len(reason) > MAX_REASON_CHARS:
+        reason = reason[: MAX_REASON_CHARS - 3].rstrip() + "..."
+    item["reason"] = reason
+    return ""
+
+
 def _validate_response(payload: Any, expected_ids: set[str]) -> list[Record]:
+    """Strict whole-response check. Used by eval_models.py, where a model that
+    cannot return a clean shortlist should fail its evaluation."""
     if not isinstance(payload, dict) or not isinstance(payload.get("ranked"), list):
         raise ValueError("response must contain a ranked list")
     ranked = payload["ranked"]
@@ -55,21 +76,30 @@ def _validate_response(payload: Any, expected_ids: set[str]) -> list[Record]:
     if sorted(ranks) != list(range(1, len(ranked) + 1)):
         raise ValueError("ranks must be unique consecutive integers")
     for item in ranked:
-        score = item.get("fit_score")
-        if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
-            raise ValueError("fit_score must be an integer from 0 to 100")
-        if not isinstance(item.get("relevant"), bool) or not isinstance(
-            item.get("spam"), bool
-        ):
-            raise ValueError("relevant and spam must be booleans")
-        reason = clean_text(item.get("reason"))
-        if not reason:
-            raise ValueError("reason must not be empty")
-        if len(reason) > MAX_REASON_CHARS:
-            item["reason"] = reason[: MAX_REASON_CHARS - 3].rstrip() + "..."
-        else:
-            item["reason"] = reason
+        error = _verdict_error(item)
+        if error:
+            raise ValueError(error)
     return ranked
+
+
+def _usable_verdicts(payload: Any, expected_ids: set[str]) -> dict[str, Record]:
+    """Every well-formed verdict for a supplied id, first occurrence wins.
+
+    Production scoring no longer rejects the whole section for one bad row:
+    run_8df9363eaeef875d (2026-09-14) lost all 22 leads and the day's digest
+    to a single ID mismatch. Unknown, duplicate and malformed rows are dropped;
+    a lead with no usable verdict fails closed on its own in score_shortlist.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("ranked"), list):
+        raise ValueError("response must contain a ranked list")
+    verdicts: dict[str, Record] = {}
+    for item in payload["ranked"]:
+        identifier = clean_text(item.get("id")) if isinstance(item, dict) else ""
+        if identifier in expected_ids and identifier not in verdicts and not _verdict_error(item):
+            verdicts[identifier] = item
+    if not verdicts:
+        raise ValueError("response contained no usable verdict for the supplied shortlist")
+    return verdicts
 
 
 def _extraction_batch_content(candidates: list[Record]) -> dict[str, Any]:
@@ -300,12 +330,17 @@ def score_shortlist(
             "status": "skipped_missing_configuration",
             "section": section,
         }
+    # The model sees 1..N, never the real ids. run_8df9363eaeef875d
+    # (2026-09-14) sent 22 records keyed by 20-char hex ids and Kimi's reply
+    # failed the exact-ID check, cancelling that day's digest. Short aliases
+    # remove the copying error; code maps them back below.
+    alias_to_id = {str(index): record["id"] for index, record in enumerate(records, 1)}
     supplied = []
-    for record in records:
+    for alias, record in zip(alias_to_id, records):
         research = record.get("research") or {}
         supplied.append(
             {
-                "id": record["id"],
+                "id": alias,
                 "company": record.get("company"),
                 "title": record.get("title"),
                 "location_class": record.get("location_class"),
@@ -347,47 +382,89 @@ def score_shortlist(
         content,
         ensure_ascii=False,
     )
-    try:
-        payload, usage = cached_bedrock_json(
-            purpose=f"shortlist_rank:{section}",
-            model_id=model_id,
-            prompt_version="v1",
-            content=content,
-            prompt=prompt,
-            region=region,
-            cache=cache,
-            # 2026-09-13: the 1800-token default was set for a shortlist of
-            # 10; at llm_shortlist_size:30, ~30 x (rank, fit_score, relevant,
-            # spam, 180-char reason) sits right on that limit. A truncated
-            # payload fails _validate_response and zeroes the WHOLE section
-            # (every admit for the day), not just the tail records -- the
-            # same failure class max_linkedin_extractions_per_run already
-            # hit twice. Sized for 40 records with headroom.
-            max_tokens=5000,
-        )
-        ranked = _validate_response(payload, {record["id"] for record in records})
-    except Exception as exc:
-        if cache is not None and "usage" in locals():
-            cache.pop(str(usage.get("cache_key", "")), None)
-        error = f"{type(exc).__name__}: {str(exc)[:240]}"
+    verdicts: dict[str, Record] = {}
+    usages: list[Record] = []
+    error = ""
+    attempts = 0
+    # One retry when the reply is unusable or incomplete (temperature 0.1, so a
+    # second read of the same prompt can differ). The better attempt wins.
+    for attempts in (1, 2):
+        attempt_usage: Record | None = None
+        try:
+            payload, attempt_usage = cached_bedrock_json(
+                purpose=f"shortlist_rank:{section}",
+                model_id=model_id,
+                prompt_version="v1",
+                content=content,
+                prompt=prompt,
+                region=region,
+                cache=cache,
+                # 2026-09-13: the 1800-token default was set for a shortlist of
+                # 10; at llm_shortlist_size:30, ~30 x (rank, fit_score,
+                # relevant, spam, 180-char reason) sits right on that limit.
+                # Sized for 40 records with headroom.
+                max_tokens=5000,
+            )
+            attempt_verdicts = _usable_verdicts(payload, set(alias_to_id))
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {str(exc)[:240]}"
+            attempt_verdicts = {}
+        if attempt_usage is not None:
+            usages.append(attempt_usage)
+        if len(attempt_verdicts) > len(verdicts):
+            verdicts = attempt_verdicts
+        if len(verdicts) == len(alias_to_id):
+            break
+        if cache is not None and attempt_usage is not None:
+            # Never pin a failed or partial answer: the retry and any later run
+            # with the same shortlist must ask the model again.
+            cache.pop(str(attempt_usage.get("cache_key", "")), None)
+    if not verdicts:
         return _failed(records, "failed", error), {
             "status": "failed",
             "section": section,
             "model_id": model_id,
+            "attempts": attempts,
             "error": error,
         }
-    by_id = {item["id"]: item for item in ranked}
+    usage: Record = {
+        **usages[-1],
+        **{
+            key: sum(u.get(key, 0) or 0 for u in usages)
+            for key in (
+                "calls", "cache_hits", "input_tokens", "output_tokens",
+                "total_tokens", "elapsed_ms", "cost_usd",
+            )
+        },
+    }
+    missing_aliases = [alias for alias in alias_to_id if alias not in verdicts]
+
+    def model_order(alias: str) -> tuple[int, int]:
+        rank = verdicts[alias].get("rank")
+        valid_rank = isinstance(rank, int) and not isinstance(rank, bool)
+        return (rank if valid_rank else len(alias_to_id) + 1, int(alias))
+
+    # Ranks are renumbered 1..k in the model's order, so a gap or tie in its
+    # ranks never costs a verdict.
+    new_rank = {alias: rank for rank, alias in enumerate(sorted(verdicts, key=model_order), 1)}
     threshold = int(scoring.get("llm_fit_threshold", 70))
-    output: list[Record] = []
-    for record in records:
-        verdict = by_id[record["id"]]
+    missing = {alias_to_id[alias] for alias in missing_aliases}
+    output: list[Record] = _failed(
+        [record for record in records if record["id"] in missing],
+        "missing_from_response",
+        "model returned no usable verdict for this lead",
+    )
+    for alias, record in zip(alias_to_id, records):
+        if alias not in verdicts:
+            continue
+        verdict = verdicts[alias]
         item = dict(record)
         relevant = bool(verdict["relevant"])
         spam = bool(verdict["spam"])
         fit_score = int(verdict["fit_score"])
         item.update(
             {
-                "llm_rank": int(verdict["rank"]),
+                "llm_rank": new_rank[alias],
                 "llm_fit_score": fit_score,
                 "llm_relevant": relevant,
                 "llm_spam": spam,
@@ -398,14 +475,17 @@ def score_shortlist(
             }
         )
         output.append(item)
-    output.sort(key=lambda item: (int(item["llm_rank"]), item["id"]))
+    # Scored leads by rank first, then unscored ones in their original order.
+    output.sort(key=lambda item: item["llm_rank"] or len(alias_to_id) + 1)
     return output, {
-        "status": "ok",
+        "status": "partial" if missing_aliases else "ok",
         "section": section,
         "model_id": model_id,
         "usage": usage,
         "admitted": sum(bool(item["digest_approved"]) for item in output),
         "withheld": sum(not bool(item["digest_approved"]) for item in output),
+        "missing": len(missing_aliases),
+        "attempts": attempts,
     }
 
 

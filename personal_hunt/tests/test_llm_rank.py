@@ -12,6 +12,150 @@ def test_role_judgement_instruction_treats_no_fixed_jd_as_positive() -> None:
     assert "thin description is not evidence against fit" in instruction
 
 
+def _ranked(identifier, rank, fit_score=90, relevant=True, spam=False):
+    return {
+        "id": identifier,
+        "rank": rank,
+        "fit_score": fit_score,
+        "relevant": relevant,
+        "spam": spam,
+        "reason": "Broad founder-facing ownership is explicit.",
+    }
+
+
+def _bedrock_env(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_BEDROCK", "true")
+    monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+
+
+def test_shortlist_sends_short_aliases_and_maps_back_to_real_ids(monkeypatch) -> None:
+    # run_8df9363eaeef875d (2026-09-14): 22 records keyed by 20-char hex ids
+    # like opp_3dd445e30e0748bc; Kimi's reply failed the exact-ID check and the
+    # whole digest was cancelled. The model now only ever copies 1..N.
+    _bedrock_env(monkeypatch)
+    seen: list[str] = []
+
+    def fake_cached(**kwargs):
+        seen.extend(item["id"] for item in kwargs["content"]["records"])
+        # Integer ids are a plausible model echo of "1", "2" and must still map.
+        return {"ranked": [_ranked(2, 1), _ranked("1", 2, fit_score=40)]}, {"calls": 1}
+
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", fake_cached)
+    records = [
+        {"id": "opp_3dd445e30e0748bc", "company": "A", "title": "Founder's Office Intern"},
+        {"id": "opp_9174536e74b5df3b", "company": "B", "title": "Generalist Intern"},
+    ]
+    scored, summary = llm_rank.score_shortlist(records, {"llm_fit_threshold": 70}, "primary")
+    assert seen == ["1", "2"]
+    assert [item["id"] for item in scored] == ["opp_9174536e74b5df3b", "opp_3dd445e30e0748bc"]
+    by_id = {item["id"]: item for item in scored}
+    assert by_id["opp_9174536e74b5df3b"]["digest_approved"]
+    assert not by_id["opp_3dd445e30e0748bc"]["digest_approved"]
+    assert summary["status"] == "ok"
+
+
+def _three_records() -> list[dict]:
+    return [
+        {"id": f"opp_{index}", "company": f"Co{index}", "title": "Generalist Intern"}
+        for index in (1, 2, 3)
+    ]
+
+
+def test_shortlist_keeps_valid_verdicts_when_one_id_is_missing_or_bad(monkeypatch) -> None:
+    # One missing id used to zero every lead in the section. Now only the
+    # missing lead fails closed; the rest keep their verdicts.
+    _bedrock_env(monkeypatch)
+    payload = {
+        "ranked": [
+            _ranked("3", 1),
+            _ranked("99", 2),  # alias never supplied
+            _ranked("3", 3),  # duplicate
+            {**_ranked("2", 4), "fit_score": "high"},  # malformed row
+        ]
+    }
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", lambda **_k: (payload, {"calls": 1}))
+    scored, summary = llm_rank.score_shortlist(_three_records(), {"llm_fit_threshold": 70}, "primary")
+    by_id = {item["id"]: item for item in scored}
+    assert summary["status"] == "partial"
+    assert summary["admitted"] == 1
+    assert summary["missing"] == 2
+    assert by_id["opp_3"]["digest_approved"] and by_id["opp_3"]["llm_rank"] == 1
+    for identifier in ("opp_1", "opp_2"):
+        assert not by_id[identifier]["digest_approved"]
+        assert by_id[identifier]["llm_rank_status"] == "missing_from_response"
+    assert scored[0]["id"] == "opp_3"
+
+
+def test_shortlist_renumbers_non_consecutive_ranks(monkeypatch) -> None:
+    _bedrock_env(monkeypatch)
+    payload = {"ranked": [_ranked("1", 5), _ranked("2", 2), _ranked("3", 5)]}
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", lambda **_k: (payload, {"calls": 1}))
+    scored, summary = llm_rank.score_shortlist(_three_records(), {}, "primary")
+    assert summary["status"] == "ok"
+    assert [(item["id"], item["llm_rank"]) for item in scored] == [
+        ("opp_2", 1), ("opp_1", 2), ("opp_3", 3)
+    ]
+
+
+def _scripted_model(monkeypatch, replies: list) -> list[int]:
+    """Each call pops the next reply; an Exception instance is raised."""
+    calls: list[int] = []
+
+    def fake_cached(**_kwargs):
+        calls.append(1)
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply, {"calls": 1, "cache_hits": 0, "total_tokens": 10, "cache_key": "k"}
+
+    monkeypatch.setattr(llm_rank, "cached_bedrock_json", fake_cached)
+    return calls
+
+
+FULL_REPLY = {"ranked": [_ranked("1", 1), _ranked("2", 2), _ranked("3", 3)]}
+
+
+def test_shortlist_retries_once_after_a_total_failure(monkeypatch) -> None:
+    _bedrock_env(monkeypatch)
+    calls = _scripted_model(monkeypatch, [RuntimeError("Bedrock throttled"), FULL_REPLY])
+    scored, summary = llm_rank.score_shortlist(_three_records(), {}, "primary")
+    assert len(calls) == 2
+    assert summary["status"] == "ok"
+    assert summary["attempts"] == 2
+    assert summary["usage"]["calls"] == 1  # the raised attempt reported no usage
+    assert all(item["digest_approved"] for item in scored)
+
+
+def test_shortlist_retries_once_after_a_partial_reply(monkeypatch) -> None:
+    _bedrock_env(monkeypatch)
+    calls = _scripted_model(monkeypatch, [{"ranked": [_ranked("1", 1)]}, FULL_REPLY])
+    _, summary = llm_rank.score_shortlist(_three_records(), {}, "primary")
+    assert len(calls) == 2
+    assert summary["status"] == "ok"
+    assert summary["usage"]["calls"] == 2
+    assert summary["usage"]["total_tokens"] == 20
+
+
+def test_shortlist_keeps_the_better_attempt_and_stops_after_two(monkeypatch) -> None:
+    _bedrock_env(monkeypatch)
+    two_of_three = {"ranked": [_ranked("1", 1), _ranked("3", 2)]}
+    calls = _scripted_model(monkeypatch, [two_of_three, {"ranked": [_ranked("2", 1)]}])
+    scored, summary = llm_rank.score_shortlist(_three_records(), {}, "primary")
+    assert len(calls) == 2
+    assert summary["status"] == "partial"
+    assert summary["missing"] == 1
+    assert [item["id"] for item in scored if item["digest_approved"]] == ["opp_1", "opp_3"]
+
+
+def test_shortlist_does_not_retry_a_complete_reply(monkeypatch) -> None:
+    _bedrock_env(monkeypatch)
+    calls = _scripted_model(monkeypatch, [FULL_REPLY])
+    _, summary = llm_rank.score_shortlist(_three_records(), {}, "primary")
+    assert len(calls) == 1
+    assert summary["attempts"] == 1
+
+
 def test_kimi_fit_and_spam_gate(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_BEDROCK", "true")
     monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
@@ -23,7 +167,7 @@ def test_kimi_fit_and_spam_gate(monkeypatch) -> None:
             {
                 "ranked": [
                     {
-                        "id": "good",
+                        "id": "1",
                         "rank": 1,
                         "fit_score": 91,
                         "relevant": True,
@@ -31,7 +175,7 @@ def test_kimi_fit_and_spam_gate(monkeypatch) -> None:
                         "reason": "Broad founder-facing ownership is explicit.",
                     },
                     {
-                        "id": "spam",
+                        "id": "2",
                         "rank": 2,
                         "fit_score": 10,
                         "relevant": False,
@@ -58,11 +202,7 @@ def test_invalid_kimi_batch_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_BEDROCK", "true")
     monkeypatch.setenv("BEDROCK_RESEARCH_MODEL_ID", "moonshotai.kimi-k2.5")
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
-    monkeypatch.setattr(
-        llm_rank,
-        "cached_bedrock_json",
-        lambda *_args, **_kwargs: ({"ranked": []}, {}),
-    )
+    calls = _scripted_model(monkeypatch, [{"ranked": []}, {"ranked": []}])
     scored, summary = llm_rank.score_shortlist(
         [{"id": "candidate", "company": "Co", "title": "Generalist Intern"}],
         {"llm_fit_threshold": 70},
@@ -70,6 +210,7 @@ def test_invalid_kimi_batch_fails_closed(monkeypatch) -> None:
     )
     assert not scored[0]["digest_approved"]
     assert summary["status"] == "failed"
+    assert len(calls) == 2
 
 
 def test_overlong_reason_is_bounded_without_discarding_valid_verdict(monkeypatch) -> None:
@@ -83,7 +224,7 @@ def test_overlong_reason_is_bounded_without_discarding_valid_verdict(monkeypatch
             {
                 "ranked": [
                     {
-                        "id": "candidate",
+                        "id": "1",
                         "rank": 1,
                         "fit_score": 90,
                         "relevant": True,
@@ -229,7 +370,7 @@ def test_shortlist_cache_skips_identical_call_and_invalidates_content(monkeypatc
             }
         calls += 1
         payload = {"ranked": [{
-            "id": "candidate", "rank": 1, "fit_score": 90,
+            "id": "1", "rank": 1, "fit_score": 90,
             "relevant": True, "spam": False, "reason": "grounded",
         }]}
         kwargs["cache"][key] = {"payload": payload}

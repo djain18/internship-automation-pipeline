@@ -404,6 +404,35 @@ def test_llm_research_merge_rejects_ungrounded_observation() -> None:
     assert quoted["inference"] == "Launch coordination sits with one intern."
 
 
+def test_llm_research_merge_cites_the_text_the_quote_was_found_in() -> None:
+    """2026-09-14 AIFORJR: the model quoted the LinkedIn post ("Engage parents &
+    kids for 30 days make them come back to app") but the prompt cited
+    aiforjr.com, because the deterministic observation_url (the job page) was
+    kept when the model's quote replaced the observation."""
+    from research import merge_llm_research
+
+    post_url = "https://www.linkedin.com/posts/sagarjaid_hiring-activity-1"
+    record = {
+        "company": "AIFORJR",
+        "title": "GTM Product Intern",
+        "source_url": post_url,
+        "description": "Hiring. - Engage parents & kids for 30 days make them come back to app",
+        "listing_page_url": "http://aiforjr.com/",
+        "listing_page_text": "Meet Juno, the world's first AI Math Tutor for kids ages 4-11.",
+    }
+    base = {**deterministic_research(record), "observation_url": "http://aiforjr.com/"}
+
+    from_post = merge_llm_research(
+        base, {"observed_problem_signal": '"Engage parents & kids for 30 days make them come back to app"'}, record
+    )
+    assert from_post["observation_url"] == post_url
+
+    from_page = merge_llm_research(
+        base, {"observed_problem_signal": "\"Meet Juno, the world's first AI Math Tutor for kids ages 4-11.\""}, record
+    )
+    assert from_page["observation_url"] == "http://aiforjr.com/"
+
+
 def test_llm_research_merge_clears_inference_without_any_observation() -> None:
     from research import merge_llm_research
 
