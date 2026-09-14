@@ -226,7 +226,9 @@ def live_render_pipeline() -> dict[str, object]:
 
 @app.function(
     image=api_image,
-    secrets=[modal.Secret.from_name("firebase-admin-key")],
+    # outreach-routine-token: RISE_OUTREACH_TOKEN, the drafting routine's bearer
+    # secret for /api/outreach/queue and /api/outreach/drafts (2026-09-14).
+    secrets=[modal.Secret.from_name("firebase-admin-key"), modal.Secret.from_name("outreach-routine-token")],
     volumes={"/data": volume},
     timeout=60,
 )

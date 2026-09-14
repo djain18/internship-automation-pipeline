@@ -71,6 +71,8 @@ def test_queue_skips_sent_and_already_drafted_leads() -> None:
     assert first["attachment"] == "Daksh-Jain-founders_office.pdf"
     assert first["contact"] == {"email": "admin@auraaison.com", "source": "https://www.linkedin.com/posts/auraaisonn_x"}
     assert first["prompt"].startswith("# Auraaison")
+    # Rebuilt from current rules, not the stale prompt stored on the run.
+    assert "What makes this obviously AI-written?" in first["prompt"]
     store.submit_drafts(data, "run_a", [submitted("opp_1")], at("2026-09-14T20:00"))
     assert [item["lead_id"] for item in store.drafting_queue(run(lead("opp_1"), lead("opp_2")), data, set())] == ["opp_2"]
 

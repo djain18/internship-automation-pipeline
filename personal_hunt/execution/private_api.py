@@ -155,14 +155,6 @@ def require_routine(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Routine credential required")
 
 
-def _sent_ids() -> set[str]:
-    try:
-        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        return {str(value) for value in state.get("sent_opportunity_ids", [])}
-    except (OSError, ValueError):
-        return set()
-
-
 def _change_outreach(change: Any) -> Any:
     """Load, change and save outreach state under one lock, then commit the volume."""
     with _OUTREACH_LOCK:
@@ -181,7 +173,9 @@ def _change_outreach(change: Any) -> Any:
 def outreach_queue() -> dict[str, Any]:
     run = _latest_live()
     data = outreach_store.load(OUTREACH_PATH)
-    return {"run_id": run.get("run_id"), "leads": outreach_store.drafting_queue(run, data, _sent_ids())}
+    # No digest sent-ids here: those record leads shown to Daksh, not emailed.
+    # The outreach store itself keeps each lead to one draft and one send.
+    return {"run_id": run.get("run_id"), "leads": outreach_store.drafting_queue(run, data, set())}
 
 
 @app.post("/api/outreach/drafts", dependencies=[Depends(require_routine)])

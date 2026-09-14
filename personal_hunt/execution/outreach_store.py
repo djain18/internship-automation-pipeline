@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from check_draft import ENTERED_BY_DAKSH, check_email_draft
 from models import clean_text
+from outreach import draft_outreach
 
 IST = ZoneInfo("Asia/Kolkata")
 SEND_TIME = time(10, 0)  # Belkins 2026: 8 AM-noon replies best; see plan section 1
@@ -95,7 +96,9 @@ def drafting_queue(run: Record, data: Record, sent_ids: set[str]) -> list[Record
                     "source": clean_text(contact.get("source_url")) or None,
                 },
                 "listing_text": str(item.get("listing_page_text") or item.get("description") or "")[:6000],
-                "prompt": (item.get("outreach") or {}).get("claude_prompt") or "",
+                # Built now, not read from the run: a run collected before a
+                # prompt change would otherwise hand the routine stale rules.
+                "prompt": draft_outreach(item).get("claude_prompt") or "",
             }
         )
     return queue
