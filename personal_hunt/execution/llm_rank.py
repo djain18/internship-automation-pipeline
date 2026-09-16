@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from models import Record, clean_text, fold_text, grounded_in
+from normalize import CITY_TERMS
 from research import cached_bedrock_json
 
 
@@ -21,7 +22,7 @@ LINKEDIN_EXTRACTION_BATCH_SIZE = 5
 # The location words a post must state for the role to be in scope. One
 # definition shared by the extraction candidate filter and the validator so
 # the two can never drift apart.
-LOCATION_TERMS = ("bengaluru", "bangalore", "remote", "hybrid")
+LOCATION_TERMS = tuple(term for terms in CITY_TERMS.values() for term in terms) + ("remote", "hybrid")
 
 
 def _failed(records: list[Record], status: str, error: str = "") -> list[Record]:
@@ -363,7 +364,7 @@ def score_shortlist(
                 "exposure, right-hand-to-founder/CEO scope, 0-to-1 end-to-end "
                 "ownership across GTM, fundraising, operations, or product, "
                 "business, operations, growth, "
-                "strategy breadth, Bengaluru or supported India-remote fit, and evidence "
+                "strategy breadth, Bengaluru or Chennai (equal) or supported India-remote fit, and evidence "
                 "quality. Mark spam when promotional, scraped noise, a course/training "
                 "pitch, deceptive, duplicated content, not a real opening, or missing "
                 "enough evidence of an internship. Mark irrelevant when primarily "

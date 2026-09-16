@@ -95,9 +95,54 @@ def _parse_duration_months(record: Record) -> int | None:
     return int(match.group(1)) if match else None
 
 
+# Daksh 2026-09-16: Chennai ranks equal to Bengaluru, and listings that name
+# only an area ("Koramangala", "Guindy") must not be dropped as `other`. Terms
+# are matched on word boundaries so "omr" cannot fire inside another word.
+CITY_TERMS: dict[str, tuple[str, ...]] = {
+    "bengaluru": (
+        "bengaluru", "bangalore", "koramangala", "indiranagar", "hsr layout",
+        "whitefield", "electronic city", "bellandur", "marathahalli", "sarjapur",
+        "domlur", "mg road", "jayanagar", "jp nagar", "btm layout", "hebbal",
+        "yelahanka", "manyata", "bagmane",
+    ),
+    "chennai": (
+        "chennai", "madras", "guindy", "tidel park", "taramani", "perungudi",
+        "thoraipakkam", "sholinganallur", "omr", "old mahabalipuram road",
+        "siruseri", "sipcot", "navalur", "velachery", "adyar", "anna nagar",
+        "t. nagar", "t nagar", "nungambakkam", "teynampet", "alwarpet",
+        "mylapore", "egmore", "porur", "ambattur", "ekkatuthangal", "kilpauk",
+        "ecr", "east coast road",
+    ),
+}
+PRIMARY_CITIES = tuple(CITY_TERMS)
+PRIMARY_CLASSES = frozenset(
+    f"{city}_{mode}" for city in PRIMARY_CITIES for mode in ("onsite", "hybrid")
+)
+CITY_LABELS = {"bengaluru": "Bengaluru", "chennai": "Chennai"}
+_CITY_PATTERNS = {
+    city: re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(t) for t in terms) + r")(?![a-z0-9])")
+    for city, terms in CITY_TERMS.items()
+}
+
+
+def match_city(text: str) -> str:
+    """The first primary city whose city or area term appears in text, else ''."""
+    lowered = clean_text(text).casefold()
+    for city in PRIMARY_CITIES:
+        if _CITY_PATTERNS[city].search(lowered):
+            return city
+    return ""
+
+
+def city_of(location_class: str) -> str:
+    """Display name of the primary city behind a location class, else ''."""
+    city = clean_text(location_class).split("_", 1)[0]
+    return CITY_LABELS.get(city, "") if location_class in PRIMARY_CLASSES else ""
+
+
 def classify_location(location: str, work_mode_hint: str = "") -> tuple[str, str]:
     text = f"{location} {work_mode_hint}".casefold()
-    bengaluru = any(term in text for term in ("bengaluru", "bangalore"))
+    city = match_city(text)
     remote = any(term in text for term in ("remote", "work from home", "wfh"))
     hybrid = "hybrid" in text
     onsite = any(term in text for term in ("onsite", "on-site", "in office", "office"))
@@ -105,12 +150,12 @@ def classify_location(location: str, work_mode_hint: str = "") -> tuple[str, str
         term in text for term in ("india", "asia", "worldwide", "anywhere", "global")
     )
 
-    if bengaluru:
+    if city:
         if hybrid:
-            return "bengaluru_hybrid", "hybrid"
+            return f"{city}_hybrid", "hybrid"
         if remote and not onsite:
-            return "bengaluru_hybrid", "hybrid"
-        return "bengaluru_onsite", "onsite"
+            return f"{city}_hybrid", "hybrid"
+        return f"{city}_onsite", "onsite"
     if remote and india_scope:
         return "india_remote", "remote"
     return "other", "unknown"

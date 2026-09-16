@@ -4,6 +4,7 @@ import re
 
 from build_prompt import load_prompt_template
 from models import Record, clean_text
+from normalize import city_of
 from research import TEMPLATE_INFERENCE, TEMPLATE_SOLUTION
 
 # Shared with watchlist_prompts.py's one-shot deep-dive prompts, so the copy
@@ -39,7 +40,7 @@ EMAIL_COPY_RULES = (
     "- Then one line on why Daksh fits, using exactly one verified fact from the "
     "section about him, the one closest to this role. No metrics, no adjectives about himself.",
     "- Be honest about the ask: name the role from the listing, the dates "
-    "(November 2026 to April 2027) and Bengaluru, and say the resume is attached "
+    "(November 2026 to April 2027) and the city ({role_city}), and say the resume is attached "
     "(\"I have attached my resume for your reference.\").",
     "- End with one polite, low-effort interest question they can answer in a line "
     "(\"Would you be open to considering me for this role?\" or \"Would a short note "
@@ -130,13 +131,23 @@ EMAIL_AUDIT_STEPS = (
 )
 
 
+def _role_city(record: Record) -> str:
+    """City named in the ask: the record's primary city (Daksh 2026-09-16:
+    Chennai ranks with Bengaluru), Bengaluru when the class is not a city."""
+    return city_of(clean_text(record.get("location_class"))) or "Bengaluru"
+
+
 def _email_rule_values(record: Record) -> dict[str, str]:
     """Placeholder values shared by both email prompts."""
     resume = clean_text(record.get("resume")) or "Daksh-Jain-Master"
+    role_city = _role_city(record)
     return {
         "resume_basename": resume,
         "candidate_facts": "\n".join(CANDIDATE_FACTS),
-        "copy_rules": "\n".join(EMAIL_COPY_RULES).replace("{resume_basename}", resume),
+        "role_city": role_city,
+        "copy_rules": "\n".join(EMAIL_COPY_RULES)
+        .replace("{resume_basename}", resume)
+        .replace("{role_city}", role_city),
         "humanizer_rules": "\n".join(HUMANIZER_RULES),
         "output_format": "\n".join(EMAIL_OUTPUT_FORMAT),
         "audit_steps": "\n".join(EMAIL_AUDIT_STEPS),
@@ -455,7 +466,7 @@ def build_email_prompt(record: Record) -> str:
         _EMAIL_PROMPT_FALLBACK,
         company_name=clean_text(record.get("company")) or "the company",
         role_title=clean_text(record.get("title")) or "internship opportunity",
-        location=clean_text(record.get("location")) or "Bengaluru",
+        location=clean_text(record.get("location")) or _role_city(record),
         contact_line=_contact_line(record),
         recipient=_prompt_recipient(record),
         apply_url=clean_text(record.get("apply_url") or record.get("source_url") or record.get("company_url")),
@@ -544,7 +555,7 @@ def build_research_first_prompt(record: Record) -> str:
         _RESEARCH_FIRST_PROMPT_FALLBACK,
         company_name=clean_text(record.get("company")) or "the company",
         role_title=clean_text(record.get("title")) or "internship opportunity",
-        location=clean_text(record.get("location")) or "Bengaluru",
+        location=clean_text(record.get("location")) or _role_city(record),
         source_url=clean_text(record.get("source_url")) or "not recorded",
         apply_url=clean_text(record.get("apply_url") or record.get("source_url")) or "not recorded",
         contact_line=contact_line,
@@ -688,14 +699,14 @@ def draft_outreach(record: Record) -> Record:
         linkedin_note = (
             f"Hi {contact_name} - the {title} work at {company} caught my attention. "
             "I mapped the public context into a short evidence brief and one small "
-            "idea. I'm seeking a six-month Bengaluru generalist internship from "
+            f"idea. I'm seeking a six-month {_role_city(record)} generalist internship from "
             "November 2026. Useful if I share it?"
         )
         if len(linkedin_note) > 300:
             linkedin_note = _fit_note(
                 f"Hi {contact_name} - the {title} work at {company} caught my "
                 "attention. I mapped the public context into a short brief and one "
-                "idea. Seeking a six-month Bengaluru internship from November 2026. "
+                f"idea. Seeking a six-month {_role_city(record)} internship from November 2026. "
                 "Share it?"
             )
         linkedin_message = (

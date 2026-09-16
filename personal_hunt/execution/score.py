@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 
 from models import Record
-from normalize import _contains, _terms
+from normalize import PRIMARY_CLASSES, _contains, _terms
 
 
 def _contains_any(text: str, terms: list[str]) -> bool:
@@ -40,11 +40,11 @@ def score_record(
     reasons: list[str] = []
 
     location_class = record.get("location_class")
-    components["location"] = {
-        "bengaluru_onsite": weights["location"],
-        "bengaluru_hybrid": weights["location"],
-        "india_remote": weights["location"] // 2,
-    }.get(location_class, 0)
+    components["location"] = (
+        weights["location"] if location_class in PRIMARY_CLASSES
+        else weights["location"] // 2 if location_class == "india_remote"
+        else 0
+    )
     reasons.append(f"location:{location_class}")
 
     accepted = _contains_any(joined, roles.get("accepted", []))
@@ -146,14 +146,11 @@ def score_record(
     # office internship, or a growth internship — such generalist roles... I
     # will take care of the JD myself." The floor never invents a fact: it
     # applies only where the title already matched a curated role phrase or
-    # title family AND the location is a verified Bengaluru class. Kimi's
+    # title family AND the location is a verified primary-city class (Bengaluru or Chennai). Kimi's
     # independent llm_fit_threshold read still gates what reaches the digest.
-    if (accepted or title_family) and location_class in {
-        "bengaluru_onsite",
-        "bengaluru_hybrid",
-    }:
+    if (accepted or title_family) and location_class in PRIMARY_CLASSES:
         record["score"] = max(record["score"], threshold)
-        reasons.append("floor:named_role_in_bengaluru")
+        reasons.append("floor:named_role_in_primary_city")
     record["score_reasons"] = reasons
     record["eligible"] = record["score"] >= threshold
     if not record["eligible"]:
@@ -177,7 +174,7 @@ def select_balanced(records: list[Record], scoring: dict[str, Any]) -> dict[str,
     primary = sorted(
         [
             item for item in eligible
-            if item.get("location_class") in {"bengaluru_onsite", "bengaluru_hybrid"}
+            if item.get("location_class") in PRIMARY_CLASSES
         ],
         key=lambda item: (
             -int(item.get("score", 0)),

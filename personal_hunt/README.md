@@ -34,13 +34,28 @@ Production actions require explicit flags and environment variables.
 No variable enables prospect sending because that capability does not exist.
 
 The Modal app defaults to SHADOW_MODE=true and the separate self-digest flag is
-off. At 23:00 Asia/Kolkata it collects, scores with pinned Kimi K2.5, writes the
-recoverable artifact, and publishes Sheets; at 08:00 it retries only the latest
-live digest. Enabling `ENABLE_SELF_DIGEST` still permits only one idempotent
-message per live run ID to `dakshinjain187@gmail.com`. Keep `SHADOW_MODE=true`
-until the changed v2 behavior completes seven accepted executions.
+off. One cron (`0,30 6,8,10,21 * * *`, Asia/Kolkata) drives every job; the slot
+map in `execution/schedule_slots.py` decides which one runs:
 
-Internships are strictly seven days old or newer, deterministically score at
+- 06:30 collect -- fetch, score with pinned Kimi K2.5, write the recoverable
+  artifact, publish Sheets;
+- ~07:15 the `rise-outreach-drafter` routine drafts against that morning's run;
+- 08:30 deliver -- the review email: new matches plus drafts to approve;
+- 09:00 approvals lock, 10:00 approved emails send (Mon-Fri);
+- 21:00 deliver -- catch-up delivery.
+
+Collect moved from 18:30 to 06:30 on 2026-09-16: the 08:30 email was re-rendering
+the previous evening's run, whose leads were already marked sent, so it read "no
+new internship matches" on a healthy pipeline. There is still exactly one collect
+a day -- Apify is capped at $33/month with a $0.70 per-run ceiling, and two would
+hard-stop the paid source mid-month.
+
+Enabling `ENABLE_SELF_DIGEST` still permits only one idempotent message per live
+run ID to `dakshinjain187@gmail.com`. Keep `SHADOW_MODE=true` until the changed v2
+behavior completes seven accepted executions.
+
+Internships are strictly ten days old or newer (`max_posting_age_days: 10`
+in `config/scoring.yml`), deterministically score at
 least 70, then must pass Kimi fit >=70, relevant=true, and spam=false. Funding
 is secondary: 0–15 days primary, 16–30 days visibly labeled, never older.
 

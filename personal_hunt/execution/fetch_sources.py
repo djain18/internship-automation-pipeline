@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import json
@@ -16,6 +17,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from models import Record, clean_text, utc_timestamp
+from normalize import CITY_LABELS, match_city
 from normalize import classify_location
 from source_health import SourceHealth, classify_http_failure
 
@@ -207,7 +209,9 @@ def _yc(content: str, source: dict[str, Any]) -> list[Record]:
                 if company_text:
                     break
         company = re.sub(r"\s*\([A-Z]\d+\)\s*$", "", company_text).strip()
-        location = "Bengaluru"
+        # The page is already filtered to the source's city; keep the page's
+        # own spelling when it states one.
+        location = _source_city(source)
         if "bangalore" in card_text.casefold():
             location = "Bangalore"
         output.append(
@@ -452,8 +456,8 @@ def _teamtailor(content: bytes, source: dict[str, Any]) -> list[Record]:
         if not location and summary:
             # Try to extract from HTML; summary may contain location mentions
             summary_text = summary.replace("<", " ").replace(">", " ")
-            if "bengaluru" in summary_text.casefold() or "bangalore" in summary_text.casefold():
-                location = "Bengaluru"
+            if match_city(summary_text) == clean_text(source.get("location_class")):
+                location = _source_city(source)
         output.append(
             _ats_record(
                 source,
@@ -478,6 +482,77 @@ def _fetch_ats(session: requests.Session, source: dict[str, Any], timeout: int) 
         "workable_ats": _workable,
     }[source["adapter"]]
     return parser(response.json(), source)
+
+
+# Getro-hosted VC portfolio boards (jobs.accel.com). Checked 2026-09-16:
+# api.getro.com/robots.txt is "User-agent: * / Disallow: /", so the JSON API the
+# board's own JavaScript calls is off limits. The board host's robots.txt allows
+# everything, and its server-rendered __NEXT_DATA__ already carries the jobs and
+# honours the base64 `filter` query parameter. It does NOT honour pagination:
+# only the first page (20 jobs) is ever server-rendered, so each source must
+# filter tightly enough that `total` fits on that page.
+# Hosts reviewed 2026-09-16 (robots.txt allows all; 3one4 and Blume ask for
+# Crawl-delay: 1, which the 2 s per-source interval already exceeds).
+_GETRO_HOSTS = {"jobs.accel.com", "jobs.3one4capital.com", "careers.antler.co", "jobs.blume.vc"}
+_NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+
+
+def _source_city(source: dict[str, Any]) -> str:
+    """Display name for a city-scoped source (yc_chennai -> "Chennai")."""
+    return CITY_LABELS.get(clean_text(source.get("location_class")), "Bengaluru")
+
+
+def _getro_board_url(source: dict[str, Any]) -> str:
+    url = clean_text(source.get("url"))
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in _GETRO_HOSTS:
+        raise ValueError("getro_board requires a reviewed HTTPS Getro board URL")
+    filters = source.get("filters") or {}
+    if not filters:
+        # Unfiltered, the first page is 20 of ~27,000 jobs chosen by the board.
+        raise ValueError("getro_board requires filters so the first page is the whole result")
+    encoded = base64.b64encode(json.dumps(filters, separators=(",", ":")).encode()).decode()
+    return _replace_query(url, filter=encoded)
+
+
+def _getro_board(html: str, source: dict[str, Any]) -> tuple[list[Record], dict[str, Any]]:
+    match = _NEXT_DATA.search(html or "")
+    if not match:
+        raise ValueError("Getro board page has no __NEXT_DATA__; the page contract changed")
+    jobs = json.loads(match.group(1))["props"]["pageProps"]["initialState"]["jobs"]
+    found = [item for item in jobs.get("found") or [] if isinstance(item, dict)]
+    output: list[Record] = []
+    for item in found:
+        organization = item.get("organization") if isinstance(item.get("organization"), dict) else {}
+        created = item.get("createdAt")
+        posted_at = (
+            datetime.fromtimestamp(created, tz=timezone.utc).isoformat()
+            if isinstance(created, (int, float))
+            else ""
+        )
+        record = _ats_record(
+            source,
+            id=f"getro_{item.get('id')}" if item.get("id") else "",
+            company=organization.get("name"),
+            title=item.get("title"),
+            location="; ".join(clean_text(value) for value in item.get("locations") or []),
+            work_mode=clean_text(item.get("workMode")).replace("_", "-"),
+            employment_type=item.get("seniority"),
+            url=item.get("url"),
+            posted_at=posted_at,
+        )
+        # The URL is the employer's own posting, but the listing came via the
+        # aggregator, not the employer's ATS API.
+        record["source_confidence"] = "medium"
+        output.append(record)
+    total = jobs.get("total")
+    metadata: dict[str, Any] = {"board_total": total}
+    if isinstance(total, int) and total > len(found):
+        metadata["human_action"] = (
+            f"Board reports {total} jobs but only {len(found)} are server-rendered; "
+            "tighten this source's filters or jobs are silently skipped."
+        )
+    return output, metadata
 
 
 # Vendor board links embedded in aggregator pages convert to the vendors' own
@@ -677,6 +752,7 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
         if not source.get("enabled") or source.get("adapter") == "human_import":
             continue
         started = time.perf_counter()
+        extra_health: dict[str, Any] = {}
         try:
             if source["adapter"] == "rise_sheet":
                 sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
@@ -705,6 +781,9 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
                 records = _wellfound(response.text, source)
             elif source["adapter"] in {"greenhouse_ats", "lever_ats", "ashby_ats", "workable_ats"}:
                 records = _fetch_ats(session, source, timeout)
+            elif source["adapter"] == "getro_board":
+                response = _request(session, _getro_board_url(source), timeout)
+                records, extra_health = _getro_board(response.text, source)
             elif str(source["adapter"]).startswith("apify_"):
                 from apify_sources import fetch_apify_actor
 
@@ -722,6 +801,7 @@ def fetch_live(config: dict[str, Any]) -> tuple[list[Record], list[Record]]:
                 health_status = apify_metadata.pop("health_status", event["status"])
                 event.update(apify_metadata)
                 event["status"] = health_status
+            event.update(extra_health)
             health.append(event)
         except Exception as exc:
             status_code = int(getattr(exc, "status_code", 0) or 0)

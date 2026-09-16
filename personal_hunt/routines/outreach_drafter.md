@@ -1,8 +1,10 @@
-# Routine: nightly cold-email drafter
+# Routine: morning cold-email drafter
 
 Runs as the Claude Code routine `rise-outreach-drafter` (Claude Sonnet 5) daily at
-19:30 IST, after the 18:30 collect. Plan: internship workspace
-`tasks/2026-09-approved-outreach-sender/plan.md`.
+07:15 IST (`45 1 * * *` UTC), after the 06:30 collect and before the 08:30 review
+email. Plans: internship workspace `tasks/2026-09-approved-outreach-sender/plan.md`
+and `tasks/2026-09-morning-collect-schedule/brief.md` (the 2026-09-16 move from the
+old 19:30 / 18:30 evening timing).
 
 You write drafts only. You never send an email, never commit, never push, and never
 open a pull request. Daksh approves each draft on his review page; a separate

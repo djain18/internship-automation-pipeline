@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from models import Record, canonical_url, clean_text
+from normalize import CITY_TERMS as _CITY_TERMS
 
 # 2026-09-13: reordered operational-first. The homepage/about/product pages
 # are always marketing copy, which problem_research.py's Kimi instruction
@@ -284,11 +285,11 @@ OFFICE_TERMS = (
     "based", "address", "work from", "onsite", "hybrid", "workplace",
 )
 
-CITY_TERMS = ("bengaluru", "bangalore")
+CITY_TERMS = tuple(term for terms in _CITY_TERMS.values() for term in terms)
 
 
 def find_office_evidence(html_text: str, page_url: str) -> Record | None:
-    """A quoted sentence placing an office in Bengaluru, or None.
+    """A quoted sentence placing an office in Bengaluru or Chennai, or None.
 
     Both a city term and an office term must share one sentence, so "we serve
     customers in Bengaluru" does not qualify. Quote only, never inference.
@@ -432,7 +433,7 @@ def fetch_office_evidence(
     timeout: int = 10,
     max_pages: int = 3,
 ) -> Record | None:
-    """First Bengaluru-office sentence on the company site, or None.
+    """First Bengaluru- or Chennai-office sentence on the company site, or None.
 
     Robots-respecting and never raising: a dead site is just no evidence.
     """

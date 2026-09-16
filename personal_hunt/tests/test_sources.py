@@ -6,6 +6,8 @@ import pytest
 from fetch_sources import (
     _ashby,
     _ftb,
+    _getro_board,
+    _getro_board_url,
     _greenhouse,
     _lever,
     _rise_sheet,
@@ -364,3 +366,73 @@ def test_fetch_harvested_boards_respects_disabled_flag() -> None:
     records, health = fetch_harvested_boards(session, {"enabled": False}, 25, 0)
     assert records == [] and health == []
     assert session.calls == []
+
+
+def _getro_page(found: list[dict], total: int) -> str:
+    state = {"props": {"pageProps": {"initialState": {"jobs": {"found": found, "total": total}}}}}
+    return f'<html><script id="__NEXT_DATA__" type="application/json">{json.dumps(state)}</script></html>'
+
+
+GETRO_SOURCE = {
+    "id": "accel_getro_bengaluru_internships",
+    "url": "https://jobs.accel.com/jobs",
+    "filters": {"searchable_locations": ["Bengaluru, Karnataka, India"], "seniority": ["internship"]},
+    "adapter": "getro_board",
+    "source_priority": 2,
+}
+
+
+def test_getro_board_maps_server_rendered_jobs() -> None:
+    job = {
+        "id": 92519630,
+        "title": "Revenue & Operations Intern",
+        "organization": {"name": "Sprinto ", "headCount": 4},
+        "locations": ["Bengaluru, Karnataka, India"],
+        "workMode": "on_site",
+        "seniority": "internship",
+        "url": "https://jobs.lever.co/Sprinto/856517f8",
+        "createdAt": 1779887220,
+    }
+    records, metadata = _getro_board(_getro_page([job], total=1), GETRO_SOURCE)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["id"] == "getro_92519630"
+    assert record["company"] == "Sprinto"
+    assert record["title"] == "Revenue & Operations Intern"
+    assert record["location"] == "Bengaluru, Karnataka, India"
+    assert record["work_mode"] == "on-site"
+    assert record["source_url"] == "https://jobs.lever.co/Sprinto/856517f8"
+    assert record["posted_at"].startswith("2026-05-27")
+    assert record["source_confidence"] == "medium"
+    # headCount is a Getro size bucket, never an employee count.
+    assert "employee_count" not in record
+    assert metadata == {"board_total": 1}
+
+
+def test_getro_board_flags_jobs_past_the_server_rendered_page() -> None:
+    jobs = [{"id": index, "title": f"Intern {index}", "url": f"https://x.test/{index}"} for index in range(20)]
+    records, metadata = _getro_board(_getro_page(jobs, total=45), GETRO_SOURCE)
+
+    assert len(records) == 20
+    assert metadata["board_total"] == 45
+    assert "45 jobs but only 20" in metadata["human_action"]
+
+
+def test_getro_board_fails_loudly_when_the_page_contract_changes() -> None:
+    with pytest.raises(ValueError, match="__NEXT_DATA__"):
+        _getro_board("<html>client-rendered shell</html>", GETRO_SOURCE)
+
+
+def test_getro_board_url_encodes_filters_and_gates_host() -> None:
+    url = _getro_board_url(GETRO_SOURCE)
+    assert url.startswith("https://jobs.accel.com/jobs?filter=")
+    for host in ("jobs.3one4capital.com", "careers.antler.co", "jobs.blume.vc"):
+        assert _getro_board_url({**GETRO_SOURCE, "url": f"https://{host}/jobs"}).startswith(
+            f"https://{host}/jobs?filter="
+        )
+
+    with pytest.raises(ValueError, match="reviewed HTTPS Getro board"):
+        _getro_board_url({**GETRO_SOURCE, "url": "https://api.getro.com/api/v2/collections/8672/search/jobs"})
+    with pytest.raises(ValueError, match="requires filters"):
+        _getro_board_url({**GETRO_SOURCE, "filters": {}})

@@ -49,7 +49,7 @@ def parse_registry(content: str, registry_url: str) -> list[Record]:
                 "source": "fund_registry",
                 "status": "needs_company_verification",
                 "next_action": (
-                    "Confirm Bengaluru presence, 400-or-fewer employees, lane, "
+                    "Confirm Bengaluru or Chennai presence, 400-or-fewer employees, lane, "
                     "and a current funding/growth/problem signal."
                 ),
                 "confidence": "low",

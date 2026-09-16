@@ -60,7 +60,7 @@ from fetch_sources import (
 from funding import fetch_funding_live, select_funding_events
 from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
 from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
-from normalize import normalize_many
+from normalize import match_city, normalize_many
 from outreach import draft_outreach, validate_outreach
 from problem_research import research_deep_problem, select_discovered_for_research
 from watchlist_prompts import write_watchlist_prompts
@@ -221,7 +221,7 @@ GLANCE_SENIORITY_EXCLUDE = (
 def select_glance_queue(scored: list[Record], max_items: int = 5) -> list[Record]:
     """LinkedIn posts worth Daksh's own 10-second glance, nothing more.
 
-    These look FO-shaped and Bengaluru-mentioned but carry no structured
+    These look FO-shaped and name a primary city but carry no structured
     employer, so the machine cannot qualify them. They stay ineligible,
     uncounted, and unemailed; the human opens the link and decides.
     """
@@ -233,7 +233,7 @@ def select_glance_queue(scored: list[Record], max_items: int = 5) -> list[Record
         text = f"{item.get('title', '')} {item.get('description', '')}".casefold()
         if "intern" not in text and "fellow" not in text:
             continue
-        if "bengaluru" not in text and "bangalore" not in text:
+        if not match_city(text):
             continue
         if not any(term in text for term in GLANCE_HIRING_TERMS):
             continue
@@ -522,8 +522,8 @@ def select_weekly_targets(
             company.get("location") or company.get("bengaluru_presence")
         ).casefold()
         office_evidence: Record | None = None
-        if "bengaluru" not in location_text and "bangalore" not in location_text:
-            # HQ may be anywhere; a verified Bengaluru office also qualifies.
+        if not match_city(location_text):
+            # HQ may be anywhere; a verified Bengaluru or Chennai office also qualifies.
             # Bounded: at most office_budget live site checks per run.
             if office_checks >= office_budget or not clean_text(company.get("company_url")):
                 continue

@@ -1245,3 +1245,213 @@ rules and submitted them through the routine API:
   - Ressl AI: the job page asks for no AI-written messages.
 - All 8 drafts passed `check_draft` (110-132 words), and every quote is verbatim from the
   listing text.
+
+## 2026-09-15 — 08:30 digest restored
+
+**Trigger:** Daksh expected the 08:30 digest on 2026-09-15; the 2026-09-14 timeline had
+replaced it with the 21:00 review email. Daksh: "keep it at 8:30 from tomorrow onwards.
+today run it now".
+
+**Change:** `schedule_slots.SLOTS` gains `(8, 30): "deliver"`, every day including weekends;
+cron is now `0,30 8,10,18,21 * * *` IST. The 21:00 review email stays. The 08:30 run
+re-delivers the latest collect (18:30, so 14 h old, under the 18 h staleness flag) under a
+new IST-date delivery key; leads already emailed are filtered, so a morning with no new
+collect reads "no new internship matches".
+
+**Verified:** personal_hunt tests pass (3 new slot cases); Ruff clean; deployed. Manual
+`deliver` at 12:04 IST sent `run_33217ed5f6396542` as `digest_sent_no_new_matches`, Gmail
+message `1a0a3c5f4c4a3510`. First scheduled 08:30 run: 2026-09-16, not yet observed.
+
+**Local note:** the Modal CLI on this laptop fails TLS (`CERTIFICATE_VERIFY_FAILED`); running
+it through `truststore.inject_into_ssl()` works.
+
+## 2026-09-16 — collect moved to 06:30, and ats_harvest found yielding nothing
+
+**Trigger:** the 08:30 email on 2026-09-16 read "no new internship matches". Daksh:
+"morning 8:30AM I should receive the email about the new internships it found out. So
+that I can review them and send cold emails by 11AM around".
+
+**Cause (not a bug):** 08:30 was a `deliver` slot only. `deliver` runs
+`pipeline.py --digest-latest --no-state`, which re-renders the most recent collect
+artifact; the only collect was 18:30 the previous evening. `_send_once` then drops every
+opportunity already in `sent_opportunity_ids()`, which left nothing, so the subject fell
+through to "no new internship matches - Rise" (`digest_sent_no_new_matches`). The
+pipeline was healthy; the schedule assumed an evening review.
+
+**Change (approved by Daksh 2026-09-16):**
+
+    SLOTS = {(6, 30): "collect", (8, 30): "deliver", (21, 0): "deliver", (10, 0): "send"}
+    CRON  = "0,30 6,8,10,21 * * *"
+
+The day is now collect 06:30 -> drafting routine ~07:15 -> review email 08:30 ->
+approvals lock 09:00 -> send 10:00 Mon-Fri, so approved outreach leaves before 11:00.
+The 21:00 deliver stays as a catch-up. `modal_app.py`'s `modal.Cron` was updated to
+match. `next_send_slot()` needed no change: it keys off approval time, so an 08:35
+approval still sends at 10:00 the same weekday.
+
+Still exactly one collect a day. `sources.yml` caps Apify at `monthly_budget_usd: 33.00`
+with `max_run_charge_usd: 0.70`; two collects a day is ~60 runs (~$42) and would hard-stop
+the paid LinkedIn source mid-month.
+
+`routines/outreach_drafter.md` now documents 07:15 IST (`45 1 * * *` UTC). The routine
+itself still cannot be created — the 2026-09-14 blocker (GitHub not connected,
+`RISE_OUTREACH_TOKEN` not in the cloud environment) is unchanged, so until Daksh clears
+it the 08:30 email carries matches but no drafts and the 10:00 sender has nothing to send.
+
+**Verified:** 379 personal_hunt tests pass (4 new/changed schedule cases, including
+"collect must land before the morning digest" and "exactly one collect per day"); Ruff
+clean; fixture run `run_4fbe61d230be85f6` inspected (raw 9, eligible 5, primary 4,
+remote_fallback 1). Not yet deployed to Modal.
+
+**Source failure found while sizing the volume work:** `ats_harvest` is configured with
+one page, `https://jobs.accel.com/jobs`, and `max_boards: 8`. Fetched live on 2026-09-16
+and run through the production `harvest_ats_boards()` / `ATS_LINK_PATTERNS`, that page
+yields **0 boards**. The strings "greenhouse", "lever.co", "ashbyhq" and "workable" do not
+appear anywhere in its HTML at all: it is now a Getro-hosted Next.js SPA (118 "getro"
+hits, collection `a52780e0-ab3e-44a5-bcd0-c8059958c478`) that renders its listings
+client-side. The other four approved registry pages were probed the same way and are the
+same story — careers.peakxv.com is a consider.co SPA, kalaari.com is Webflow,
+rainmatter.com is a plain portfolio page; all four contain zero ATS links.
+
+So the harvested-board path contributes nothing today, and adding more aggregator pages to
+`ats_harvest.pages` would not change that. The next live run's `source_health` should carry
+`ats_harvest_page:jobs.accel.com` with `status: zero_results` — confirm there before
+deciding what to do.
+
+`api.getro.com/api/v2/collections/<id>/search/jobs` does answer with JSON given an
+`Accept: application/json` header (`{"error":["collection_id: must be an integer"]}`,
+so the endpoint is live and the UUID is not the key it wants). Turning that into a
+`getro_ats` adapter is real adapter work and is NOT in the approved brief; it is written
+up as an option, not started.
+
+**Open with Daksh:** how to recover job-board volume — verified `watchlist.yml` boards
+(proven path, data entry only), a Getro/Consider adapter (new work), or both.
+
+### 2026-09-16 (later) — Accel Getro board source added, ats_harvest disabled
+
+**Daksh:** "sure getro works" (approving a Getro-based source for Accel's board).
+
+**Access check before building (2026-09-16):**
+- `https://api.getro.com/robots.txt` is `User-agent: *` / `Disallow: /`. The JSON API the
+  board's own JavaScript calls is therefore not used, even though it answers.
+- `https://jobs.accel.com/robots.txt` allows everything (it lists only a sitemap).
+- The board page's server-rendered `__NEXT_DATA__` carries the jobs
+  (`props.pageProps.initialState.jobs.found` plus `total`) and honours the base64 `filter`
+  query parameter. It does not honour `page=`: only the first 20 jobs are server-rendered.
+
+So the adapter reads the board page, not the API, and every source must filter tightly
+enough that `total` fits on that one page. Measured filter results: no filter 27,224;
+Bengaluru only 2,114; `q=intern` + Bengaluru 878; Bengaluru + `seniority: internship` 18.
+
+**Change:**
+- `execution/fetch_sources.py`: `getro_board` adapter. Host gate `_GETRO_HOSTS =
+  {"jobs.accel.com"}`; refuses a source with no filters; fails loudly (source `failed`)
+  when `__NEXT_DATA__` is missing; `createdAt` epoch seconds converted to ISO;
+  `source_confidence: medium` because the listing came via an aggregator. Getro's
+  `organization.headCount` is a size bucket and is not mapped to `employee_count`.
+  `source_health` carries `board_total`, plus a `human_action` whenever `total` exceeds
+  the rows rendered, so truncation cannot go silent the way ats_harvest did.
+- Job URLs that point at LinkedIn are left to the existing normalize guard
+  (`linkedin_post_requires_manual_verification`); nothing new was needed.
+- `config/sources.yml`: source `accel_getro_bengaluru_internships`, and `ats_harvest`
+  set `enabled: false` with the reason.
+- `tests/test_sources.py`: 4 tests (mapping, truncation flag, missing-contract failure,
+  URL/host/filter gate).
+
+**Verified:** 383 tests pass; Ruff clean; fixture run `run_4fbe61d230be85f6` unchanged.
+Live fetch through the production `fetch_live()` on 2026-09-16: status `ok`, 18 records,
+`board_total: 18`, 1.9 s. Of the 18, two were posted within `max_posting_age_days: 10`
+(Orange Health Labs "Social Media Intern", 2026-09-10; Sprinto "MRE Intern",
+2026-09-08). The rest date back to 2025-07. Expect this source to add a few fresh
+Bengaluru internships a week, not dozens, and most will still face the roles.yml filter.
+
+**Not deployed.** Same deploy as the schedule change, waiting on Daksh.
+
+### 2026-09-16 (afternoon) — three more Getro boards, README posting-age fix
+
+**Daksh:** chose "add all three" and "keep 10, fix README".
+
+**Access check 2026-09-16** (one robots.txt fetch plus one filtered board fetch per
+host, honest User-Agent): `jobs.3one4capital.com` and `jobs.blume.vc` are
+`User-agent: * / Allow: /` with `Crawl-delay: 1`; `careers.antler.co` lists only a
+sitemap. All three are Getro Next.js boards with the same `__NEXT_DATA__` contract as
+Accel. `fetch_live()` sleeps `min_interval_seconds` (2 s) between sources and each
+source is one request, so the crawl-delay is honoured. Probed and rejected:
+`jobs.sequoiacap.com` and `jobs.lsvp.com` (not Getro, no `__NEXT_DATA__`),
+`jobs.nexusvp.com` (`/jobs` 404). Other hostnames tried did not resolve and are not
+evidence of anything.
+
+**Change:** `_GETRO_HOSTS` now also lists the three hosts; `config/sources.yml` gains
+`threeone4_getro_bengaluru_internships`, `antler_getro_bengaluru_internships`,
+`blume_getro_bengaluru_internships` (same Bengaluru + internship filters, priority 2);
+`tests/test_sources.py` gate test covers the new hosts; `personal_hunt/README.md` now
+says ten days, matching `max_posting_age_days: 10` in scoring.yml (production had been
+10 all along; only the doc was wrong).
+
+**Verified:** all personal_hunt tests pass (383 + the extended gate case); Ruff clean.
+Live through production `fetch_live()` on 2026-09-16 ~14:45 IST:
+`threeone4` `ok`, 12 records, `board_total` 12 (2 within 10 days: Exponent Energy
+GET roles, 2026-09-08); `antler` `ok`, 3 records, `board_total` 3 (all within 10 days:
+Dodo Payments x2, Stance Health); `blume` `zero_results`, `board_total` 0. No
+`human_action` truncation flags. Expect `blume` to show `zero_results` in
+`source_health` until its portfolio posts a Bengaluru internship; that is not a failure.
+
+**Deployed to Modal as v67 at 14:36 IST 2026-09-16; not committed.** Also not yet observed: the first
+06:30 collect (2026-09-17).
+
+### 2026-09-16 (late afternoon) — Chennai added as a primary city, area names for both cities
+
+**Daksh:** "Add Chennai as location too, and areas in Chennai." Chose: equal priority
+with Bengaluru; area names for both cities; Chennai variants of the LinkedIn queries.
+
+**Before:** `classify_location` knew only "bengaluru"/"bangalore". No area names existed,
+so a listing saying "Koramangala" or "Guindy" without the city word was `other`,
+`location_out_of_scope`, dropped.
+
+**Change:**
+- `normalize.py`: `CITY_TERMS` (Bengaluru 19 terms, Chennai 29 terms), word-boundary
+  regex so "omr"/"ecr" cannot fire inside other words; classes `chennai_onsite` /
+  `chennai_hybrid`; `PRIMARY_CLASSES`, `city_of`, `match_city`.
+- `score.py`: location weight, named-role floor and primary selection use
+  `PRIMARY_CLASSES`; reason renamed `floor:named_role_in_primary_city`.
+- `llm_rank.LOCATION_TERMS` and `company_site.CITY_TERMS` derive from the same table.
+- `digest.py`: primary heading "New Bengaluru / Chennai internships".
+- `outreach.py`: the city in the ask and LinkedIn notes comes from the record's class
+  (`_role_city`); "Christ University, Bengaluru" is his college and is unchanged.
+- `fetch_sources.py`: YC and Wellfound default location from the source's
+  `location_class` (`_source_city`) instead of the literal "Bengaluru".
+- `sources.yml`: `accel/threeone4/antler/blume_getro_chennai_internships` with filter
+  `"Chennai, Tamil Nadu, India"`; 4 Chennai LinkedIn search queries (23 -> 27).
+
+**Rejected sources, with evidence (2026-09-16):** YC `/jobs/role/operations/chennai`
+returns 200 but is an unfiltered fallback (36 cards, 0 mention Chennai; Bengaluru page
+33/50, Hyderabad 30/30) so it would mislabel jobs; `wellfound.com/location/chennai` 404.
+
+**Verified:** 384 tests pass; Ruff clean; fixture `run_4fbe61d230be85f6` inspected
+(counts unchanged, new heading). Live via `fetch_live()`: accel_chennai `ok` 1/1
+(Plex Systems, Production Trainee, 2026-05-25 — stale, will not pass the age gate),
+3one4/antler/blume chennai `zero_results` 0/0. Synthetic Chennai Founder's Office intern
+normalises to `chennai_onsite`, score 70, eligible, floor applied.
+
+**Open:** Apify per-run charge with 27 queries, to read after the 2026-09-17 06:30 run
+against `max_run_charge_usd: 0.70`. Deployed to Modal as v68 at 15:22 IST 2026-09-16; not committed.
+
+### 2026-09-16 (evening) — Chennai gaps found on re-check, closed, v69
+
+**Daksh asked** whether the whole pipeline, LinkedIn posts included, now works for Chennai.
+A grep for remaining "bengaluru"/"bangalore" logic found four gates the first pass missed:
+- `llm_rank.py` Kimi fit prompt said "Bengaluru or supported India-remote fit" — Kimi
+  could have scored a Chennai lead down. Now "Bengaluru or Chennai (equal)".
+- `pipeline.select_glance_queue` (LinkedIn posts for Daksh's 10-second look) required the
+  literal city word; now `match_city`, so Chennai and area names pass. Test added.
+- `pipeline` weekly-target company check required "bengaluru" in the location text
+  before spending an office check; now `match_city`.
+- `fetch_sources.py` YC/Wellfound default location: the earlier patch never landed
+  (script aborted before it). Applied now via `_source_city`.
+Also: digest human-action lines and discover_companies next_action wording say
+"Bengaluru or Chennai". `firecrawl_research.resolve_company_url_via_search` keeps its
+`"<company> funding Bengaluru"` query: it resolves funded companies' websites by name and
+has no record in scope; left as is, noted here.
+
+**Verified:** all personal_hunt tests pass (exit 0), Ruff clean, fixture run unchanged
+(raw 9, eligible 5, primary 4, remote 1). Deployed as v69. Not committed.

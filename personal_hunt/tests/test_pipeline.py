@@ -1148,6 +1148,18 @@ def test_glance_queue_keeps_only_fo_shaped_bengaluru_posts() -> None:
     assert queue[0]["source_url"].endswith("/good")
 
 
+def test_glance_queue_accepts_chennai_and_city_areas() -> None:
+    # Daksh 2026-09-16: Chennai is a primary city; area names count for both.
+    from pipeline import select_glance_queue
+
+    scored = [
+        _glance_post("chennai", "Hiring Founder's Office Interns in Chennai, apply inside"),
+        _glance_post("area", "Founder's Office Intern wanted at our Koramangala office, apply now"),
+        _glance_post("mumbai", "Hiring Founder's Office Interns in Mumbai, apply inside"),
+    ]
+    assert [item["id"] for item in select_glance_queue(scored, 5)] == ["chennai", "area"]
+
+
 def test_glance_queue_is_capped() -> None:
     from pipeline import select_glance_queue
 

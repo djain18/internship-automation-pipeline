@@ -1,5 +1,5 @@
 from config import load_all
-from normalize import classify_location, normalize_record
+from normalize import city_of, classify_location, normalize_record
 
 
 def test_location_priority_classes() -> None:
@@ -7,6 +7,21 @@ def test_location_priority_classes() -> None:
     assert classify_location("Bengaluru hybrid") == ("bengaluru_hybrid", "hybrid")
     assert classify_location("Remote - India") == ("india_remote", "remote")
     assert classify_location("Mumbai onsite") == ("other", "unknown")
+
+
+def test_chennai_and_city_areas_are_primary() -> None:
+    # Daksh 2026-09-16: Chennai ranks equal to Bengaluru; area names count.
+    assert classify_location("Chennai, Tamil Nadu") == ("chennai_onsite", "onsite")
+    assert classify_location("Guindy - hybrid") == ("chennai_hybrid", "hybrid")
+    assert classify_location("Madras, remote ok") == ("chennai_hybrid", "hybrid")
+    assert classify_location("Koramangala, office") == ("bengaluru_onsite", "onsite")
+    assert classify_location("HSR Layout") == ("bengaluru_onsite", "onsite")
+    # Word boundaries: "omr"/"ecr" must not fire inside other words.
+    assert classify_location("Comrade Street, Mumbai") == ("other", "unknown")
+    assert classify_location("Secretariat, Delhi") == ("other", "unknown")
+    assert city_of("chennai_hybrid") == "Chennai"
+    assert city_of("bengaluru_onsite") == "Bengaluru"
+    assert city_of("india_remote") == ""
 
 
 def test_hard_excludes_oversized_company() -> None:
@@ -340,7 +355,7 @@ def test_named_bengaluru_role_publishes_without_verifiable_company_metadata() ->
     )
     assert scored["eligible"]
     assert scored["score"] >= config["scoring"]["publish_threshold"]
-    assert "floor:named_role_in_bengaluru" in scored["score_reasons"]
+    assert "floor:named_role_in_primary_city" in scored["score_reasons"]
 
 
 def test_score_floor_does_not_reach_outside_bengaluru() -> None:
@@ -359,5 +374,5 @@ def test_score_floor_does_not_reach_outside_bengaluru() -> None:
     scored = score_record(
         dict(record), config["roles"], config["scoring"], date(2026, 9, 8)
     )
-    assert "floor:named_role_in_bengaluru" not in scored["score_reasons"]
+    assert "floor:named_role_in_primary_city" not in scored["score_reasons"]
     assert not scored["eligible"]

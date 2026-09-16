@@ -171,7 +171,7 @@ def deliver() -> dict[str, object]:
     timeout=60 * 45,
     # The only cron this app may have (workspace limit: 5 scheduled functions,
     # 4 used elsewhere). Must match schedule_slots.CRON; job_for picks the job.
-    schedule=modal.Cron("0,30 10,18,21 * * *", timezone="Asia/Kolkata"),
+    schedule=modal.Cron("0,30 6,8,10,21 * * *", timezone="Asia/Kolkata"),
 )
 def scheduled_pipeline() -> dict[str, object]:
     sys.path.insert(0, "/root/personal-hunt/execution")

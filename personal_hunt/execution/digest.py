@@ -517,7 +517,7 @@ def _spotted_section(records: list[Record]) -> str:
             [
                 f"### {index}. {item.get('source_url')}",
                 "",
-                "- Human action: open the link yourself, confirm a real Bengaluru "
+                "- Human action: open the link yourself, confirm a real Bengaluru or Chennai "
                 "opening, then apply or add the company to the watchlist",
                 "",
             ]
@@ -541,7 +541,7 @@ def _glance_section(records: list[Record]) -> str:
                 f"### {index}. {item.get('source_url')}",
                 "",
                 f"- Says: {item.get('excerpt')}",
-                "- Human action: 10-second look. If it names a real Bengaluru "
+                "- Human action: 10-second look. If it names a real Bengaluru or Chennai "
                 "internship with an employer, apply directly or drop the company "
                 "in the watchlist; otherwise ignore",
                 "",
@@ -717,7 +717,7 @@ def render_digest(run: Record) -> str:
             ),
             "",
             # Phase 7: Section 1 - Approved internship matches (unchanged)
-            _section(f"New Bengaluru internships {approval}", primary),
+            _section(f"New Bengaluru / Chennai internships {approval}", primary),
             _section(f"New India-remote internships {approval}", remote),
             "## Kimi admission summary",
             "",

@@ -15,7 +15,11 @@ apify:
 # Greenhouse/Ashby links). Slugs come only from discovered links, never from
 # company names. Replaces the retired Wellfound page below.
 ats_harvest:
-  enabled: true
+  # 2026-09-16: disabled. jobs.accel.com is now a Getro Next.js board that
+  # renders client-side; its HTML contains no greenhouse/lever/ashby/workable
+  # links at all, so this yielded 0 boards every run. Accel's jobs now come in
+  # through the accel_getro_bengaluru_internships source instead.
+  enabled: false
   pages:
     - "https://jobs.accel.com/jobs"
   max_boards: 8
@@ -87,6 +91,141 @@ sources:
     location_class: bengaluru
     adapter: wellfound
     access_policy: anonymous_public_page_no_proxy
+    source_priority: 2
+
+  # 2026-09-16: Accel's portfolio job board (Getro). Reads the board page's
+  # server-rendered __NEXT_DATA__, not api.getro.com (robots.txt disallows all).
+  # Only the first 20 jobs are ever server-rendered, so the filters must keep
+  # the board's `total` at or under 20; source_health carries board_total and a
+  # human_action when they stop doing so. Measured 2026-09-16: total 18.
+  - id: accel_getro_bengaluru_internships
+    name: Accel portfolio jobs (Getro), Bengaluru internships
+    kind: public_html
+    url: "https://jobs.accel.com/jobs"
+    filters:
+      searchable_locations:
+        - "Bengaluru, Karnataka, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: bengaluru
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  # 2026-09-16: more Getro-hosted VC portfolio boards, same adapter and filters.
+  # robots.txt checked that day: all allow; 3one4 and Blume set Crawl-delay: 1.
+  # Measured Bengaluru internship totals 2026-09-16: 3one4 12, Antler 3, Blume 0.
+  - id: threeone4_getro_bengaluru_internships
+    name: 3one4 Capital portfolio jobs (Getro), Bengaluru internships
+    kind: public_html
+    url: "https://jobs.3one4capital.com/jobs"
+    filters:
+      searchable_locations:
+        - "Bengaluru, Karnataka, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: bengaluru
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  - id: antler_getro_bengaluru_internships
+    name: Antler portfolio jobs (Getro), Bengaluru internships
+    kind: public_html
+    url: "https://careers.antler.co/jobs"
+    filters:
+      searchable_locations:
+        - "Bengaluru, Karnataka, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: bengaluru
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  - id: blume_getro_bengaluru_internships
+    name: Blume Ventures portfolio jobs (Getro), Bengaluru internships
+    kind: public_html
+    url: "https://jobs.blume.vc/jobs"
+    filters:
+      searchable_locations:
+        - "Bengaluru, Karnataka, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: bengaluru
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  # 2026-09-16 (Daksh: add Chennai, equal to Bengaluru): Chennai twins of the
+  # four Getro boards. The filter string was verified live that day on Accel
+  # (1 job, location exactly "Chennai, Tamil Nadu, India"); 3one4, Antler and
+  # Blume showed 0, so expect zero_results until their portfolios post. YC's
+  # /jobs/role/operations/chennai page is an unfiltered fallback list (0 of 36
+  # cards mention Chennai) and wellfound.com/location/chennai is 404, so
+  # neither has a Chennai source.
+  - id: accel_getro_chennai_internships
+    name: Accel portfolio jobs (Getro), Chennai internships
+    kind: public_html
+    url: "https://jobs.accel.com/jobs"
+    filters:
+      searchable_locations:
+        - "Chennai, Tamil Nadu, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: chennai
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  - id: threeone4_getro_chennai_internships
+    name: 3one4 Capital portfolio jobs (Getro), Chennai internships
+    kind: public_html
+    url: "https://jobs.3one4capital.com/jobs"
+    filters:
+      searchable_locations:
+        - "Chennai, Tamil Nadu, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: chennai
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  - id: antler_getro_chennai_internships
+    name: Antler portfolio jobs (Getro), Chennai internships
+    kind: public_html
+    url: "https://careers.antler.co/jobs"
+    filters:
+      searchable_locations:
+        - "Chennai, Tamil Nadu, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: chennai
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
+    source_priority: 2
+
+  - id: blume_getro_chennai_internships
+    name: Blume Ventures portfolio jobs (Getro), Chennai internships
+    kind: public_html
+    url: "https://jobs.blume.vc/jobs"
+    filters:
+      searchable_locations:
+        - "Chennai, Tamil Nadu, India"
+      seniority:
+        - internship
+    enabled: true
+    location_class: chennai
+    adapter: getro_board
+    access_policy: public_page_robots_allowed
     source_priority: 2
 
   - id: human_import
@@ -171,6 +310,12 @@ sources:
         - "chief of staff associate Bengaluru"
         - "business operations intern Bengaluru"
         - "strategy operations intern Bengaluru"
+        # 2026-09-16: Chennai added as an equal city (Daksh). Per-run charge to be
+        # read after the first run against the $0.70 cap.
+        - "founder's office intern Chennai"
+        - "chief of staff intern Chennai"
+        - "generalist intern Chennai startup"
+        - "growth operations intern Chennai"
         - "founder's office fellow Bengaluru"
         - "chief of staff fellow Bangalore"
         - "generalist associate Bengaluru startup"
