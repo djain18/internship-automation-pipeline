@@ -170,9 +170,13 @@ def run_pipeline():
     }
 
 
-# ── Single daily run at 11:00 PM IST (5:30 PM UTC) ──────────────
+# ── Nightly run: schedule OFF since 2026-09-21 (Daksh) ──────────
+# At SCRAPE_MAX_RESULTS=700 it spends ~$1.40/night on one Apify key and drains
+# that account to $0.10 by design; 2026-09-16..18 it emptied the account the
+# godel.earth LinkedIn brief shares. Re-enable with
+# schedule=modal.Cron("30 17 * * *") only once it has its own paid account
+# or a smaller SCRAPE_MAX_RESULTS. Manual: modal run modal_app.py::nightly_run
 @app.function(
-    schedule=modal.Cron("30 17 * * *"),  # 23:00 IST = 17:30 UTC
     image=image,
     secrets=[
         modal.Secret.from_name("internship-secrets"),
