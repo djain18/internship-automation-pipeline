@@ -8,6 +8,7 @@ import {
   Clipboard,
   Cloud,
   FileText,
+  Layers,
   LogIn,
   Mail,
   MapPin,
@@ -18,7 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
-import { fetchPersonalHunt, matchesFromPayload } from "@/lib/personalHunt";
+import { fetchAllRoles, fetchPersonalHunt, matchesFromPayload } from "@/lib/personalHunt";
 
 function Skeleton() {
   return (
@@ -162,13 +163,38 @@ function MatchDetail({ item }) {
   );
 }
 
+function RoleBrowser({ roles, showDates = false }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const selected = roles.find((item) => item.id === selectedId) || roles[0];
+  return (
+    <div className="mt-5 grid items-start gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="overflow-hidden rounded-xl border border-border bg-background">
+        {roles.map((item) => (
+          <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full border-b border-border px-4 py-4 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected?.id === item.id ? "bg-secondary" : "hover:bg-secondary/60"}`}>
+            <div className="text-xs font-medium text-accent">{item.section}</div>
+            <div className="mt-1 text-sm font-semibold text-foreground">{item.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{item.company}</div>
+            <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground"><span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{item.location}</span><span>{item.llm_fit_score ?? "—"}/100</span></div>
+            {showDates && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                {item.in_latest_run ? "In today’s run" : `Last shown ${item.last_shown}`} · first {item.first_shown}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+      <MatchDetail item={selected} />
+    </div>
+  );
+}
+
 export default function MyHunt() {
   const { user, loading: authLoading, signInWithGoogle } = useAuth();
   const [payload, setPayload] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
   const [tab, setTab] = useState("matches");
-  const [selectedId, setSelectedId] = useState(null);
+  const [allRoles, setAllRoles] = useState({ status: "idle", roles: [] });
 
   useEffect(() => {
     const previousTitle = document.title;
@@ -196,8 +222,6 @@ export default function MyHunt() {
     fetchPersonalHunt(user, controller.signal)
       .then((data) => {
         setPayload(data);
-        const first = matchesFromPayload(data)[0];
-        setSelectedId(first?.id || null);
         setStatus("ready");
       })
       .catch((err) => {
@@ -208,8 +232,16 @@ export default function MyHunt() {
     return () => controller.abort();
   }, [user]);
 
+  // Every past run file is read, so only fetch when the tab is opened.
+  useEffect(() => {
+    if (tab !== "all" || !user || allRoles.status !== "idle") return;
+    setAllRoles({ status: "loading", roles: [] });
+    fetchAllRoles(user)
+      .then((roles) => setAllRoles({ status: "ready", roles }))
+      .catch((err) => setAllRoles({ status: "error", roles: [], error: err.message }));
+  }, [tab, user, allRoles.status]);
+
   const matches = useMemo(() => matchesFromPayload(payload), [payload]);
-  const selected = matches.find((item) => item.id === selectedId) || matches[0];
   const funding = [...(payload?.funding?.primary || []), ...(payload?.funding?.extended || [])];
   const needsVerification = payload?.needsVerification || [];
   const failedSources = (payload?.sourceHealth || []).filter((item) => item.status === "failed");
@@ -260,29 +292,21 @@ export default function MyHunt() {
           </div>
         )}
 
-        <div className="mt-8 flex gap-1 rounded-lg border border-border bg-background p-1" role="tablist" aria-label="Personal hunt sections">
-          {[["matches", "Matches", BriefcaseBusiness], ["funding", "Funding", Sparkles], ["verify", `Verify${needsVerification.length ? ` (${needsVerification.length})` : ""}`, ShieldCheck], ["pipeline", "Pipeline", SearchCheck]].map(([value, label, Icon]) => (
-            <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tab === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+        <div className="mt-8 flex gap-1 overflow-x-auto rounded-lg border border-border bg-background p-1" role="tablist" aria-label="Personal hunt sections">
+          {[["matches", "Matches", BriefcaseBusiness], ["all", `All roles${allRoles.status === "ready" ? ` (${allRoles.roles.length})` : ""}`, Layers], ["funding", "Funding", Sparkles], ["verify", `Verify${needsVerification.length ? ` (${needsVerification.length})` : ""}`, ShieldCheck], ["pipeline", "Pipeline", SearchCheck]].map(([value, label, Icon]) => (
+            <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tab === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               <Icon className="h-4 w-4" /> {label}
             </button>
           ))}
         </div>
 
-        {tab === "matches" && (matches.length ? (
-          <div className="mt-5 grid items-start gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-            <div className="overflow-hidden rounded-xl border border-border bg-background">
-              {matches.map((item) => (
-                <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full border-b border-border px-4 py-4 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected?.id === item.id ? "bg-secondary" : "hover:bg-secondary/60"}`}>
-                  <div className="text-xs font-medium text-accent">{item.section}</div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">{item.title}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{item.company}</div>
-                  <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground"><span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{item.location}</span><span>{item.llm_fit_score ?? "—"}/100</span></div>
-                </button>
-              ))}
-            </div>
-            <MatchDetail item={selected} />
-          </div>
-        ) : <Message icon={Cloud} title="No match cleared every gate" body="The pipeline stayed honest and did not pad today’s edition. Source health and withheld records remain available in the audit trail." />)}
+        {tab === "matches" && (matches.length ? <RoleBrowser roles={matches} /> : <Message icon={Cloud} title="No match cleared every gate" body="The pipeline stayed honest and did not pad today’s edition. Source health and withheld records remain available in the audit trail." />)}
+
+        {tab === "all" && (allRoles.status === "ready" ? (
+          allRoles.roles.length ? <RoleBrowser roles={allRoles.roles} showDates /> : <div className="mt-5 rounded-xl border border-border bg-background p-8 text-sm text-muted-foreground">No run has approved a role yet.</div>
+        ) : allRoles.status === "error" ? (
+          <div className="mt-5 rounded-xl border border-border bg-background p-8 text-sm text-muted-foreground">{allRoles.error}</div>
+        ) : <div className="mt-5 h-80 animate-pulse rounded-xl bg-secondary" />)}
 
         {tab === "funding" && (
           <div className="mt-5 divide-y divide-border overflow-hidden rounded-xl border border-border bg-background">

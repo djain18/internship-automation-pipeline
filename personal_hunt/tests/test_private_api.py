@@ -111,6 +111,34 @@ def test_private_api_returns_sanitized_live_run(monkeypatch, tmp_path):
     assert response.json()["sendStreakDays"] == 0
 
 
+def test_all_roles_keeps_roles_later_runs_dropped(monkeypatch, tmp_path):
+    _write_live(tmp_path)  # 2026-09-10 run shows opp-1
+    later = tmp_path / "2026-09-12" / "run_later.json"
+    later.parent.mkdir()
+    later.write_text(json.dumps({
+        "run_id": "run_later", "run_kind": "live", "run_date": "2026-09-12",
+        "digest_primary": [], "digest_remote_fallback": [{"id": "opp-2", "title": "Growth Intern"}],
+    }), encoding="utf-8")
+    fixture = tmp_path / "2026-09-12" / "run_fixture.json"
+    fixture.write_text(json.dumps({
+        "run_id": "run_fixture", "run_kind": "fixture", "run_date": "2026-09-12",
+        "digest_primary": [{"id": "fake"}],
+    }), encoding="utf-8")
+    (tmp_path / "latest-live.json").write_text(json.dumps({"run_id": "run_later", "path": str(later)}), encoding="utf-8")
+    monkeypatch.setattr(private_api, "OUTPUT_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(private_api, "_verify_token", lambda _token: {"email": "dakshinjain187@gmail.com", "email_verified": True})
+    response = TestClient(private_api.app).get("/api/personal/all-roles", headers={"Authorization": "Bearer ok"})
+    assert response.status_code == 200
+    roles = {item["id"]: item for item in response.json()["roles"]}
+    assert set(roles) == {"opp-1", "opp-2"}
+    assert roles["opp-1"]["in_latest_run"] is False
+    assert roles["opp-1"]["last_shown"] == "2026-09-10"
+    assert "artifact_path" not in roles["opp-1"]
+    assert roles["opp-2"]["section"] == "India remote"
+    assert roles["opp-2"]["in_latest_run"] is True
+    assert response.json()["roles"][0]["id"] == "opp-2"
+
+
 def test_failed_model_gate_still_serves_the_run(tmp_path, monkeypatch):
     _write_live(tmp_path)
     run_path = tmp_path / "2026-09-10" / "run_live.json"

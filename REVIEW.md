@@ -1,5 +1,31 @@
 # Review notes: personal internship-hunt pipeline
 
+## 2026-09-21 — /my-hunt "All roles" tab (Daksh's request)
+
+**Trigger:** roles seemed to disappear from /my-hunt on their own. Cause: the page shows only the
+latest collect run. Each run rebuilds its list, so a role that ages past `max_posting_age_days`
+(10), is missing from that run's source fetch, falls below `llm_shortlist_size` (30) or fails the
+Kimi gate that run simply isn't there. Nothing is deleted; old run files stay in `out/<date>/`.
+
+**Change:** new `GET /api/personal/all-roles` in `private_api.py`. It merges `digest_primary` and
+`digest_remote_fallback` from every `run_kind == "live"` file under `out/*/run_*.json`. It keeps the
+newest copy of each role, adds `first_shown`, `last_shown` and `in_latest_run`, and uses the same
+`_sanitize` as `/latest`. Parsed files are cached by mtime. The /my-hunt page has a new "All roles"
+tab that fetches this endpoint only when the tab is opened. Matches still shows only the latest run.
+Scope: roles a run approved. Withheld and ineligible records are not included.
+
+**Verified:** `personal_hunt/tests` pass, including the new
+`test_all_roles_keeps_roles_later_runs_dropped`. `vite build` passes and 10/10 frontend tests pass.
+A Playwright check (fake auth, mocked API, desktop 1280 and mobile 390) passed: the tab lazy-loads
+once, shows dropped roles with dates, opens their detail, Matches stays latest-only, and there is no
+horizontal scroll.
+
+**Deployed 2026-09-21:** the Modal app `daksh-internship-hunt` (profile `dakshinjain187`, through
+truststore). Without auth, `/api/personal/all-roles` returns 401 and an unknown path returns 404,
+so the route is live. rise-web was deployed with `vercel --prod`; `vercel ls` shows
+`rise-exw0s89e3` as Ready in Production. **Not verified:** the tab against real run history.
+That needs a signed-in check in Daksh's browser.
+
 ## 2026-09-12 — digest silent no-send + LinkedIn extraction cap
 
 **Trigger:** no digest email at 08:30 IST on 2026-09-12.

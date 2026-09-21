@@ -24,9 +24,17 @@ export function matchesFromPayload(payload) {
   ];
 }
 
-export async function fetchPersonalHunt(user, signal) {
+export function fetchPersonalHunt(user, signal) {
+  return getPersonal(user, "/api/personal/latest", signal);
+}
+
+export async function fetchAllRoles(user, signal) {
+  return (await getPersonal(user, "/api/personal/all-roles", signal)).roles || [];
+}
+
+async function getPersonal(user, path, signal) {
   const token = await user.getIdToken();
-  const response = await fetch(`${personalApiBase()}/api/personal/latest`, {
+  const response = await fetch(`${personalApiBase()}${path}`, {
     signal,
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",

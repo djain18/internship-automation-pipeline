@@ -232,6 +232,56 @@ def health() -> dict[str, str]:
     return {"status": "healthy", "service": "rise-personal-hunt"}
 
 
+# ponytail: per-file mtime cache, still one stat per run file per request;
+# move to a state-side index if the run history ever makes this slow.
+_RUN_ROLES_CACHE: dict[Path, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _run_roles(path: Path) -> list[dict[str, Any]]:
+    """Approved matches from one live run file, tagged with the run date."""
+    mtime = path.stat().st_mtime
+    cached = _RUN_ROLES_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        run = {}
+    roles: list[dict[str, Any]] = []
+    if isinstance(run, dict) and run.get("run_kind") == "live":
+        for key, section in (("digest_primary", "Bengaluru"), ("digest_remote_fallback", "India remote")):
+            for item in run.get(key) or []:
+                if isinstance(item, dict) and item.get("id"):
+                    roles.append({**item, "section": section, "_run_date": str(run.get("run_date") or "")})
+    _RUN_ROLES_CACHE[path] = (mtime, roles)
+    return roles
+
+
+def all_roles(current_run: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every role any live run ever approved, newest version of each, newest first."""
+    current_ids = {
+        str(item.get("id"))
+        for item in list(current_run.get("digest_primary") or []) + list(current_run.get("digest_remote_fallback") or [])
+    }
+    merged: dict[str, dict[str, Any]] = {}
+    # Run files sit at out/<YYYY-MM-DD>/run_<id>.json; the date folder orders them.
+    # Oldest first, so a later run's copy of a role replaces the earlier one.
+    for path in sorted(OUTPUT_ROOT.glob("*/run_*.json")):
+        for role in _run_roles(path):
+            role_id = str(role["id"])
+            first = merged.get(role_id, {}).get("first_shown") or role["_run_date"]
+            merged[role_id] = {**role, "first_shown": first, "last_shown": role["_run_date"]}
+    roles = [{**role, "in_latest_run": role_id in current_ids} for role_id, role in merged.items()]
+    roles.sort(key=lambda item: (item.get("last_shown") or "", item.get("llm_fit_score") or 0), reverse=True)
+    return roles
+
+
+@app.get("/api/personal/all-roles")
+def personal_all_roles(claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, Any]:
+    del claims
+    return {"roles": _sanitize(all_roles(_latest_live()))}
+
+
 @app.get("/api/personal/latest")
 def latest(response: Response, claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, Any]:
     del claims
