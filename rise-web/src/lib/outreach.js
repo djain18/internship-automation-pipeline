@@ -97,3 +97,12 @@ export const approveDraft = (user, id) =>
   call(user, `/api/outreach/drafts/${encodeURIComponent(id)}/approve`, { method: "POST" });
 export const rejectDraft = (user, id) =>
   call(user, `/api/outreach/drafts/${encodeURIComponent(id)}/reject`, { method: "POST" });
+export const writeOwnDraft = (user, draft) =>
+  call(user, "/api/outreach/drafts/own", { method: "POST", body: draft });
+
+// The funding email prompt carries two placeholders the card fills in.
+export function fillEmailPrompt(prompt, link, summary) {
+  return String(prompt || "")
+    .replaceAll("PROTOTYPE_LINK_HERE", link.trim() || "PROTOTYPE_LINK_HERE")
+    .replaceAll("PROTOTYPE_SUMMARY_HERE", summary.trim() || "PROTOTYPE_SUMMARY_HERE");
+}
