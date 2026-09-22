@@ -61,10 +61,12 @@ weekly_target_max_items: 3
 weekly_office_check_max: 12
 weekly_target_signal_days: 90
 weekly_target_recent_signal_days: 30
-funding_primary_age_days: 15
-funding_extension_age_days: 30
-funding_primary_min_items: 3
-funding_max_items: 5
+# 2026-09-22 (Daksh): every raise from the last 14 days is listed; the top
+# funding_research_per_run not yet researched (Bengaluru/Chennai presence
+# first) get problem research and a prototype prompt. Research is kept in
+# state/funding_ledger.json, so each run researches new companies only.
+funding_window_days: 14
+funding_research_per_run: 5
 # 2026-09-13: how many funding events per run get a Firecrawl-search domain
 # resolution attempt (each is a live search + a live page fetch to verify).
 # Capped independently of max_deep_research_per_run -- resolution has to
