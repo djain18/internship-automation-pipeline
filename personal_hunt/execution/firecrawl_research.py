@@ -123,6 +123,7 @@ def resolve_company_url_via_search(
     company: str,
     api_key: str,
     timeout: int = 45,
+    hint: str = "",
 ) -> Record | None:
     """Resolve a funded company's real website with provenance, or return None.
 
@@ -142,7 +143,19 @@ def resolve_company_url_via_search(
     if not name_key:
         return None
 
-    queries = [f'"{company}" official website', f'"{company}" funding Bengaluru']
+    # 2026-09-22: a bare name is ambiguous ("Flam" returned Norway's Flam
+    # railway), so the second query carries what the funding article says the
+    # company does ("AI interactive content startup").
+    hint = clean_text(hint)
+    hint_terms = [
+        _company_name_key(word)
+        for word in re.findall(r"[A-Za-z]{4,}", hint)
+        if word.casefold() not in {"startup", "company", "platform", "brand", "firm", "india", "indian", "based", "focused"}
+    ]
+    queries = [
+        f'"{company}" official website',
+        f'"{company}" {hint} India' if hint else f'"{company}" funding Bengaluru',
+    ]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     candidates: dict[str, dict[str, Any]] = {}
     for query in queries:
@@ -193,6 +206,11 @@ def resolve_company_url_via_search(
             " ".join(item.get("observation", "") for item in evidence)
         )
         if name_key not in joined:
+            continue
+        # 2026-09-22: a name on the page is not enough ("Kiddo" matched an
+        # Australian school, "Firi" a Norwegian crypto app). With a hint, the
+        # page must also say what the article says the company does.
+        if hint_terms and not any(term in joined for term in hint_terms):
             continue
         agreeing = len(info["queries"])
         return {

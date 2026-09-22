@@ -402,6 +402,18 @@ def attach_company_provenance(
     return output
 
 
+def _company_hint(event: Record) -> str:
+    """What the funding report says the company does, for a less ambiguous
+    site search: the headline's words before the name ("AI interactive
+    content startup Flam raises ...") or the roundup's sector."""
+    headline = re.sub(r"^(exclusive|funding alert)\s*[:\-]\s*", "", clean_text(event.get("headline")), flags=re.I)
+    company = clean_text(event.get("company"))
+    before = headline.split(company, 1)[0].strip() if company and company in headline else ""
+    if 1 <= len(before.split()) <= 8 and not re.search(r"\b(leads?|raises?)\b", before, re.I):
+        return before
+    return clean_text(event.get("sector")).replace(" / ", " ")
+
+
 def _resolve_unresolved_via_firecrawl(
     events: list[Record], scoring: dict[str, Any]
 ) -> list[Record]:
@@ -432,7 +444,9 @@ def _resolve_unresolved_via_firecrawl(
         attempted += 1
         event["company_url_resolution_attempted"] = True
         try:
-            result = resolve_company_url_via_search(event.get("company", ""), api_key)
+            result = resolve_company_url_via_search(
+                event.get("company", ""), api_key, hint=_company_hint(event)
+            )
         except Exception as exc:
             item = dict(event)
             item["company_url_resolution_error"] = str(exc)[:300]
