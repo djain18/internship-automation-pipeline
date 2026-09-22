@@ -1357,3 +1357,28 @@ def test_closed_listing_signal_never_opens_linkedin(monkeypatch) -> None:
     assert company_site.closed_listing_signal("https://www.linkedin.com/jobs/view/1") == ""
     assert company_site.closed_listing_signal("https://lnkd.in/abc") == ""
 
+
+
+def test_failed_site_search_never_blocks_a_company(monkeypatch) -> None:
+    # 2026-09-22 live run: Firecrawl quota errors left all 5 picks marked
+    # no_company_site for good. A failed search keeps them open; a clean miss
+    # waits a week.
+    monkeypatch.setattr(pipeline, "fetch_office_evidence", lambda url: None)
+
+    def failing(events, scoring):
+        return [{**e, "company_url_resolution_attempted": True, "company_url_resolution_error": "HTTP 402"} for e in events]
+
+    monkeypatch.setattr(pipeline, "_resolve_unresolved_via_firecrawl", failing)
+    events = [_funding("Flam", company_url="", company_url_basis="unresolved"),
+              _funding("Old", company_url="", company_url_basis="unresolved", research_status="no_company_site")]
+    pipeline._choose_funding_for_research(events, {}, date(2026, 9, 22))
+    assert all("research_status" not in e or e["company"] == "Old" for e in events)
+    assert events[1]["research_status"] == "no_company_site" and "research_checked_on" not in events[1]
+
+    def clean_miss(events, scoring):
+        return [{**e, "company_url_resolution_attempted": True} for e in events]
+
+    monkeypatch.setattr(pipeline, "_resolve_unresolved_via_firecrawl", clean_miss)
+    pipeline._choose_funding_for_research(events, {}, date(2026, 9, 22))
+    assert events[0]["research_checked_on"] == "2026-09-22"
+    assert pipeline._choose_funding_for_research(events, {}, date(2026, 9, 25)) == []

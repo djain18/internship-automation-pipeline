@@ -500,10 +500,21 @@ def _choose_funding_for_research(
     ledger carries them to later runs so nothing is fetched twice.
     """
     limit = int(scoring.get("funding_research_per_run", 5))
-    candidates = sorted(
-        (event for event in events if not event.get("research_status")),
-        key=_funding_research_rank,
-    )
+    retry_before = (run_date - timedelta(days=7)).isoformat()
+
+    def open_for_research(event: Record) -> bool:
+        status = event.get("research_status")
+        # A clean "no site found" is retried after a week; one with no check
+        # date came from a failed search (2026-09-22: Firecrawl HTTP 402) and
+        # is retried at once.
+        return not status or (
+            status == "no_company_site" and str(event.get("research_checked_on") or "") < retry_before
+        )
+
+    candidates = sorted((event for event in events if open_for_research(event)), key=_funding_research_rank)
+    for event in candidates:
+        event.pop("company_url_resolution_attempted", None)
+        event.pop("company_url_resolution_error", None)
     by_id = {event["funding_event_id"]: event for event in candidates}
     for resolved in _resolve_unresolved_via_firecrawl(candidates, scoring):
         by_id[resolved["funding_event_id"]].update(resolved)
@@ -522,9 +533,16 @@ def _choose_funding_for_research(
         if event["funding_event_id"] in chosen_ids:
             event["research_status"] = "researched"
             event["researched_on"] = run_date.isoformat()
-        elif event.get("company_url_resolution_attempted") and not event.get("company_url"):
-            # Firecrawl found no verifiable site; do not spend a search on it again.
+        elif (
+            event.get("company_url_resolution_attempted")
+            and not event.get("company_url")
+            and not event.get("company_url_resolution_error")
+        ):
+            # The search ran and found no verifiable site: wait a week before
+            # spending another search. A failed search (quota, HTTP error) is
+            # not a finding and leaves the company open.
             event["research_status"] = "no_company_site"
+            event["research_checked_on"] = run_date.isoformat()
     return chosen
 
 
