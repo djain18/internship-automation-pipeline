@@ -141,6 +141,53 @@ def submit_drafts(data: Record, run_id: str, drafts: list[Record], now: datetime
     return result
 
 
+def write_own_draft(data: Record, incoming: Record, now: datetime) -> Record:
+    """A cold email Daksh wrote himself for a funded company (2026-09-22).
+
+    He drafts it from the Funding card's email prompt once he has built the
+    prototype, and pastes it here. Same checks, statuses, approval hash and
+    send slot as a routine draft; only funding events use this path, and a
+    company already approved or sent is never drafted twice.
+    """
+    lead_id = clean_text(incoming.get("lead_id"))
+    if not lead_id.startswith("funding_"):
+        raise DraftError("own drafts are for funded companies only")
+    if not clean_text(incoming.get("company")):
+        raise DraftError("company is required")
+    current = data["drafts"].get(lead_id)
+    if current and current.get("status") not in REPLACEABLE | {"rejected"}:
+        raise DraftError(f"this company already has a draft that is {current.get('status')}")
+    draft = {
+        **(current or {}),
+        "lead_id": lead_id,
+        "run_id": "written_by_daksh",
+        "lead_kind": "funding",
+        "company": clean_text(incoming.get("company")),
+        "title": "Founder's Office internship",
+        "source_url": clean_text(incoming.get("source_url")),
+    }
+    for key in EDITABLE:
+        draft[key] = incoming.get(key)
+    if clean_text(draft.get("to")) and not clean_text(draft.get("to_source")):
+        draft["to_source"] = ENTERED_BY_DAKSH
+    draft["errors"] = check_email_draft(draft)
+    draft["approval_hash"] = None
+    draft["slot"] = None
+    draft["status"] = _status_for(draft)
+    _stamp(draft, "written_by_daksh", now)
+    data["drafts"][lead_id] = draft
+    return draft
+
+
+def draft_statuses(data: Record, prefix: str = "funding_") -> dict[str, Record]:
+    """Status, send slot and send time per lead, for the Funding tab chips."""
+    return {
+        lead_id: {key: draft.get(key) for key in ("status", "slot", "sent_at", "errors")}
+        for lead_id, draft in data["drafts"].items()
+        if lead_id.startswith(prefix)
+    }
+
+
 def _get(data: Record, lead_id: str) -> Record:
     draft = data["drafts"].get(lead_id)
     if draft is None:

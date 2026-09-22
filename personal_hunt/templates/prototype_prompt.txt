@@ -1,67 +1,77 @@
-# {company_name}: prototype brief for Claude Code
+# {company_name}: find the right prototype, then plan it with me
 
-You are building a small, working prototype that Daksh Jain, a student applying
-for a Founder's Office internship at {company_name}, will show the founders in a
-cold email. The goal is one useful internal tool they can open in a browser in
-under a minute, not a pitch deck and not a copy of their product.
+I am Daksh Jain, a student applying for a Founder's Office internship at
+{company_name}. I want to build one small, working prototype for a real problem
+they have, and send its link in a cold email to the founders. I will build it
+myself. Your job is to help me pick the right thing to build and plan it well.
 
 <company>
 {company_name}
 {funding_context}
 </company>
 
-<problem>
-{problem_brief}
-</problem>
-
 ## Observed signals
 
-These are quotes from public pages. They are the only facts you have about
-{company_name}.
+These are quotes from public pages. They are the only confirmed facts.
 
 {observed_problem}
 
 Evidence URLs:
 {evidence_urls}
 
-The problem statement above is an inference from these quotes, not a fact the
-company confirmed. Say so in the README.
+<my_guess>
+{problem_brief}
+This is my inference from the quotes, not something the company confirmed.
+</my_guess>
+
+## Step 1: research
+
+Open every evidence URL above, then the company's own site: product pages,
+careers page, blog, and public founder posts. Do not use LinkedIn. Work out:
+- what they sell and to whom;
+- which team would feel this problem (ops, support, growth, sales, the founders);
+- what that team does by hand today, as far as public pages show;
+- whether my guess holds up. If it does not, say so and name the better problem
+  the sources point to, with the quote.
+
+Keep facts (with URL) apart from your inferences.
+
+## Step 2: three options
+
+Propose three different prototypes for that problem. For each, give:
+- who at {company_name} would use it, and the moment they would open it;
+- what it does, in two sentences;
+- why a founder would care this week, tied to a quote above;
+- how big it is: 2-3 hours, half a day, or a full day;
+- the risk that it misses (for example, "they may already have a tool for this").
+
+Rules for every option: an internal tool for their own team, never a copy or
+cheaper version of what they sell; it works on sample data, labelled as such;
+it can be understood from one screen in under a minute; no paid APIs, keys or
+login; and it deploys free (Vercel or GitHub Pages).
+
+Recommend one, say why, then stop and wait for me to choose.
 
 ## Build the prototype
 
-One runnable system, about {scope_hours} hours of work.
+After I choose, write the build plan for that option:
+- screens or flow, step by step;
+- the sample data (fields and about 10-30 realistic rows, marked as sample);
+- file layout and stack (a single Next.js app or plain HTML/CSS/JS);
+- the edge cases worth handling;
+- a 60-90 second demo script I can record.
 
-{what_to_build}
-
-Rules:
-- Build an internal tool their own team would use (ops, support, growth or
-  founder workflow). Never re-create or undercut the product the company sells.
-- Use realistic fake data, and label every screen and the README "sample data".
-- Keep it to one screen or one short flow that makes the point in 60 seconds.
-
-## Stack
-
-{stack_constraint}
-
-Prefer a single Next.js app or plain HTML, CSS and JavaScript, so it deploys
-free on Vercel or GitHub Pages. No paid APIs, no API keys, no login.
+Then help me build it step by step. Run it after each step.
 
 ## Acceptance criteria
 
-{acceptance_criteria}
-- Runs locally with one command, written at the top of the README.
-- Every assumption is listed in the README under "What I assumed".
+- It runs with one command, written at the top of the README.
+- A founder understands what it does from the first screen.
+- The README has "What I assumed" and "Sample data" sections.
+- Nothing in it states a fact about {company_name} that is not in the sources.
 
-## Finish
+When it is done, give me exactly this block for my cold email:
 
-1. Run it and fix every error before you stop.
-2. Deploy it (Vercel or GitHub Pages) if the CLI is set up; otherwise say what
-   to run to deploy, and write a 60-90 second Loom script that walks through it.
-3. End with exactly this block, filled in:
-
-PROTOTYPE_LINK: the live URL, or "not deployed yet"
+PROTOTYPE_LINK: the live URL
 WHAT_IT_DOES: one plain sentence a founder would understand
 WHAT_I_ASSUMED: one sentence naming the biggest assumption
-
-Do not invent facts about {company_name}: no customer names, metrics, team
-members or internal tools that are not in the quotes above. Mark assumptions.

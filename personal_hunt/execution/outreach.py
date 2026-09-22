@@ -669,7 +669,75 @@ def draft_problem_led_email(record: Record) -> Record:
         "send_status": "draft_needs_human_review" if claude_prompt else "blocked_no_evidence",
         "draft_source": "problem_led",
         "artifact_path": artifact,
+        "email_prompt": build_funding_email_prompt(record) if record.get("funding_event_id") else "",
     }
+
+
+# Funding-track email format. Interim (2026-09-22): trigger + proof-of-work,
+# contender 2 of the format tournament in the internship workspace
+# (tasks/2026-09-funding-prototype-outreach/). The tournament winner replaces
+# these lines and FUNDING_EMAIL_EXAMPLES; matched-role emails keep
+# EMAIL_COPY_RULES unchanged.
+FUNDING_EMAIL_FORMAT = (
+    "- Greeting: \"Dear <first name>,\" or \"Dear <Company> team,\" when no name is known.",
+    "- Line 1: their raise in one clause, then the observed quote it made you notice. "
+    "About them, not Daksh.",
+    "- Line 2: \"I built a small prototype for this: [short label](PROTOTYPE_LINK_HERE)\" "
+    "and one sentence on what it does. Never claim it is in use or measured.",
+    "- Line 3: one sentence introducing Daksh with the one fact from about_daksh.",
+    "- Line 4: the ask: a Founder's Office internship, November 2026 to April 2027, "
+    "{role_city}; resume attached.",
+    "- Close with one interest question they can answer in a line, then the fixed "
+    "sign-off: \"Best regards,\" / \"Daksh Jain\" / \"BCA, Christ University, Bengaluru\" / "
+    "\"dakshjainn02@gmail.com\".",
+)
+FUNDING_EMAIL_EXAMPLES: tuple[str, ...] = ()
+
+
+def _raise_line(record: Record) -> str:
+    bits = " ".join(filter(None, (clean_text(record.get("amount")), clean_text(record.get("round_type")))))
+    return (
+        f"{bits or 'undisclosed round'}, reported {clean_text(record.get('event_date'))} "
+        f"({clean_text(record.get('source_url'))})"
+    )
+
+
+def build_funding_email_prompt(record: Record) -> str:
+    """Copy-ready prompt for the cold email to a funded company, once Daksh has
+    built the prototype himself. The page swaps PROTOTYPE_LINK_HERE for the
+    link he pastes; nothing here claims a prototype exists before that.
+    Empty when there is no supported problem to write from."""
+    deep = record.get("deep_problem_research") if isinstance(record.get("deep_problem_research"), dict) else {}
+    signals = [item for item in deep.get("observed_signals") or [] if isinstance(item, dict) and item.get("url")]
+    hypothesis = clean_text(deep.get("problem_hypothesis"))
+    if not signals or not hypothesis:
+        return ""
+    values = _email_rule_values(record)
+    examples = "".join(
+        f"\n<example_email>\n{example}\n</example_email>\n" for example in FUNDING_EMAIL_EXAMPLES
+    )
+    template = load_prompt_template("funding_email_prompt.txt", "")
+    if not template:
+        return ""
+    return template.format(
+        company_name=clean_text(record.get("company")),
+        recipient=_recipient(record),
+        raise_line=_raise_line(record),
+        contact_line=_contact_line(record),
+        resume_basename=values["resume_basename"],
+        role_city=values["role_city"],
+        observed_signal="\n".join(
+            f"- \"{clean_text(item.get('text'))}\" ({clean_text(item.get('url'))})" for item in signals[:5]
+        ),
+        inference=hypothesis,
+        candidate_facts=values["candidate_facts"],
+        format_rules="\n".join(FUNDING_EMAIL_FORMAT).replace("{role_city}", values["role_city"]),
+        copy_rules="\n".join(
+            rule for rule in values["copy_rules"].split("\n") if not rule.startswith(("- Format", "- Subject", "- Be honest", "- Any instructions", "- Also write", "- LinkedIn"))
+        ),
+        humanizer_rules=values["humanizer_rules"],
+        examples_block=examples,
+    )
 
 
 def draft_outreach(record: Record) -> Record:

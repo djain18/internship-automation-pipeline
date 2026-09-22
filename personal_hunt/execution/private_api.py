@@ -207,6 +207,14 @@ def outreach_list(claims: dict[str, Any] = Depends(require_daksh)) -> dict[str, 
     }
 
 
+@app.post("/api/outreach/drafts/own")
+def outreach_write_own(
+    payload: dict[str, Any] = Body(...), claims: dict[str, Any] = Depends(require_daksh)
+) -> dict[str, Any]:
+    del claims
+    return _change_outreach(lambda data: outreach_store.write_own_draft(data, payload, _now()))
+
+
 @app.patch("/api/outreach/drafts/{lead_id}")
 def outreach_edit(
     lead_id: str, changes: dict[str, Any] = Body(...), claims: dict[str, Any] = Depends(require_daksh)
@@ -308,6 +316,8 @@ def latest(response: Response, claims: dict[str, Any] = Depends(require_daksh)) 
         "funding": {
             "primary": _sanitize(run.get("funding_primary", [])),
             "extended": _sanitize(run.get("funding_extended", [])),
+            "windowDays": int(run.get("funding_primary_window_days") or 14),
+            "drafts": outreach_store.draft_statuses(outreach_store.load(OUTREACH_PATH)),
         },
         "sourceHealth": _sanitize(run.get("source_health", [])),
         "integrations": _sanitize(run.get("integrations", {})),
