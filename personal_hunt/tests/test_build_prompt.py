@@ -240,3 +240,31 @@ def test_batch_prompt_generation_ignores_unrelated_problem_research_key() -> Non
     )
 
     assert results[0]["prompt_generation"]["evidence_urls"] == ["https://evidence.com/c"]
+
+
+def test_prototype_template_renders_a_valid_prompt_with_funding_context() -> None:
+    from build_prompt import _funding_context, _load_prompt_template, validate_prototype_prompt
+
+    company = {
+        "company": "Kiddo",
+        "funding_event_id": "funding_kiddo",
+        "amount": "Rs 12.5 Cr",
+        "round_type": "Pre-Seed",
+        "event_date": "2026-09-17",
+        "source_url": "https://entrackr.com/news/kiddo",
+    }
+    text = _load_prompt_template().format(
+        company_name="Kiddo",
+        funding_context=_funding_context(company),
+        problem_brief="Dark-store expansion across Delhi NCR may strain stock planning.",
+        observed_problem="- The fresh funds will be used for dark store expansion across Delhi NCR.",
+        evidence_urls="- https://entrackr.com/news/kiddo",
+        scope_hours=4,
+        what_to_build="A stock-reorder planner for a new dark store.",
+        stack_constraint="Next.js with sample data.",
+        acceptance_criteria="- Shows reorder suggestions for 20 sample SKUs",
+    )
+    assert validate_prototype_prompt(text, "Kiddo") == []
+    assert "Reported raise: Rs 12.5 Cr Pre-Seed, 2026-09-17" in text
+    assert "PROTOTYPE_LINK:" in text
+    assert _funding_context({"company": "Watchlist Co"}) == ""

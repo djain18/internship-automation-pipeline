@@ -113,6 +113,20 @@ def _load_prompt_template(templates_dir: Path | None = None) -> str:
     return load_prompt_template("prototype_prompt.txt", PROMPT_TEMPLATE, templates_dir)
 
 
+def _funding_context(company: Record) -> str:
+    """One sourced line on the raise, empty for companies that are not
+    funding events (watchlist)."""
+    if not company.get("funding_event_id"):
+        return ""
+    raise_text = " ".join(
+        filter(None, (clean_text(company.get("amount")), clean_text(company.get("round_type"))))
+    ) or "an undisclosed round"
+    return (
+        f"Reported raise: {raise_text}, {clean_text(company.get('event_date'))} "
+        f"(source: {clean_text(company.get('source_url'))})"
+    )
+
+
 def build_prototype_prompt(
     company: Record,
     problem_research: Record | None = None,
@@ -246,7 +260,8 @@ def build_prototype_prompt(
 
         prompt_text = template.format(
             company_name=company_name,
-            problem_brief=problem_hypothesis[:100] if problem_hypothesis else "Unknown",
+            funding_context=_funding_context(company),
+            problem_brief=problem_hypothesis[:400] if problem_hypothesis else "Unknown",
             observed_problem=observed_problem,
             evidence_urls=evidence_urls_text,
             scope_hours=scope_hours,

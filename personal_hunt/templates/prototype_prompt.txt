@@ -1,30 +1,67 @@
-# {company_name}: prototype
+# {company_name}: prototype brief for Claude Code
 
-Problem: {problem_brief}
+You are building a small, working prototype that Daksh Jain, a student applying
+for a Founder's Office internship at {company_name}, will show the founders in a
+cold email. The goal is one useful internal tool they can open in a browser in
+under a minute, not a pitch deck and not a copy of their product.
+
+<company>
+{company_name}
+{funding_context}
+</company>
+
+<problem>
+{problem_brief}
+</problem>
 
 ## Observed signals
+
+These are quotes from public pages. They are the only facts you have about
+{company_name}.
 
 {observed_problem}
 
 Evidence URLs:
 {evidence_urls}
 
+The problem statement above is an inference from these quotes, not a fact the
+company confirmed. Say so in the README.
+
 ## Build the prototype
 
-A single runnable system, {scope_hours} hours of work.
+One runnable system, about {scope_hours} hours of work.
 
 {what_to_build}
+
+Rules:
+- Build an internal tool their own team would use (ops, support, growth or
+  founder workflow). Never re-create or undercut the product the company sells.
+- Use realistic fake data, and label every screen and the README "sample data".
+- Keep it to one screen or one short flow that makes the point in 60 seconds.
 
 ## Stack
 
 {stack_constraint}
 
-Mark every assumption in the README.
+Prefer a single Next.js app or plain HTML, CSS and JavaScript, so it deploys
+free on Vercel or GitHub Pages. No paid APIs, no API keys, no login.
 
 ## Acceptance criteria
 
 {acceptance_criteria}
+- Runs locally with one command, written at the top of the README.
+- Every assumption is listed in the README under "What I assumed".
 
-## Non-negotiable
+## Finish
 
-Do not invent facts about {company_name}. Do not call external APIs beyond reading this brief. Mark assumptions.
+1. Run it and fix every error before you stop.
+2. Deploy it (Vercel or GitHub Pages) if the CLI is set up; otherwise say what
+   to run to deploy, and write a 60-90 second Loom script that walks through it.
+3. End with exactly this block, filled in:
+
+PROTOTYPE_LINK: the live URL, or "not deployed yet"
+WHAT_IT_DOES: one plain sentence a founder would understand
+WHAT_I_ASSUMED: one sentence naming the biggest assumption
+
+Do not invent facts about {company_name}: no customer names, metrics, team
+members or internal tools that are not in the quotes above. Mark assumptions.
