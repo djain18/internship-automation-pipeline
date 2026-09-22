@@ -224,6 +224,19 @@ def research_deep_problem(
     all_evidence: list[Record] = []
     published_linkedin_urls: list[str] = []
 
+    # 0. The funding article itself: what the company does and, most often,
+    # what the new money is for -- the "why now" a cold email needs.
+    funding_detail = clean_text(company.get("source_reported_detail"))
+    if company.get("funding_event_id") and funding_detail and company.get("source_url"):
+        all_evidence.append(
+            {
+                "observation": funding_detail[:1500],
+                "url": company["source_url"],
+                "basis": "funding_article",
+                "access_date": company.get("accessed_at", ""),
+            }
+        )
+
     # 1. Company-owned surfaces
     site_evidence, published_emails, site_linkedin_urls = _fetch_site_and_roles(company_url)
     all_evidence.extend(site_evidence)

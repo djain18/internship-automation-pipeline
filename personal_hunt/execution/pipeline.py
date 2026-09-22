@@ -42,7 +42,7 @@ from artifacts import create_artifacts
 from build_prompt import build_prompts_for_companies
 from config import AUTOMATION_ROOT, load_all
 from company_resolve import resolve_company_urls
-from company_site import closed_listing_signal, fetch_listing_text, fetch_office_evidence
+from company_site import closed_listing_signal, fetch_listing_text, fetch_office_evidence, find_office_evidence
 from firecrawl_research import resolve_company_url_via_search
 from contacts import attach_contact, choose_contact
 from dedupe import deduplicate
@@ -57,10 +57,11 @@ from fetch_sources import (
     load_spotted_leads,
     watchlist_board_sources,
 )
-from funding import fetch_funding_live, select_funding_events
+from funding import company_key as funding_company_key
+from funding import fetch_funding_live, load_ledger, save_ledger, select_funding_events
 from llm_rank import extract_linkedin_hiring_fields, judge_cross_functional, score_shortlist
 from models import Record, clean_text, normalized_content_hash, stable_id, usage_summary, utc_timestamp
-from normalize import match_city, normalize_many
+from normalize import classify_lane, match_city, normalize_many
 from outreach import draft_outreach, validate_outreach
 from problem_research import research_deep_problem, select_discovered_for_research
 from watchlist_prompts import write_watchlist_prompts
@@ -401,6 +402,18 @@ def attach_company_provenance(
     return output
 
 
+def _company_hint(event: Record) -> str:
+    """What the funding report says the company does, for a less ambiguous
+    site search: the headline's words before the name ("AI interactive
+    content startup Flam raises ...") or the roundup's sector."""
+    headline = re.sub(r"^(exclusive|funding alert)\s*[:\-]\s*", "", clean_text(event.get("headline")), flags=re.I)
+    company = clean_text(event.get("company"))
+    before = headline.split(company, 1)[0].strip() if company and company in headline else ""
+    if 1 <= len(before.split()) <= 8 and not re.search(r"\b(leads?|raises?)\b", before, re.I):
+        return before
+    return clean_text(event.get("sector")).replace(" / ", " ")
+
+
 def _resolve_unresolved_via_firecrawl(
     events: list[Record], scoring: dict[str, Any]
 ) -> list[Record]:
@@ -429,8 +442,11 @@ def _resolve_unresolved_via_firecrawl(
             output.append(event)
             continue
         attempted += 1
+        event["company_url_resolution_attempted"] = True
         try:
-            result = resolve_company_url_via_search(event.get("company", ""), api_key)
+            result = resolve_company_url_via_search(
+                event.get("company", ""), api_key, hint=_company_hint(event)
+            )
         except Exception as exc:
             item = dict(event)
             item["company_url_resolution_error"] = str(exc)[:300]
@@ -443,6 +459,105 @@ def _resolve_unresolved_via_firecrawl(
         item.update(result)
         output.append(item)
     return output
+
+
+def _funding_location_evidence(event: Record, run_records: list[Record]) -> Record:
+    """Where a funded company has an office, from evidence already in hand.
+
+    Free: the funding article's own text ("Bengaluru-based ..."), then a
+    Bengaluru/Chennai role the same company has in this run. The company-site
+    check costs fetches, so it runs only for research candidates
+    (_choose_funding_for_research). An empty dict means "not found yet".
+    """
+    found = find_office_evidence(
+        str(event.get("source_reported_detail") or ""), str(event.get("source_url") or "")
+    )
+    if found:
+        return {**found, "city": match_city(found["observation"]), "basis": "funding_article"}
+    key = funding_company_key(event.get("company"))
+    for record in run_records:
+        city = match_city(clean_text(record.get("location_class")).replace("_", " "))
+        if city and funding_company_key(record.get("company")) == key:
+            return {
+                "observation": f"{clean_text(record.get('title'))}: {clean_text(record.get('location'))}",
+                "url": clean_text(record.get("source_url")),
+                "confidence": "medium",
+                "basis": "same_run_role",
+                "city": city,
+            }
+    return {}
+
+
+# Earlier rounds first: a seed-to-Series-B team is where a Founder's Office
+# intern gets real scope. Unknown sits in the middle, late stage and debt last.
+_STAGE_RANK = {"Pre-Seed": 0, "Seed": 0, "Pre-Series A": 0, "Series A": 0, "Series B": 0, "": 1}
+
+
+def _funding_research_rank(event: Record) -> tuple[int, int, int, int]:
+    located = 0 if (event.get("location_evidence") or {}).get("city") else 1
+    sector = 0 if event.get("lane") in {"ai", "consumer"} else 1
+    stage = _STAGE_RANK.get(clean_text(event.get("round_type")), 2)
+    return (located, sector, stage, int(event.get("age_days", 99)))
+
+
+def _choose_funding_for_research(
+    events: list[Record], scoring: dict[str, Any], run_date: date
+) -> list[Record]:
+    """Pick up to `funding_research_per_run` companies not researched before.
+
+    Daksh 2026-09-22: Bengaluru/Chennai presence (HQ or an office) is a
+    preference, not a gate -- others fill the slots that are left. Research
+    needs a company site, so candidates are resolved in rank order (Firecrawl,
+    capped by max_url_resolutions_per_run) and those still missing a city get
+    a bounded office check on that site. Mutates `events` in place: resolved
+    URLs, office evidence and research_status stay on the event, and the
+    ledger carries them to later runs so nothing is fetched twice.
+    """
+    limit = int(scoring.get("funding_research_per_run", 5))
+    retry_before = (run_date - timedelta(days=7)).isoformat()
+
+    def open_for_research(event: Record) -> bool:
+        status = event.get("research_status")
+        # A clean "no site found" is retried after a week; one with no check
+        # date came from a failed search (2026-09-22: Firecrawl HTTP 402) and
+        # is retried at once.
+        return not status or (
+            status == "no_company_site" and str(event.get("research_checked_on") or "") < retry_before
+        )
+
+    candidates = sorted((event for event in events if open_for_research(event)), key=_funding_research_rank)
+    for event in candidates:
+        event.pop("company_url_resolution_attempted", None)
+        event.pop("company_url_resolution_error", None)
+    by_id = {event["funding_event_id"]: event for event in candidates}
+    for resolved in _resolve_unresolved_via_firecrawl(candidates, scoring):
+        by_id[resolved["funding_event_id"]].update(resolved)
+    office_budget = int(scoring.get("funding_office_check_max", 5))
+    for event in candidates:
+        if office_budget <= 0:
+            break
+        if event.get("company_url") and not (event.get("location_evidence") or {}).get("city"):
+            office_budget -= 1
+            found = fetch_office_evidence(clean_text(event["company_url"]))
+            if found:
+                event["location_evidence"] = {**found, "city": match_city(found["observation"])}
+    chosen = [event for event in sorted(candidates, key=_funding_research_rank) if event.get("company_url")][:limit]
+    chosen_ids = {event["funding_event_id"] for event in chosen}
+    for event in candidates:
+        if event["funding_event_id"] in chosen_ids:
+            event["research_status"] = "researched"
+            event["researched_on"] = run_date.isoformat()
+        elif (
+            event.get("company_url_resolution_attempted")
+            and not event.get("company_url")
+            and not event.get("company_url_resolution_error")
+        ):
+            # The search ran and found no verifiable site: wait a week before
+            # spending another search. A failed search (quota, HTTP error) is
+            # not a finding and leaves the company open.
+            event["research_status"] = "no_company_site"
+            event["research_checked_on"] = run_date.isoformat()
+    return chosen
 
 
 def _dated_signal(signal: Record, run_date: date, max_age_days: int) -> bool:
@@ -844,19 +959,23 @@ def run_pipeline(
         "india_remote_fallback",
         cache=llm_cache,
     )
-    funding_primary, funding_extended, funding_excluded = select_funding_events(
+    # 2026-09-22: every raise in the 14-day window is listed (funding_primary);
+    # funding_extended stays in the run shape, always empty, for older readers.
+    funding_primary, funding_excluded = select_funding_events(
         funding_records or [], run_date, config["scoring"]
     )
-    resolved_funding = resolve_company_urls(
-        funding_primary + funding_extended, company_candidates or [], scored
-    )
-    resolved_funding = _resolve_unresolved_via_firecrawl(resolved_funding, config["scoring"])
-    resolved_by_id = {
-        item["funding_event_id"]: item for item in resolved_funding
-    }
-    funding_primary = [resolved_by_id.get(item["funding_event_id"], item) for item in funding_primary]
-    funding_extended = [resolved_by_id.get(item["funding_event_id"], item) for item in funding_extended]
-    for event in funding_primary + funding_extended:
+    funding_extended: list[Record] = []
+    funding_primary = resolve_company_urls(funding_primary, company_candidates or [], scored)
+    for event in funding_primary:
+        if not event.get("lane"):
+            event["lane"] = classify_lane(
+                " ".join(clean_text(event.get(key)) for key in ("headline", "sector", "source_reported_detail")),
+                config["roles"],
+            )
+        if not event.get("location_evidence"):
+            event["location_evidence"] = _funding_location_evidence(event, scored)
+    to_research = _choose_funding_for_research(funding_primary, config["scoring"], run_date)
+    for event in to_research:
         # allow_llm only once a real company_url is resolved: with none, the
         # model has no evidence beyond the headline to ground a hypothesis
         # in, and the existing supported=false fail-closed gate would clear
@@ -887,7 +1006,7 @@ def run_pipeline(
     # Select funded companies with resolved URLs for deep research,
     # plus watchlist companies admitted above (which bypass the evidence gate)
     discovered_for_research = select_discovered_for_research(
-        funding_primary + funding_extended,
+        to_research,
         config=config["scoring"],
         run_date=run_date,
         watchlist_companies=watchlist_for_research,
@@ -1017,12 +1136,7 @@ def run_pipeline(
         "run_kind": run_kind,
         "run_date": run_date.isoformat(),
         "internship_window_days": int(config["scoring"].get("max_posting_age_days", 10)),
-        "funding_primary_window_days": int(
-            config["scoring"].get("funding_primary_age_days", 15)
-        ),
-        "funding_extension_window_days": int(
-            config["scoring"].get("funding_extension_age_days", 30)
-        ),
+        "funding_primary_window_days": int(config["scoring"].get("funding_window_days", 14)),
         "daily_target": int(config["scoring"].get("daily_target", 10)),
         "daily_min_target": int(config["scoring"].get("daily_min_target", 5)),
         "status": "complete_with_source_failures"
@@ -1450,6 +1564,9 @@ def main() -> int:
             )
         funding_records, funding_health = fetch_funding_live(config["sources"])
         health.extend(funding_health)
+        # The feeds hold one to eight days; the ledger holds the 14-day window
+        # and the research earlier runs did (funding.load_ledger).
+        funding_records = load_ledger(state_base / "funding_ledger.json") + funding_records
         company_candidates, registry_health = fetch_registries(config["sources"])
         health.extend(registry_health)
         run_kind = "live_dry_run" if args.dry_run else "live"
@@ -1520,6 +1637,8 @@ def main() -> int:
         _write_latest_live(output_base, json_path, run)
     if not args.no_state and not args.dry_run:
         state.record_run(run)
+        if run_kind == "live":
+            save_ledger(state_base / "funding_ledger.json", run["funding_primary"])
     if args.publish_sheets and not args.dry_run:
         try:
             run["sheet_rows_written"] = publish_run(run)

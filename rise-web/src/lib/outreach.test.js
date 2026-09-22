@@ -51,3 +51,10 @@ test("RESUMES lists the five allowed attachments", () => {
   assert.equal(RESUMES.length, 5);
   assert.ok(RESUMES.includes("Daksh-Jain-founders_office.pdf"));
 });
+
+test("fillEmailPrompt puts the built link and summary in, and never blanks a placeholder", async () => {
+  const { fillEmailPrompt } = await import("./outreach.js");
+  const prompt = "Link: PROTOTYPE_LINK_HERE\nDoes: PROTOTYPE_SUMMARY_HERE";
+  assert.equal(fillEmailPrompt(prompt, " https://demo.example ", "Plans stock"), "Link: https://demo.example\nDoes: Plans stock");
+  assert.equal(fillEmailPrompt(prompt, "", ""), prompt);
+});

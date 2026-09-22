@@ -1,30 +1,77 @@
-# {company_name}: prototype
+# {company_name}: find the right prototype, then plan it with me
 
-Problem: {problem_brief}
+I am Daksh Jain, a student applying for a Founder's Office internship at
+{company_name}. I want to build one small, working prototype for a real problem
+they have, and send its link in a cold email to the founders. I will build it
+myself. Your job is to help me pick the right thing to build and plan it well.
+
+<company>
+{company_name}
+{funding_context}
+</company>
 
 ## Observed signals
+
+These are quotes from public pages. They are the only confirmed facts.
 
 {observed_problem}
 
 Evidence URLs:
 {evidence_urls}
 
+<my_guess>
+{problem_brief}
+This is my inference from the quotes, not something the company confirmed.
+</my_guess>
+
+## Step 1: research
+
+Open every evidence URL above, then the company's own site: product pages,
+careers page, blog, and public founder posts. Do not use LinkedIn. Work out:
+- what they sell and to whom;
+- which team would feel this problem (ops, support, growth, sales, the founders);
+- what that team does by hand today, as far as public pages show;
+- whether my guess holds up. If it does not, say so and name the better problem
+  the sources point to, with the quote.
+
+Keep facts (with URL) apart from your inferences.
+
+## Step 2: three options
+
+Propose three different prototypes for that problem. For each, give:
+- who at {company_name} would use it, and the moment they would open it;
+- what it does, in two sentences;
+- why a founder would care this week, tied to a quote above;
+- how big it is: 2-3 hours, half a day, or a full day;
+- the risk that it misses (for example, "they may already have a tool for this").
+
+Rules for every option: an internal tool for their own team, never a copy or
+cheaper version of what they sell; it works on sample data, labelled as such;
+it can be understood from one screen in under a minute; no paid APIs, keys or
+login; and it deploys free (Vercel or GitHub Pages).
+
+Recommend one, say why, then stop and wait for me to choose.
+
 ## Build the prototype
 
-A single runnable system, {scope_hours} hours of work.
+After I choose, write the build plan for that option:
+- screens or flow, step by step;
+- the sample data (fields and about 10-30 realistic rows, marked as sample);
+- file layout and stack (a single Next.js app or plain HTML/CSS/JS);
+- the edge cases worth handling;
+- a 60-90 second demo script I can record.
 
-{what_to_build}
-
-## Stack
-
-{stack_constraint}
-
-Mark every assumption in the README.
+Then help me build it step by step. Run it after each step.
 
 ## Acceptance criteria
 
-{acceptance_criteria}
+- It runs with one command, written at the top of the README.
+- A founder understands what it does from the first screen.
+- The README has "What I assumed" and "Sample data" sections.
+- Nothing in it states a fact about {company_name} that is not in the sources.
 
-## Non-negotiable
+When it is done, give me exactly this block for my cold email:
 
-Do not invent facts about {company_name}. Do not call external APIs beyond reading this brief. Mark assumptions.
+PROTOTYPE_LINK: the live URL
+WHAT_IT_DOES: one plain sentence a founder would understand
+WHAT_I_ASSUMED: one sentence naming the biggest assumption

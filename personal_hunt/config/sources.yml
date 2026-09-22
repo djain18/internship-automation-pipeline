@@ -24,7 +24,29 @@ ats_harvest:
     - "https://jobs.accel.com/jobs"
   max_boards: 8
 
+# 2026-09-22: Inc42 /feed/ and YourStory /feed hold about one day of items, so
+# the Funding tab showed 0 on a week with 20+ raises. Entrackr's feed holds
+# ~50 items (8 days, full article text) and Inc42's weekly Funding Galore
+# roundup carries a per-startup table (date, amount, round, investors). Both
+# robots.txt files allow this user agent (checked 2026-09-22). funding.py
+# keeps events in state/funding_ledger.json for the 14-day window.
 funding_sources:
+  - id: entrackr_rss
+    name: Entrackr
+    url: "https://entrackr.com/rss"
+    enabled: true
+    adapter: funding_rss
+    source_confidence: medium
+    access_policy: public_rss_with_attribution
+
+  - id: inc42_funding_galore
+    name: Inc42 Funding Galore (weekly table)
+    url: "https://inc42.com/tag/funding-galore/feed/"
+    enabled: true
+    adapter: funding_roundup
+    source_confidence: medium
+    access_policy: public_rss_with_attribution
+
   - id: inc42_buzz_rss
     name: Inc42 Buzz
     url: "https://inc42.com/feed/"

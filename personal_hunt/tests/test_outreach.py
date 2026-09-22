@@ -383,3 +383,29 @@ def test_malformed_email_template_falls_back_instead_of_crashing_the_run(
     assert draft["send_status"] == "draft_needs_human_review"
     assert "Acme" in draft["claude_prompt"]
     assert "/humanizer" in draft["claude_prompt"]
+
+
+def test_funding_email_prompt_waits_for_the_link_daksh_builds() -> None:
+    from outreach import build_funding_email_prompt
+
+    record = {
+        "company": "Kiddo",
+        "funding_event_id": "funding_kiddo",
+        "amount": "Rs 12.5 Cr",
+        "round_type": "Pre-Seed",
+        "event_date": "2026-09-17",
+        "source_url": "https://entrackr.com/news/kiddo",
+        "location_class": "bengaluru_onsite",
+        "selected_contact": {"name": "Asha", "email": "asha@kiddo.example", "source_url": "https://kiddo.example/contact"},
+        "deep_problem_research": {
+            "observed_signals": [{"text": "dark store expansion across Delhi NCR", "url": "https://entrackr.com/news/kiddo"}],
+            "problem_hypothesis": "New dark stores may strain stock planning.",
+        },
+        "prompt_generation": {"what_to_build": "A reorder planner for a new dark store."},
+    }
+    prompt = build_funding_email_prompt(record)
+    assert "PROTOTYPE_LINK_HERE" in prompt
+    assert "Rs 12.5 Cr Pre-Seed, reported 2026-09-17" in prompt
+    assert "dark store expansion across Delhi NCR" in prompt
+    assert "{" not in prompt.replace("{role_city}", "")
+    assert build_funding_email_prompt({**record, "deep_problem_research": {}}) == ""

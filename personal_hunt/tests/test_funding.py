@@ -1,17 +1,20 @@
 from datetime import date
+from pathlib import Path
 
-from funding import parse_funding_feed, select_funding_events
+import pytest
 
+from funding import (
+    RoundupFormatChanged,
+    load_ledger,
+    parse_funding_feed,
+    parse_funding_roundup_feed,
+    save_ledger,
+    select_funding_events,
+)
 
-def _event(company: str, event_date: str, identifier: str) -> dict:
-    return {
-        "funding_event_id": identifier,
-        "company": company,
-        "event_date": event_date,
-        "headline": f"{company} raises funding",
-        "source_url": f"https://example.com/{identifier}",
-        "corroborating_urls": [f"https://example.com/{identifier}"],
-    }
+FIXTURES = Path(__file__).parents[1] / "fixtures"
+ENTRACKR = {"id": "entrackr_rss", "name": "Entrackr", "source_confidence": "medium"}
+GALORE = {"id": "inc42_funding_galore", "name": "Inc42 Funding Galore", "source_confidence": "medium"}
 
 
 def test_funding_feed_requires_dated_funding_assertion() -> None:
@@ -95,22 +98,90 @@ def test_funding_feed_repairs_mojibaked_rupee_sign() -> None:
     assert "â" not in records[0]["source_reported_detail"]
 
 
-def test_funding_primary_extension_and_hard_max() -> None:
-    scoring = {
-        "funding_primary_age_days": 15,
-        "funding_extension_age_days": 30,
-        "funding_primary_min_items": 3,
-        "funding_max_items": 5,
-    }
-    records = [
-        _event("FreshCo", "2026-09-01", "fresh"),
-        _event("MonthCo", "2026-08-20", "month"),
-        _event("TooOldCo", "2026-08-09", "old"),
-    ]
-    primary, extended, excluded = select_funding_events(
-        records, date(2026, 9, 9), scoring
-    )
-    assert [item["company"] for item in primary] == ["FreshCo"]
-    assert [item["company"] for item in extended] == ["MonthCo"]
-    assert excluded[0]["rejection_reason"] == "funding_event_over_30_days"
+def test_entrackr_feed_names_the_funded_company_not_the_investor() -> None:
+    # Live Entrackr feed saved 2026-09-22. Investor-led headlines ("Info Edge
+    # leads ... round in Factrika") must name the startup; IPO and anchor-book
+    # news ("NSE raises Rs 6,746 Cr from anchor investors") is not a raise.
+    records = parse_funding_feed((FIXTURES / "entrackr-rss-2026-09-22.xml").read_bytes(), ENTRACKR)
+    by_company = {record["company"]: record for record in records}
+    for expected in ("Protein Pantry", "Definedge", "Drivn", "Disha", "Factrika", "DheyaTech", "TRUE ARTIS", "VerifAIX", "Kiddo"):
+        assert expected in by_company, expected
+    assert "NSE" not in by_company
+    assert not any("Info Edge" in name or "Avaana" in name for name in by_company)
+    assert by_company["Definedge"]["round_type"] == "Pre-Series A"
+    assert by_company["Protein Pantry"]["amount"] == "Rs 9 Cr"
 
+
+def test_funding_galore_table_gives_one_event_per_startup_row() -> None:
+    records = parse_funding_roundup_feed(
+        (FIXTURES / "inc42-funding-galore-feed-2026-09-22.xml").read_bytes(), GALORE
+    )
+    flam = next(record for record in records if record["company"] == "Flam")
+    assert flam["event_date"] == "2026-09-15"
+    assert flam["event_date_basis"] == "roundup_row_date"
+    assert flam["amount"] == "$40 Mn"
+    assert flam["round_type"] == "Series B"
+    assert flam["source_url"].startswith("https://inc42.com/buzz/from-flam-to-verifaix")
+    # The table footer ("Source: Inc42 ...") is not a company.
+    assert not any(record["company"].startswith("Source") for record in records)
+    # No company is ever named after the roundup headline.
+    assert not any(record["company"].casefold().startswith("from ") for record in records)
+
+
+def test_roundup_without_a_table_fails_loudly_instead_of_guessing() -> None:
+    xml = b"""<?xml version='1.0'?><rss version='2.0' xmlns:content='http://purl.org/rss/1.0/modules/content/'><channel>
+    <item><title>From A To B - Indian Startups Raised $9 Mn This Week</title>
+    <link>https://inc42.com/buzz/a-to-b</link><pubDate>Sat, 19 Sep 2026 03:30:00 GMT</pubDate>
+    <content:encoded><![CDATA[<p>No table this week.</p>]]></content:encoded></item>
+    </channel></rss>"""
+    with pytest.raises(RoundupFormatChanged):
+        parse_funding_roundup_feed(xml, GALORE)
+
+
+def test_fourteen_day_window_merges_outlets_into_one_event_per_company() -> None:
+    entrackr = parse_funding_feed((FIXTURES / "entrackr-rss-2026-09-22.xml").read_bytes(), ENTRACKR)
+    galore = parse_funding_roundup_feed(
+        (FIXTURES / "inc42-funding-galore-feed-2026-09-22.xml").read_bytes(), GALORE
+    )
+    selected, excluded = select_funding_events(entrackr + galore, date(2026, 9, 22), {"funding_window_days": 14})
+    names = [event["company"] for event in selected]
+    assert len(names) == len(set(name.casefold() for name in names))
+    assert len(selected) >= 20
+    assert all(0 <= event["age_days"] <= 14 for event in selected)
+    assert any(item["rejection_reason"] == "funding_event_over_14_days" for item in excluded)
+    dheya = next(event for event in selected if event["company"] == "DheyaTech")
+    # Reported by both outlets: both URLs kept, the table row's amount kept.
+    assert len(dheya["corroborating_urls"]) == 2
+    assert dheya["amount"]
+
+
+def test_ledger_keeps_research_when_the_same_raise_is_fetched_again(tmp_path: Path) -> None:
+    researched = {
+        "funding_event_id": "funding_x",
+        "company": "FreshCo",
+        "event_date": "2026-09-15",
+        "source_url": "https://entrackr.com/a",
+        "corroborating_urls": ["https://entrackr.com/a"],
+        "research_status": "researched",
+        "prompt_generation": {"prompt_text": "Build X"},
+    }
+    path = tmp_path / "funding_ledger.json"
+    save_ledger(path, [researched])
+    refetched = {
+        "funding_event_id": "funding_x",
+        "company": "FreshCo",
+        "event_date": "2026-09-17",
+        "source_url": "https://inc42.com/b",
+        "corroborating_urls": ["https://inc42.com/b"],
+        "amount": "$2 Mn",
+    }
+    selected, _ = select_funding_events(load_ledger(path) + [refetched], date(2026, 9, 22), {})
+    assert len(selected) == 1
+    event = selected[0]
+    assert event["prompt_generation"]["prompt_text"] == "Build X"
+    assert event["event_date"] == "2026-09-15"
+    assert event["amount"] == "$2 Mn"
+    assert event["corroborating_urls"] == ["https://entrackr.com/a", "https://inc42.com/b"]
+    # 15 days later the event ages out of the window.
+    later, excluded = select_funding_events([event], date(2026, 9, 30), {"funding_window_days": 14})
+    assert later == [] and excluded

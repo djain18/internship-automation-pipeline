@@ -472,7 +472,8 @@ def test_funding_event_research_only_allows_llm_when_company_url_resolved(
             "registry_url": "https://kalaari.com/portfolio",
         }
     ]
-    run_pipeline(
+    monkeypatch.setattr(pipeline, "fetch_office_evidence", lambda url: None)
+    run = run_pipeline(
         records,
         [],
         date(2026, 9, 8),
@@ -481,7 +482,60 @@ def test_funding_event_research_only_allows_llm_when_company_url_resolved(
         funding_records=funding_records,
         company_candidates=company_candidates,
     )
-    assert sorted(calls) == [False, True]
+    # 2026-09-22: research is spent only on companies with a resolved site;
+    # the unresolved one is still listed, unresearched, for a later run.
+    assert calls == [True]
+    by_company = {event["company"]: event for event in run["funding_primary"]}
+    assert by_company["Resolvable Co"]["research_status"] == "researched"
+    assert "research_status" not in by_company["Unresolvable Co"]
+
+
+def _funding(company: str, **extra) -> dict:
+    return {
+        "funding_event_id": f"funding_{company}",
+        "company": company,
+        "event_date": "2026-09-20",
+        "age_days": 2,
+        "company_url": f"https://{company.lower()}.example",
+        "company_url_basis": "test",
+        **extra,
+    }
+
+
+def test_funding_research_prefers_bengaluru_chennai_then_fills_with_others(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline, "fetch_office_evidence", lambda url: None)
+    events = [
+        _funding("Delhi1", round_type="Seed"),
+        _funding("Delhi2", round_type="Seed"),
+        _funding("LateStage", round_type="Series D", location_evidence={"city": ""}),
+        _funding("Blr", location_evidence={"city": "bengaluru"}),
+        _funding("Chennai", location_evidence={"city": "chennai"}, age_days=9),
+        _funding("Done", research_status="researched", location_evidence={"city": "bengaluru"}),
+        _funding("NoSite", company_url="", company_url_basis="unresolved"),
+    ]
+    chosen = pipeline._choose_funding_for_research(
+        events, {"funding_research_per_run": 4}, date(2026, 9, 22)
+    )
+    assert [event["company"] for event in chosen] == ["Blr", "Chennai", "Delhi1", "Delhi2"]
+    assert all(event["research_status"] == "researched" for event in chosen)
+    assert "research_status" not in next(e for e in events if e["company"] == "LateStage")
+
+
+def test_funding_location_evidence_reads_the_article_first() -> None:
+    event = _funding(
+        "Protein Pantry",
+        source_url="https://entrackr.com/news/protein-pantry",
+        source_reported_detail=(
+            "Bengaluru-based protein snacks brand Protein Pantry has raised Rs 9 Cr "
+            "in a seed round led by Sharrp Ventures."
+        ),
+    )
+    evidence = pipeline._funding_location_evidence(event, [])
+    assert evidence["city"] == "bengaluru"
+    assert evidence["basis"] == "funding_article"
+    assert evidence["url"] == "https://entrackr.com/news/protein-pantry"
+    role = {"company": "Kiddo", "location_class": "chennai_onsite", "title": "Ops Intern", "source_url": "https://x.example/job"}
+    assert pipeline._funding_location_evidence(_funding("Kiddo"), [role])["city"] == "chennai"
 
 
 def test_discovered_for_research_reaches_the_run_dict_with_prompts(
@@ -1303,3 +1357,28 @@ def test_closed_listing_signal_never_opens_linkedin(monkeypatch) -> None:
     assert company_site.closed_listing_signal("https://www.linkedin.com/jobs/view/1") == ""
     assert company_site.closed_listing_signal("https://lnkd.in/abc") == ""
 
+
+
+def test_failed_site_search_never_blocks_a_company(monkeypatch) -> None:
+    # 2026-09-22 live run: Firecrawl quota errors left all 5 picks marked
+    # no_company_site for good. A failed search keeps them open; a clean miss
+    # waits a week.
+    monkeypatch.setattr(pipeline, "fetch_office_evidence", lambda url: None)
+
+    def failing(events, scoring):
+        return [{**e, "company_url_resolution_attempted": True, "company_url_resolution_error": "HTTP 402"} for e in events]
+
+    monkeypatch.setattr(pipeline, "_resolve_unresolved_via_firecrawl", failing)
+    events = [_funding("Flam", company_url="", company_url_basis="unresolved"),
+              _funding("Old", company_url="", company_url_basis="unresolved", research_status="no_company_site")]
+    pipeline._choose_funding_for_research(events, {}, date(2026, 9, 22))
+    assert all("research_status" not in e or e["company"] == "Old" for e in events)
+    assert events[1]["research_status"] == "no_company_site" and "research_checked_on" not in events[1]
+
+    def clean_miss(events, scoring):
+        return [{**e, "company_url_resolution_attempted": True} for e in events]
+
+    monkeypatch.setattr(pipeline, "_resolve_unresolved_via_firecrawl", clean_miss)
+    pipeline._choose_funding_for_research(events, {}, date(2026, 9, 22))
+    assert events[0]["research_checked_on"] == "2026-09-22"
+    assert pipeline._choose_funding_for_research(events, {}, date(2026, 9, 25)) == []

@@ -1,0 +1,82 @@
+# {company_name}: cold email with the prototype
+
+You are writing one cold email from Daksh Jain to {recipient} at {company_name}.
+Daksh read about their recent raise, found a likely problem, and built a small
+prototype for it. The email has one job: get a founder to reply to a student
+asking for a Founder's Office internship. If PROTOTYPE_LINK_HERE or PROTOTYPE_SUMMARY_HERE is still
+shown below, stop and ask Daksh for them before writing.
+
+<verified_facts>
+- Company: {company_name}
+- Raise: {raise_line}
+- Recipient: {contact_line}
+- Prototype link: PROTOTYPE_LINK_HERE
+- Resume to attach: {resume_basename}.pdf
+- Internship Daksh wants: Founder's Office or generalist, onsite or hybrid in
+  {role_city}, November 2026 to April 2027
+</verified_facts>
+
+<observed>
+These are quotes from public pages, with their sources. They are the only
+facts about {company_name} you may use.
+
+{observed_signal}
+</observed>
+
+<inference>
+Daksh's guess, not a fact the company confirmed. Offer it as a guess.
+
+{inference}
+</inference>
+
+<prototype>
+Daksh built this himself. His one-line description (the WHAT_IT_DOES line):
+PROTOTYPE_SUMMARY_HERE
+Describe it only as he does. Never say it is in use, tested with users or measured.
+</prototype>
+
+<about_daksh>
+Use exactly one fact, the one closest to this company.
+
+{candidate_facts}
+</about_daksh>
+
+<format>
+{format_rules}
+</format>
+
+<rules>
+{copy_rules}
+</rules>
+
+<humanizer>
+{humanizer_rules}
+</humanizer>
+{examples_block}
+<process>
+1. Plan before writing: choose the hook (the raise plus one observed quote),
+   the one proof (the prototype link), and the one ask.
+2. Write three different versions of the email that follow the format.
+3. Score each version from 1 to 5 on: first line is about them and could not be
+   sent to any other company; the prototype is clear from one sentence; one
+   ask, one question; sentences about them roughly equal sentences about
+   Daksh; 80-150 words including greeting and signature; every fact is in the
+   blocks above. Show the scores in one line per version.
+4. Keep the best version. Ask: what still makes this read as AI-written? Fix it.
+5. Check: zero em dashes, no curly quotes, at most one link, written as
+   [short label](URL), a subject of 3-10 words that includes "internship", no
+   percentages or "10x"-style figures.
+</process>
+
+<output>
+End with exactly this, ready to paste into the Rise Outbox form:
+
+To: the recipient email above, or "none found"
+Subject: ...
+Body:
+...
+Day-3 follow-up (under 70 words, adds one new sourced point, never "just checking in"):
+...
+LinkedIn note (250-300 characters):
+...
+</output>

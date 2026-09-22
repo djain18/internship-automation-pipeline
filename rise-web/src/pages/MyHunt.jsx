@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import FundingBrowser from "@/components/FundingBrowser";
 import { useAuth } from "@/lib/AuthContext";
 import { fetchAllRoles, fetchPersonalHunt, matchesFromPayload } from "@/lib/personalHunt";
 
@@ -242,7 +243,12 @@ export default function MyHunt() {
   }, [tab, user, allRoles.status]);
 
   const matches = useMemo(() => matchesFromPayload(payload), [payload]);
-  const funding = [...(payload?.funding?.primary || []), ...(payload?.funding?.extended || [])];
+  // Companies with a found problem first, then newest raise first.
+  const funding = [...(payload?.funding?.primary || []), ...(payload?.funding?.extended || [])].sort(
+    (a, b) => Number(Boolean(b.prompt_generation?.prompt_text)) - Number(Boolean(a.prompt_generation?.prompt_text)) || (a.age_days ?? 99) - (b.age_days ?? 99),
+  );
+  const fundingDays = payload?.funding?.windowDays || 14;
+  const failedFunding = (payload?.sourceHealth || []).filter((item) => item.status === "failed" && /rss|funding|galore/.test(item.source_id));
   const needsVerification = payload?.needsVerification || [];
   const failedSources = (payload?.sourceHealth || []).filter((item) => item.status === "failed");
 
@@ -274,7 +280,7 @@ export default function MyHunt() {
         <section className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Run summary">
           <Metric label="New matches" value={matches.length} detail={`${payload.bengaluru?.length || 0} Bengaluru · ${payload.remote?.length || 0} remote`} />
           <Metric label="Eligible before Kimi" value={payload.run?.eligibleCount || 0} detail={`${payload.withheldCount || 0} withheld after review`} />
-          <Metric label="Funding signals" value={funding.length} detail="Last 30 days maximum" />
+          <Metric label="Funded companies" value={funding.length} detail={`Last ${fundingDays} days · ${funding.filter((event) => event.prompt_generation?.prompt_text).length} with a problem found`} />
           <Metric label="Apify this month" value={`$${Number(payload.apify?.month_spend_usd || 0).toFixed(2)}`} detail="$5.00 hard stop" />
         </section>
 
@@ -308,16 +314,14 @@ export default function MyHunt() {
           <div className="mt-5 rounded-xl border border-border bg-background p-8 text-sm text-muted-foreground">{allRoles.error}</div>
         ) : <div className="mt-5 h-80 animate-pulse rounded-xl bg-secondary" />)}
 
-        {tab === "funding" && (
-          <div className="mt-5 divide-y divide-border overflow-hidden rounded-xl border border-border bg-background">
-            {funding.length ? funding.map((event) => (
-              <article key={event.funding_event_id || event.id} className="p-5 md:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">{event.company}</h2><p className="mt-1 text-sm text-muted-foreground">{event.headline}</p></div><a href={event.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Source <ArrowUpRight className="h-4 w-4" /></a></div>
-                {event.problem_research?.problem_hypothesis && <div className="mt-4 rounded-lg bg-secondary/70 p-4 text-sm leading-6"><span className="font-medium">Inference to validate: </span><span className="text-muted-foreground">{event.problem_research.problem_hypothesis}</span></div>}
-              </article>
-            )) : <div className="p-8 text-sm text-muted-foreground">No current funding signal passed the dated evidence gate.</div>}
+        {tab === "funding" && (funding.length ? (
+          <FundingBrowser events={funding} drafts={payload.funding?.drafts || {}} />
+        ) : (
+          <div className="mt-5 rounded-xl border border-border bg-background p-8 text-sm text-muted-foreground">
+            No raise from the last {fundingDays} days reached this run.
+            {failedFunding.length > 0 && ` These funding sources failed: ${failedFunding.map((item) => item.source_id).join(", ")}.`}
           </div>
-        )}
+        ))}
 
         {tab === "verify" && (
           <div className="mt-5 overflow-hidden rounded-xl border border-border bg-background">

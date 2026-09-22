@@ -712,8 +712,7 @@ def render_digest(run: Record) -> str:
             "",
             (
                 f"Internships: prior {run.get('internship_window_days', 10)} days. "
-                f"Funding: primary {run.get('funding_primary_window_days', 15)} days; "
-                f"labeled extension through {run.get('funding_extension_window_days', 30)} days."
+                f"Funding: last {run.get('funding_primary_window_days', 14)} days."
             ),
             "",
             # Phase 7: Section 1 - Approved internship matches (unchanged)
@@ -750,10 +749,9 @@ def render_digest(run: Record) -> str:
             _send_queue_section(run),
             _followups_section(run),
             _weekly_target_section(run.get("weekly_targets", [])),
-            _funding_section("Newly funded startups (0-15 days)", run.get("funding_primary", [])),
             _funding_section(
-                "Earlier this month (16-30 days; extension)",
-                run.get("funding_extended", []),
+                f"Newly funded startups (last {run.get('funding_primary_window_days', 14)} days)",
+                run.get("funding_primary", []),
             ),
             _problem_section(run.get("funding_primary", []) + run.get("funding_extended", [])),
             _cost_section(run),

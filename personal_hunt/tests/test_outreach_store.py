@@ -137,3 +137,37 @@ def test_save_and_load_round_trip(tmp_path) -> None:
     store.submit_drafts(data, "run_a", [submitted()], at("2026-09-14T20:00"))
     store.save(path, data)
     assert store.load(path)["drafts"]["opp_1"]["status"] == "to_review"
+
+
+def test_own_draft_for_a_funded_company_goes_through_the_same_checks() -> None:
+    from datetime import datetime
+
+    import outreach_store
+
+    now = datetime(2026, 9, 22, 7, 0, tzinfo=outreach_store.IST)
+    data = outreach_store.empty()
+    body = " ".join(["word"] * 100) + " [demo](https://demo.example)"
+    draft = outreach_store.write_own_draft(
+        data,
+        {
+            "lead_id": "funding_abc",
+            "company": "Kiddo",
+            "to": "asha@kiddo.example",
+            "subject": "Founder's Office internship - Daksh Jain",
+            "body": body,
+            "attachment": "Daksh-Jain-founders_office.pdf",
+        },
+        now,
+    )
+    assert draft["to_source"] == outreach_store.ENTERED_BY_DAKSH
+    assert draft["status"] == "to_review", draft["errors"]
+    approved = outreach_store.approve(data, "funding_abc", now)
+    assert approved["slot"].startswith("2026-09-22T10:00")
+    assert outreach_store.draft_statuses(data)["funding_abc"]["status"] == "approved"
+    # Approved or sent companies are never drafted twice.
+    import pytest
+
+    with pytest.raises(outreach_store.DraftError):
+        outreach_store.write_own_draft(data, {"lead_id": "funding_abc", "company": "Kiddo"}, now)
+    with pytest.raises(outreach_store.DraftError):
+        outreach_store.write_own_draft(data, {"lead_id": "opp_1", "company": "X"}, now)
