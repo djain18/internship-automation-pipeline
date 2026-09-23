@@ -1533,3 +1533,20 @@ Also found, not changed:
 - Firecrawl search returned HTTP 429 during local testing; the resolver
   leaves the event open for retry, as designed.
 - Blume Getro sources still fail with 404.
+
+### 2026-09-23 (continued) - funding email prompt in the digest
+
+Fixed the open defect above (Rise `b3e8df5`, merged `03640f8`). Funded
+companies now always go through `draft_problem_led_email`, whose
+`claude_prompt` is `build_funding_email_prompt`; with no supported problem
+the draft is blocked instead of falling back to the job-listing prompt.
+Watchlist companies (which reuse `funding_event_id`) keep the listing
+prompt. The funding prompt now addresses "the <Company> hiring team
+(email)" instead of "there" when no name is known.
+
+Verified by re-drafting the 4 researched companies from
+`run_4ecf1e547a07f1f2`: DheyaTech gets the funding prompt (raise line,
+PROTOTYPE_LINK_HERE placeholder); betterhood, Demoverse and Jar are
+blocked (no supported problem). Extended
+`test_funding_email_prompt_waits_for_the_link_daksh_builds`; full
+personal_hunt suite passes; ruff clean.
