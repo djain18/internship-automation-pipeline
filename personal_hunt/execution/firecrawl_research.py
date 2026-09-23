@@ -134,7 +134,7 @@ def resolve_company_url_via_search(
     source of a company_url; this is a third pool, not a replacement, and it
     still requires the company's name to physically be on the resolved page.
     """
-    from company_site import fetch_site_evidence
+    from company_site import read_public_page
 
     company = clean_text(company)
     if not company:
@@ -181,7 +181,9 @@ def resolve_company_url_via_search(
             if any(domain.endswith(f".{agg}") for agg in AGGREGATOR_DOMAINS):
                 continue
             title = clean_text(item.get("title") or url)
-            if not _relevant_to_company(company, title, "", url):
+            # A name under 4 letters ("Jar") has no token _relevant_to_company
+            # can use; a result title that starts with it still counts.
+            if not _relevant_to_company(company, title, "", url) and not _company_name_key(title).startswith(name_key):
                 continue
             entry = candidates.setdefault(
                 domain, {"url": url, "query": query, "title": title, "queries": set()}
@@ -196,21 +198,19 @@ def resolve_company_url_via_search(
     # site; the candidate's own page must actually say so.
     for domain, info in candidates.items():
         candidate_url = f"https://{domain}"
-        try:
-            evidence, _emails, _linkedin, status = fetch_site_evidence(candidate_url)
-        except Exception:
-            continue
-        if status != "ok":
-            continue
-        joined = _company_name_key(
-            " ".join(item.get("observation", "") for item in evidence)
-        )
+        # 2026-09-23: checked against the whole visible page (title included),
+        # not fetch_site_evidence's few problem-signal sentences, which almost
+        # never repeat the name: Jar, Definedge and Indian Walker were all
+        # rejected as "no company site" on their own homepages.
+        page = read_public_page(candidate_url)
+        joined = _company_name_key(page)
         if name_key not in joined:
             continue
         # 2026-09-22: a name on the page is not enough ("Kiddo" matched an
-        # Australian school, "Firi" a Norwegian crypto app). With a hint, the
-        # page must also say what the article says the company does.
-        if hint_terms and not any(term in joined for term in hint_terms):
+        # Australian school, "Firi" a Norwegian crypto app). The page must also
+        # say what the article says the company does, or show it is Indian.
+        indian = domain.endswith(".in") or "india" in joined
+        if hint_terms and not indian and not any(term in joined for term in hint_terms):
             continue
         agreeing = len(info["queries"])
         return {
@@ -220,13 +220,9 @@ def resolve_company_url_via_search(
                 "search_query": info["query"],
                 "result_url": info["url"],
                 "matched_text": next(
-                    (
-                        item.get("observation", "")
-                        for item in evidence
-                        if name_key in _company_name_key(item.get("observation", ""))
-                    ),
+                    (line for line in page.splitlines() if name_key in _company_name_key(line)),
                     "",
-                ),
+                )[:300],
                 "access_date": iso_date(),
                 "confidence": "high" if agreeing > 1 else "medium",
             },
