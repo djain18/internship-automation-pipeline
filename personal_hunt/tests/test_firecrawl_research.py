@@ -81,3 +81,41 @@ def test_search_public_evidence_sends_one_query_no_scrape_and_tags_basis(monkeyp
     assert len(evidence) == 1
     assert evidence[0]["basis"] == "public_company_research"
 
+
+
+def test_resolver_verifies_name_on_whole_page_and_rejects_foreign_namesake(monkeypatch) -> None:
+    import company_site
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, results):
+            self.results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": self.results}
+
+    results = {
+        "Jar": [{"url": "https://myjar.app", "title": "Jar: India's No 1 Digital Gold Savings App"}],
+        "Kiddo": [{"url": "https://kiddo.com.au", "title": "Kiddo | Early learning"}],
+    }
+    monkeypatch.setattr(
+        firecrawl_research.requests,
+        "post",
+        lambda *_a, json, **_k: Response(results[json["query"].split('"')[1]]),
+    )
+    pages = {
+        "https://myjar.app": "Jar: India's No 1 Digital Gold Savings App\nWelcome to Jar",
+        "https://kiddo.com.au": "Kiddo\nEarly learning centres across Sydney",
+    }
+    monkeypatch.setattr(company_site, "read_public_page", lambda url, **_k: pages[url])
+
+    jar = firecrawl_research.resolve_company_url_via_search("Jar", "key")
+    assert jar["company_url"] == "https://myjar.app"
+    assert "Jar" in jar["company_url_evidence"]["matched_text"]
+    assert firecrawl_research.resolve_company_url_via_search(
+        "Kiddo", "key", hint="Baby-focused quick commerce startup"
+    ) is None

@@ -1030,7 +1030,7 @@ def render_html_digest(run: Record) -> str:
         </div>"""
 
     signals: list[str] = []
-    for event in (list(run.get("funding_primary", [])) + list(run.get("funding_extended", [])))[:2]:
+    for event in (list(run.get("funding_primary", [])) + list(run.get("funding_extended", [])))[:10]:
         company = html.escape(str(event.get("company") or ""))
         headline = html.escape(str(event.get("headline") or "New funding signal"))
         url = html.escape(str(event.get("source_url") or site_url), quote=True)
