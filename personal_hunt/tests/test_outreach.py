@@ -409,3 +409,19 @@ def test_funding_email_prompt_waits_for_the_link_daksh_builds() -> None:
     assert "dark store expansion across Delhi NCR" in prompt
     assert "{" not in prompt.replace("{role_city}", "")
     assert build_funding_email_prompt({**record, "deep_problem_research": {}}) == ""
+
+    # The digest shows claude_prompt: a funded company gets the funding prompt,
+    # never the job-listing one, and no prompt without a supported problem.
+    from outreach import draft_problem_led_email
+
+    draft = draft_problem_led_email(record)
+    assert draft["claude_prompt"] == prompt == draft["email_prompt"]
+    assert "Role: internship opportunity" not in draft["claude_prompt"]
+    from outreach import draft_outreach
+
+    # No research at all: blocked, not routed to the job-listing prompt.
+    blocked = draft_outreach({**record, "deep_problem_research": {}})
+    assert blocked["claude_prompt"] == "" and blocked["send_status"].startswith("blocked")
+    # Signals but no supported hypothesis: no prompt either.
+    unsupported = draft_outreach({**record, "deep_problem_research": {**record["deep_problem_research"], "problem_hypothesis": ""}})
+    assert unsupported["claude_prompt"] == "" and unsupported["send_status"].startswith("blocked")

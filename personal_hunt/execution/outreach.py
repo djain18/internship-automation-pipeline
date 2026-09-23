@@ -614,6 +614,12 @@ def with_listing_context(record: Record, prompt: str) -> str:
     return "\n\n".join(parts) + "\n"
 
 
+def _is_funded(record: Record) -> bool:
+    """A funding event, not a job listing (watchlist companies reuse
+    funding_event_id as their id but raised nothing)."""
+    return bool(record.get("funding_event_id")) and record.get("source") != "watchlist"
+
+
 def draft_problem_led_email(record: Record) -> Record:
     """Draft a problem-led cold email for companies with deep research and prototype.
 
@@ -657,7 +663,13 @@ def draft_problem_led_email(record: Record) -> Record:
         f"and {built} to explore it. Happy to walk through it if you're interested."
     )
 
-    claude_prompt = build_email_prompt(record)
+    # 2026-09-23: a funded company is not a job listing. The job prompt read
+    # "Role: internship opportunity" with the funding article as apply link;
+    # the funding prompt starts from the raise and the sourced problem, and is
+    # empty (so the draft is blocked) when no problem was supported.
+    funded = _is_funded(record)
+    email_prompt = build_funding_email_prompt(record) if funded else ""
+    claude_prompt = email_prompt if funded else build_email_prompt(record)
     return {
         "claude_prompt": claude_prompt,
         "email_subject": f"{company.lower()} prototype idea",
@@ -669,7 +681,7 @@ def draft_problem_led_email(record: Record) -> Record:
         "send_status": "draft_needs_human_review" if claude_prompt else "blocked_no_evidence",
         "draft_source": "problem_led",
         "artifact_path": artifact,
-        "email_prompt": build_funding_email_prompt(record) if record.get("funding_event_id") else "",
+        "email_prompt": email_prompt,
     }
 
 
@@ -721,7 +733,7 @@ def build_funding_email_prompt(record: Record) -> str:
         return ""
     return template.format(
         company_name=clean_text(record.get("company")),
-        recipient=_recipient(record),
+        recipient=_prompt_recipient(record),
         raise_line=_raise_line(record),
         contact_line=_contact_line(record),
         resume_basename=values["resume_basename"],
@@ -747,7 +759,9 @@ def draft_outreach(record: Record) -> Record:
     send_status. Also supports legacy "followups" for backwards compatibility with testing.
     """
     # Check if this is a problem-led company (with deep research)
-    if _is_problem_led_company(record):
+    # A funded company never takes the job-listing path below: it has no role
+    # or apply link, and its prompt must start from the raise (2026-09-23).
+    if _is_problem_led_company(record) or _is_funded(record):
         return draft_problem_led_email(record)
 
     # Generic internship listing outreach
