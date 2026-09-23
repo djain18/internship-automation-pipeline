@@ -1481,3 +1481,55 @@ has no record in scope; left as is, noted here.
 
 **Verified:** all personal_hunt tests pass (exit 0), Ruff clean, fixture run unchanged
 (raw 9, eligible 5, primary 4, remote 1). Deployed as v69. Not committed.
+
+## 2026-09-23 - funded companies never reached research (site resolver)
+
+Daksh reported no funded-company emails he could build prototypes for.
+Evidence from the live run `run_03a17b0fe1efd02f` (06:30 IST) and the
+volume's `state/funding_ledger.json`: 38 funding events in the 14-day
+ledger, but only Flam had ever been researched. Five companies with real
+sites (Jar, Definedge, Indian Walker, Demoverse, DheyaTech) were marked
+`no_company_site`, which blocks a retry for 7 days.
+
+Root cause: `resolve_company_url_via_search` (firecrawl_research.py)
+found the right domain in Firecrawl search, then verified it by looking
+for the company name in `fetch_site_evidence`'s few problem-signal
+sentences. Those sentences rarely repeat the name, so every candidate
+failed. Names under 4 letters ("Jar") were also dropped at the search
+step.
+
+Fix (Rise commit `a315615`, merged `d401ffe`, deployed 2026-09-23 22:3x
+IST): verify against the whole visible page via `read_public_page`
+(robots-respecting, one GET). The namesake guard stays: the page must
+match the article's hint words, or show it is Indian (".in" domain or
+"India" on the page). A short name counts when a search result title
+starts with it. The email's funding list now shows 10 events, not 2.
+The 5 wrongly closed ledger events were reset by hand on the volume.
+
+Verification:
+- Live resolver check: Jar, Definedge, Indian Walker, Demoverse,
+  DheyaTech and Protein Pantry resolve to their own sites; Kiddo (the
+  Australian namesake case) still returns None.
+- New unit test in `personal_hunt/tests/test_firecrawl_research.py`;
+  full personal_hunt suite passes.
+- Manual live run `run_4ecf1e547a07f1f2` (collect + deliver, 22:35 IST):
+  46 funding events; 4 researched (betterhood, Demoverse, DheyaTech,
+  Jar); 1 supported problem with a prototype prompt (DheyaTech). The
+  other 3 had no sourced problem, so no prompt was written. Email sent
+  to dakshjainn02@gmail.com, Gmail message `1a0cf450160ec4a7`; content
+  read from the rendered HTML on the volume (Gmail connector was not
+  available in this session).
+
+Also found, not changed:
+- The 06:30 email said "no new internship matches". Not a bug: all 8
+  Kimi-approved roles had been emailed on earlier days; the unsent
+  eligible roles scored fit 62 or lower.
+- Open defect: the digest's "Problem briefs" section gives funded
+  companies the job-listing email prompt ("Role: internship
+  opportunity", the article as apply link) instead of
+  `build_funding_email_prompt`.
+- Non-raise headlines still enter the funding list ("Meesho Surges 9%
+  After UBS...", "PhonePe enters UAE").
+- Firecrawl search returned HTTP 429 during local testing; the resolver
+  leaves the event open for retry, as designed.
+- Blume Getro sources still fail with 404.
